@@ -50,30 +50,6 @@ import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 import kotlinx.serialization.json.JsonPrimitive
 
-/**
- * What the rows on this handset actually say, printed BESIDE the boxes the designer typed into.
- *
- * WHY THIS EXISTS AND WHY IT IS HERE RATHER THAN BEHIND A REQUEST. [DwMarketAnalysis] and
- * [DwCostIntegrity] are ports of two pure backend modules, and both were written so the same findings
- * could be produced without a database, a network or a model. Until this panel there was nowhere on
- * the handset they surfaced: a designer stood in stage 9 typing a price band having collected the
- * price expectations that contradict it into stage 8 that morning, and nothing compared the two; a
- * designer typed a material subtotal into stage 17 with the six lines that disprove it in the list
- * directly above, and nothing added them up. Both findings existed — on the server, days later, at a
- * desk, about a workshop that had ended.
- *
- * IT NEVER WRITES TO THE STAGE ON ITS OWN. The one exception is the owner's (A16, 2026-10-17): a
- * cost sheet's subtotal can take its lines' total, on the designer's tap, through `onUse`. Nothing
- * else here returns a value, seeds a field or offers to "fix" anything. The designer's declared band and typed subtotal stay exactly as typed. A subtotal
- * can legitimately differ from its lines and a band can legitimately be a considered judgement about
- * a market the survey under-sampled — the designer was in the room and the arithmetic was not. What
- * changes is that the judgement is now made in front of the evidence.
- *
- * IT IS ADVISORY AND FOLDS AWAY. Every card here collapses, and none of it gates a save or a sync. A
- * warning that blocks fieldwork is a warning that gets worked around.
- */
-
-/** The stage keys that have something computable to say. Anything else draws nothing at all. */
 private const val STAGE_MARKET_ANALYSIS = "MARKET_ANALYSIS_DIRECTION"
 private const val STAGE_MARKET_SURVEY = "MARKET_SURVEY_CAPTURE"
 private const val STAGE_COSTING = "COSTING_MARKET_LINKAGE"
@@ -84,12 +60,7 @@ fun DwStageFindings(
     stage: StageDto,
     workshopId: String,
     repository: WorkshopRepository,
-    /** This stage's collection rows as the form currently holds them, keyed by entity. */
     rows: Map<String, List<DwDataRow>>,
-    /**
-     * "Use ₹X from the lines" (owner, A16, 2026-10-17): write the lines' total into one sheet's
-     * subtotal on the designer's tap. Null leaves the card read-only.
-     */
     onUse: ((sheetEntryId: String, key: String, value: String) -> Unit)? = null,
 ) {
     when (stage.key) {
@@ -98,10 +69,6 @@ fun DwStageFindings(
         else -> Unit
     }
 }
-
-// --------------------------------------------------------------------------------------
-// Stage 9 — what the survey says about what was just typed
-// --------------------------------------------------------------------------------------
 
 @Composable
 private fun MarketFindingsCard(
@@ -112,18 +79,9 @@ private fun MarketFindingsCard(
     val context = LocalContext.current
     val appContext = remember(context) { context.applicationContext }
 
-    /**
-     * Stage 8's rows, which live in a DIFFERENT stage's draft and therefore have to be fetched.
-     *
-     * THE DEVICE IS ASKED FIRST AND THE SERVER ONLY AFTER, which is the opposite of how a screen that
-     * assumed a connection would be written, and it is the whole point: the survey was captured on
-     * this handset, into this filesDir, hours ago. A panel that waited for a request would be blank
-     * in exactly the courtyard the analysis was written for. The server read exists only for a
-     * workshop whose stage 8 was entered on the web and never opened here, it is wrapped so a
-     * failure costs nothing, and its absence is SAID rather than silently rendered as "no evidence".
-     */
     var survey by remember(workshopId) { mutableStateOf<SurveyRows?>(null) }
     var searched by remember(workshopId) { mutableStateOf(false) }
+    var saved by remember(workshopId) { mutableStateOf<DwMarketFindings?>(null) }
 
     LaunchedEffect(workshopId) {
         val draft = runCatching { WorkshopDraftStore.load(appContext, workshopId) }.getOrNull()
@@ -147,12 +105,24 @@ private fun MarketFindingsCard(
                     responses = bucket.collections["surveyResponse"].orEmpty().map { it.toMap() },
                     competitors = bucket.collections["competitorProduct"].orEmpty().map { it.toMap() },
                 )
+            } else {
+                saved = repository.designWorkshopMarketAnalysis(remoteId)
             }
         }
         searched = true
     }
 
     if (!searched) return
+    saved?.let { fromServer ->
+        if (survey == null && !fromServer.isEmpty) {
+            MarketFindingsBody(
+                findings = fromServer,
+                subtitle = DW_MARKET_FINDINGS_SAVED_SUBTITLE,
+                surveyMissing = false,
+            )
+            return
+        }
+    }
     val rowsFound = survey ?: SurveyRows(emptyList(), emptyList())
     val bands = rows["priceBand"].orEmpty()
     val swot = rows["swotPoint"].orEmpty()
@@ -166,21 +136,28 @@ private fun MarketFindingsCard(
         )
     }
     if (findings.isEmpty && rowsFound.isEmpty()) {
-        // Nothing typed and nothing captured. A card reading "0 observations" beside an empty form is
-        // noise on a screen a designer is trying to fill in.
         return
     }
 
+    MarketFindingsBody(
+        findings = findings,
+        subtitle = "From ${plural(rowsFound.responses.size, "survey response")} and ${plural(rowsFound.competitors.size, "competitor product")} in stage 8. Not saved to this stage.",
+        surveyMissing = rowsFound.isEmpty(),
+    )
+}
+
+internal const val DW_MARKET_FINDINGS_SAVED_SUBTITLE =
+    "From the survey and bands last saved on the server. Save this stage to check what is on screen."
+
+@Composable
+private fun MarketFindingsBody(findings: DwMarketFindings, subtitle: String, surveyMissing: Boolean) {
     FindingsCard(
         title = "What the survey says",
-        subtitle = "From ${plural(rowsFound.responses.size, "survey response")} and ${plural(rowsFound.competitors.size, "competitor product")} in stage 8. Not saved to this stage.",
+        subtitle = subtitle,
     ) {
-        // CAUTIONS BEFORE FIGURES, ALWAYS. The server orders its payload the same way for the same
-        // reason: a caution that has to be scrolled to is a caution that will not be read, and
-        // "these prices all come from one respondent group" changes what every number below it means.
         findings.cautions.forEach { Advisory(it, MaterialTheme.field.warningContainer, MaterialTheme.field.onWarningContainer) }
 
-        if (rowsFound.isEmpty()) {
+        if (surveyMissing) {
             Advisory(
                 "Stage 8 isn't on this phone. Open it once online to run these checks.",
                 MaterialTheme.field.surface100, MaterialTheme.field.body,
@@ -247,26 +224,10 @@ private fun MarketFindingsCard(
     }
 }
 
-/**
- * How many of these cost sheets have no SERVER id yet — the number that decides whether an orphan
- * caution can be true.
- *
- * A FUNCTION RATHER THAN A LINE INSIDE THE COMPOSABLE so it can be tested. The rule is one sentence
- * and the first spelling of it was wrong: it must COUNT, not ask `none { … }`. A screen with three
- * synced sheets and one entered this morning makes `none` false, and the panel then printed the
- * port's orphan caution word for word — "the sheet they named may have been deleted after they were
- * recorded" — about a sheet three rows further up the same screen. Compose is not unit-testable here;
- * this predicate is, and it is where the judgement lives.
- */
 internal fun dwUnsyncedSheetCount(sheets: List<DwDataRow>): Int = sheets.count {
-    // `_entryId` is the server's id for the row and is absent until the workshop syncs. A row whose
-    // id is present but EMPTY counts as unsynced for the same reason `DwCostIntegrity` refuses to
-    // match on it: an empty string is not an identity, and joining two rows on it attributes a week
-    // of costing at random.
     (it["_entryId"] as? JsonPrimitive)?.content?.isNotEmpty() != true
 }
 
-/** Stage 8's two collections, held together so "did we find anything at all" is one question. */
 private data class SurveyRows(
     val responses: List<DwDataRow>,
     val competitors: List<DwDataRow>,
@@ -279,8 +240,6 @@ private data class SurveyRows(
 private fun DistributionLine(label: String, dist: DwDistribution?) {
     if (dist == null) return
     val money = { value: Double -> "₹" + DwPy.format(value, 0, grouped = true) }
-    // THE SAMPLE IS PART OF THE FIGURE. A median with no count beside it is a number a designer can
-    // carry into a report without knowing it came from three people.
     val quartiles = if (dist.quantilesReported) {
         " · quartiles ${money(dist.p25)}–${money(dist.p75)}"
     } else {
@@ -293,10 +252,6 @@ private fun DistributionLine(label: String, dist: DwDistribution?) {
         MaterialTheme.field.body,
     )
 }
-
-// --------------------------------------------------------------------------------------
-// Stage 17 — a cost sheet against its own line items
-// --------------------------------------------------------------------------------------
 
 @Composable
 private fun CostFindingsCard(
@@ -312,15 +267,6 @@ private fun CostFindingsCard(
     val labourLines = rows["costLabourLine"].orEmpty()
     if (sheets.isEmpty() && materialLines.isEmpty() && labourLines.isEmpty()) return
 
-    /**
-     * `productRef` resolved to a product NAME, from stage 16's own rows on this device first.
-     *
-     * The reference CACHE is asked only second. It is populated by a picker that has been opened with
-     * a connection, which is not a thing a courtyard can guarantee, whereas stage 16's rows are in
-     * the same draft file as stage 17's. Getting this wrong costs nothing but a readable name —
-     * `Cost sheet 3` is the same answer `report_builder._row_label` gives — so it is never allowed to
-     * fail the panel.
-     */
     var labels by remember(workshopId) { mutableStateOf<Map<String, String>>(emptyMap()) }
     LaunchedEffect(workshopId) {
         val draft = runCatching { WorkshopDraftStore.load(appContext, workshopId) }.getOrNull()
@@ -344,23 +290,6 @@ private fun CostFindingsCard(
         DwCostIntegrity.analyse(sheets, materialLines, labourLines, labels)
     }
 
-    // A SHEET WITH NO SERVER ID YET IS NOT A DATA-ENTRY ERROR and must not be reported as one.
-    // `costSheetRef` holds the sheet's `_entryId`, which is the SERVER's id, and the picker that
-    // fills that field is served from the references endpoint — so a sheet created in a courtyard
-    // cannot be offered to its own lines at all. The designer leaves the link blank because there is
-    // nothing to pick, the lines land in the orphan bucket, and the sheet reads "un-itemised".
-    //
-    // COUNTED RATHER THAN ALL-OR-NOTHING, and that is the fix rather than a refinement. This read
-    // `sheets.none { … }`, so a workshop with three synced sheets and one entered this morning fell
-    // through to the else arm and printed the port's orphan caution verbatim: "the sheet they named
-    // may have been deleted after they were recorded." Nothing was deleted and nothing was named —
-    // the sheet is on this screen, three rows up, waiting for a tower. Telling a designer their
-    // morning's costing has been deleted, in the one situation this app is built for, is the exact
-    // false accusation `cost_integrity`'s docstring forbids, and a designer who is told it once
-    // stops reading the amber for the rest of the workshop.
-    //
-    // The port's own `cautions` are NOT edited to say this — they are the server's sentences and
-    // stay byte-identical. This decides which of them a mixed-sync screen is entitled to show.
     val unsyncedSheets = dwUnsyncedSheetCount(sheets)
     val anyUnsynced = unsyncedSheets > 0
 
@@ -375,11 +304,6 @@ private fun CostFindingsCard(
             )
         }
 
-        // WARNINGS ALWAYS, CAUTIONS ONLY WHEN THEY CAN BE TRUE. A warning is a sheet contradicting
-        // its own lines, which is a fact about figures on this screen and is not affected by whether
-        // anything has synced. Every caution this module produces is an ORPHAN caution, and every
-        // orphan caution offers a deleted sheet as the explanation — which is the wrong explanation,
-        // and an alarming one, the moment a sheet on this very screen is simply waiting for a tower.
         findings.warnings.forEach {
             Advisory(it, MaterialTheme.field.warningContainer, MaterialTheme.field.onWarningContainer)
         }
@@ -422,18 +346,6 @@ private fun CostFindingsCard(
     }
 }
 
-// --------------------------------------------------------------------------------------
-// The shared shell
-// --------------------------------------------------------------------------------------
-
-/**
- * A collapsible card at the foot of a stage.
- *
- * Expanded by default and collapsible rather than the other way round: a finding behind a closed
- * disclosure is a finding nobody reads, and these two panels exist because the findings were
- * previously a fortnight and several hundred kilometres away. Collapsible, because it sits under a
- * form the designer is still filling in and must be possible to get out of the way.
- */
 @Composable
 private fun FindingsCard(
     title: String,
@@ -497,14 +409,6 @@ private fun Advisory(text: String, container: Color, ink: Color) {
     )
 }
 
-/**
- * One verdict, with the token that produced it shown rather than translated away.
- *
- * UNVERIFIABLE, NOT_ITEMISED and NOT_COMPUTABLE are printed as they are, and are drawn in the NEUTRAL
- * colour rather than the warning one, because they are refusals and not criticisms. Colouring "too
- * few observations to judge this band" the same amber as "this subtotal contradicts its lines" is how
- * a designer learns that the amber means nothing.
- */
 @Composable
 private fun Verdict(token: String, headline: String, body: String, good: Boolean, bad: Boolean) {
     val container = when {
@@ -534,7 +438,6 @@ private fun Verdict(token: String, headline: String, body: String, good: Boolean
     }
 }
 
-/** The two subtotals a line roll-up may fill (A16), and only when it disagrees or nothing was typed. */
 internal fun dwUsableCheck(check: com.designprototype.workshop.data.DwCostCheck): Boolean =
     (check.key == "materialCost" || check.key == "labourCost") &&
         check.computed != null &&

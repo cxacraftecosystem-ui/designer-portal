@@ -1,10 +1,3 @@
-"""Shared seeding for the Ministry export pack tests (``test_ministry_exports_*.py``).
-
-Not a test module. The pack tables are used by nothing else, so each test starts by clearing them
-(:func:`reset`) — the ``(period, scheme)`` unique key would otherwise make one test's rows another's.
-Storage is a dict (:class:`FakeBucket`); mail is switched on by passing a settings copy.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -20,8 +13,6 @@ DIGEST_TOPIC_PREFIX = "ministry-packs:"
 
 
 def private(work: Any) -> Any:
-    """Run ``work`` on its own connection, as ``test_notify_delivery_db.py`` does."""
-
     async def connected() -> Any:
         await db.connect()
         try:
@@ -33,11 +24,6 @@ def private(work: Any) -> Any:
 
 
 def own_client(work: Any) -> Any:
-    """Run ``work(client)`` on a PRIVATE ``Prisma()``, for a test whose ``TestClient`` is alive.
-
-    The shared ``db`` belongs to the app while a client runs, so connecting it here would be
-    ``AlreadyConnectedError``; a client of our own on a loop of our own touches nothing the app holds.
-    """
     from prisma import Prisma
 
     async def connected() -> Any:
@@ -83,7 +69,7 @@ async def make_workshop(owner_id: str, kind: str | None, **extra: Any) -> Any:
     tag = uuid.uuid4().hex[:6]
     data = {"title": f"Pack workshop {tag}", "createdById": owner_id, "workshopKind": kind, **extra}
     if data.get("status") == "APPROVED":
-        data.setdefault("approvedAt", datetime.now(UTC))  # DesignWorkshop_approved_has_approvedAt
+        data.setdefault("approvedAt", datetime.now(UTC))
     return await db.designworkshop.create(data=data)
 
 
@@ -92,8 +78,6 @@ def bearer(user: Any) -> dict[str, str]:
 
 
 class FakeBucket:
-    """``s3.put_object_bytes`` / ``head_object`` / ``object_exists`` / ``presign_get_url`` over a dict."""
-
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
         self.fail_puts = 0

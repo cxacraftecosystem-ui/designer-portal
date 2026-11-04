@@ -1,18 +1,3 @@
-/**
- * The .docx a browser writes from a `ReportDocument`, with the `docx` package — the counterpart of
- * `backend/app/services/report_docx.py`, whose typography this mirrors value for value: the heading
- * sizes and colours, the 9 pt table header in the accent fill with zebra rows, the borderless
- * key/value grid, the cover with the info table and no running head, "Page N of M" in the foot,
- * a Word contents field, and complex-script runs named a `w:cs` face.
- *
- * WHAT IS NOT THE SAME, said here and in `docs/DESIGN_WORKSHOP.md` rather than on screen: the
- * server draws its charts as native Word charts and this draws every chart and the map as a picture,
- * because a picture is what both the .docx and the .pdf written here can carry from one rasteriser.
- *
- * Images arrive through `loadImage` already decoded, oriented and re-encoded as JPEG or PNG
- * (`lib/offlineReport/images.ts`), so nothing here reads EXIF or guesses a format.
- */
-
 import {
   AlignmentType,
   BorderStyle,
@@ -666,7 +651,6 @@ class DocxWriter {
   }
 }
 
-/** Write the .docx. `dropped` names every picture and figure that could not be placed. */
 export async function renderDocx(
   document: ReportDocument,
   loadImage: ImageLoader,

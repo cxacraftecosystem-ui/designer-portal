@@ -1,50 +1,6 @@
 #!/usr/bin/env bash
-# First-boot provisioning for the Design Prototype Workshop API box (Ubuntu 26.04 "resolute", the
-# image main.tf selects since 2026-10-09; the box running today was built from 24.04 and is unaffected,
-# because this script only ever runs at a new box's first boot).
-# Installs system deps (including ffmpeg for Whisper audio chunking and nginx as
-# the reverse proxy so port 8000 is never exposed directly), prepares a swap file
-# (a floor, written for a 1 GiB box), lays down the nginx site + systemd units, and
-# installs the pinned CPython every release venv is built with (the last section).
-# The actual code is deployed by the GitHub Actions workflow (deploy-backend.yml).
-#
-# ON THE `fieldrepo` NAMES BELOW. The unit files, the nginx site and the systemctl calls kept their
-# pre-rebrand names on purpose. These are not strings in a config file — they are the names of units
-# that are already installed and running on the live instance, and `.github/workflows/deploy-backend.yml`
-# stops, restarts and reads journals for them BY NAME on every push to main. This script only ever
-# runs once, at first boot of a NEW box, so renaming here would rename nothing on the existing one:
-# the deploy would `systemctl restart design-workshop` against a unit that does not exist, exit
-# non-zero, and leave the old process running the old code while the pipeline reports a failure that
-# looks like an application problem. Renaming means either replacing the instance or a one-off
-# `systemctl disable --now` / re-enable performed over SSH, in the same change as the workflow edit.
-#
-# ─── THE UNITS BELOW MOVED TO THE RELEASE LAYOUT ON 2026-09-03 ────────────────────────────────────
-# They used to name `/home/ubuntu/app/backend` — one directory, overwritten in place by every
-# deploy, with no previous version left on the box and therefore no rollback that was not another
-# deploy. They now name `/home/ubuntu/app/current/backend`, where `current` is a symlink to
-# `/home/ubuntu/app/releases/<sha>-<run_id>.<attempt>` — named for the deploy RUN and not for the
-# commit since 2026-09-17, so a re-run stages into a fresh directory instead of rewriting the tree
-# that is serving traffic. Rolling back becomes flipping that symlink and restarting:
-# seconds, no build, no network.
-#
-# THIS SCRIPT RUNS AT FIRST BOOT AND NEVER AGAIN, so editing it changes nothing on the box that is
-# already running. The live instance is brought to the same configuration by the
-# "Prepare the release layout and the systemd units" step in `.github/workflows/deploy-backend.yml`,
-# which installs the identical paths and limits as systemd DROP-INS
-# (`/etc/systemd/system/fieldrepo.service.d/10-release-layout.conf` and `memory.conf`, and the same
-# pair for `fieldrepo-queue`) rather than rewriting these base units — because the base units on a
-# box provisioned months ago may carry hand edits that a rewrite would silently discard.
-#
-# THE TWO ARE REDUNDANT ON PURPOSE AND ARE NOT ALLOWED TO DISAGREE. A REBUILT box gets the right
-# paths from here even before its first deploy; the LIVE box gets them from the drop-ins. Change a
-# directive in one and change it in the other in the same commit — the failure mode of letting them
-# drift is a rebuilt instance that behaves differently from the one it replaced, which is the
-# hardest kind of difference to see.
-#
-# nginx starts on 127.0.0.1:8000; each deploy moves its proxy_pass to the port it just started.
 set -euxo pipefail
 
-# --- swap (written for a 1 GiB box's pip/prisma installs; still a floor) -----
 if [ ! -f /swapfile ]; then
   fallocate -l 2G /swapfile
   chmod 600 /swapfile
@@ -55,12 +11,8 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-# No Python package since 2026-10-09: 26.04's python3.14 (3.14.4) stays as the OS's own, and the
-# release venvs are built from the pinned CPython the last section installs. curl and ca-certificates
-# fetch it, openssl names prisma's query engine, and libatomic1 is for the Node the deploy pins (26.x).
 apt-get install -y git ffmpeg nginx libatomic1 curl ca-certificates openssl
 
-# --- nginx reverse proxy: 80 -> 127.0.0.1:8000 -------------------------------
 cat > /etc/nginx/sites-available/fieldrepo <<'NGINX'
 server {
     listen 80 default_server;
@@ -78,7 +30,6 @@ server {
     }
 }
 NGINX
-# Fail closed until the first deploy writes the CloudFront header check (docs/INFRA_ORIGIN_LOCK.md).
 echo 'allow 127.0.0.1; deny all;' > /etc/nginx/snippets/origin-verify.conf
 ln -sf /etc/nginx/sites-available/fieldrepo /etc/nginx/sites-enabled/fieldrepo
 rm -f /etc/nginx/sites-enabled/default
@@ -86,62 +37,6 @@ nginx -t
 systemctl enable nginx
 systemctl restart nginx
 
-# --- systemd unit for the API (uvicorn) --------------------------------------
-# IMPORTANT: a SINGLE uvicorn process (NOT --workers 2). With >1 worker uvicorn runs a
-# multiprocess supervisor that health-pings each worker over a pipe (answered by a daemon thread)
-# and SIGKILLs any worker that fails to pong within timeout_worker_healthcheck. On this small,
-# CPU-credit-throttled box a heavy transcription chunk (run via asyncio.to_thread) starved that
-# pong thread, so the supervisor SIGKILLed the worker mid-job. SIGKILL skips the shutdown hook, so
-# the worker's Prisma query-engine subprocess was orphaned (reparented to init) — one orphan per
-# kill cycle — until the orphans exhausted the pooler's client ceiling and EVERY DB call (login included)
-# returned HTTP 500 while /health (no DB) stayed 200. One process = no supervisor = no SIGKILL loop.
-# The media queue runs in its OWN service (fieldrepo-queue, below), so its heavy AI/ffmpeg work is
-# never in the request-serving process — that both removes the SIGKILL trigger and keeps responses
-# fast (no CloudFront 504). MEDIA_QUEUE_WORKER_ENABLED=false disables the in-process queue here.
-#
-# ─── AND THAT LINE IS A DEFAULT, NOT A GUARANTEE — CORRECTED 2026-09-03 ───────────────────────────
-# The unit below used to claim `Environment=` was "applied AFTER EnvironmentFile so it always wins".
-# systemd does not work that way. systemd.exec(5): the files named by EnvironmentFile= are read
-# shortly before the process is executed and "settings from these files override settings made with
-# Environment=" — WHATEVER THE TEXTUAL ORDER. Order only decides which of several EnvironmentFile=
-# lines beats the others. So a `.env` carrying MEDIA_QUEUE_WORKER_ENABLED=true beats this line, here
-# and in `.github/workflows/deploy-backend.yml`'s drop-in, and always did.
-#
-# Harm to date: none, because BACKEND_ENV has never carried the key — luck plus habit. The guarantee
-# now lives where it can be made: the deploy workflow's "Refuse a .env that would start a second
-# queue drain" step fails the deploy if the secret ever gains a truthy value. `app/core/config.py`
-# also defaults the flag to false since 2026-09-03, so an omitted key is off. The line below is
-# worth keeping as documentation and as the default for a `.env` that says nothing; it is not worth
-# relying on against a `.env` that says something.
-# Since 2026-10-19: fieldrepo-api@<port> (8000/8001), from /home/ubuntu/app/slot-<port>; nginx
-# proxies to one. backend/deploy/blue_green.sh installs the same template (its test compares them).
-# The web process must never run the queue. NOTE: EnvironmentFile= overrides Environment= whatever
-# the order (systemd.exec(5)), so this is the DEFAULT for a .env that omits the key, not an override
-# of one that sets it. The deploy workflow refuses a .env that sets it true.
-# A SOFT CEILING AND DELIBERATELY NO HARD ONE. 4 GiB of RAM on the t3.medium main.tf declares (2 GiB
-# on the t3.small this was set on), shared with the queue worker, nginx and the kernel. Over
-# MemoryHigh the cgroup is throttled and reclaimed hard, so a heavy request gets slower instead of
-# the kernel's OOM killer choosing a victim by badness score — which on this box has meant it
-# choosing UVICORN because the QUEUE was the hungry one, and the API then 502ing for a reason that
-# appears nowhere in its own log. There is no MemoryMax here on purpose: killing the API to save
-# memory is precisely the outcome these limits exist to prevent. The queue's unit below is the one
-# that carries a hard stop, because losing the queue is recoverable and losing the API is an outage.
-#
-# 1000M, RAISED FROM 500M ON 2026-09-17, AND THE OLD VALUE IS WHY THE BOX WAS RESIZED. 500M was set
-# to fit two soft ceilings plus headroom inside 1 GiB and was written down as "a first setting, not
-# a measurement". The measurement arrived when a deploy failed with the API unable to answer /health
-# on its own loopback for five minutes: `systemctl status fieldrepo` read
-# `Memory: 499.9M (high: 500.0M available: 100.0K peak: 500.4M swap: 483.9M)` — pinned to the
-# ceiling with 484 MB of the cgroup in swap. Raised, the same process settled at 634 MB and started
-# in under 25s. uvicorn wants ~634 MB and had been running every request through swap to pretend
-# otherwise. 634 MB does not fit in 911 MiB beside a queue worker, so the instance type moved too;
-# `instance_type` in main.tf carries the vmstat evidence. 1000M is ~1.6x the measured figure so
-# ordinary variation never touches the ceiling.
-# 10s (not 3s) between restarts so that IF the process ever does exit while the database's
-# pooler is at its client-connection ceiling, restarts don't hammer the pooler
-# faster than its connections can drain. (The app also now keeps serving and reconnects to
-# the DB in the background instead of exiting, so this is defense-in-depth.)
-# Reap the whole control group on stop/restart so a Prisma query-engine is never left orphaned.
 cat > /etc/systemd/system/fieldrepo-api@.service <<'UNIT'
 # backend/deploy/blue_green.sh: one instance per loopback port; nginx proxies to one.
 [Unit]
@@ -166,10 +61,6 @@ TimeoutStopSec=20
 WantedBy=multi-user.target
 UNIT
 
-# --- systemd unit for the media-processing queue worker ----------------------
-# Runs the transcription/measurement queue in its OWN process (see app/worker.py). Separate from
-# uvicorn on purpose: no multiprocess supervisor can SIGKILL it mid-job, and its heavy work never
-# competes with request serving. KillMode=control-group reaps its query-engine on restart.
 cat > /etc/systemd/system/fieldrepo-queue.service <<'UNIT'
 [Unit]
 Description=Design Prototype Workshop media queue worker
@@ -211,21 +102,10 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-# ENABLED, NOT STARTED: on a fresh box `current` does not exist yet. The first deploy starts the API
-# on its port and enables it, then starts the queue; until then nginx answers 502.
 systemctl enable fieldrepo-queue || true
-# `releases/` is created here as well as by the deploy, so a human looking at a freshly built box
-# can see the shape the units expect rather than having to infer it from a broken symlink.
 mkdir -p /home/ubuntu/app/releases
 chown -R ubuntu:ubuntu /home/ubuntu/app
 
-# --- the interpreter the release venvs are built with: upstream CPython, pinned by digest ---
-# The SAME four values as BOX_PYTHON_* in .github/workflows/deploy-backend.yml (its job env says why,
-# and how to raise them; backend/tests/test_box_interpreter_pin.py fails when the two disagree), and
-# the install its "Install the pinned CPython on the box" step repeats on every deploy. LAST, on
-# purpose: a failed download or a digest mismatch (refused before tar runs) stops the script with
-# the box otherwise provisioned, cloud-init's log says why, and the first deploy tries again.
-# (EC2 caps user data at 16 KB, which `terraform validate` enforces: keep these comments short.)
 BOX_PYTHON_VERSION="3.15.2"
 BOX_PYTHON_BUILD="20261026"
 BOX_PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.15.2%2B20261026-x86_64-unknown-linux-gnu-install_only.tar.gz"
@@ -237,11 +117,9 @@ if [ ! -e "$box_python_home" ]; then
   trap 'rm -rf "$stage"' EXIT
   chmod 0755 "$stage"
   curl -fsSL --proto '=https' --tlsv1.2 --retry 5 --retry-delay 10 --retry-all-errors --connect-timeout 30 --max-time 900 -o "$stage/python.tar.gz" "$BOX_PYTHON_URL"
-  # `sha256sum -c` exits non-zero on a mismatch, and `set -e` ends the script before tar can run.
   echo "${BOX_PYTHON_SHA256}  $stage/python.tar.gz" | sha256sum -c -
   tar -xzf "$stage/python.tar.gz" -C "$stage" --no-same-owner
   rm -f "$stage/python.tar.gz"
-  # Byte-compile the stdlib now: the units' user cannot write __pycache__ here (the workflow says why).
   "$stage/python/bin/python${BOX_PYTHON_VERSION%.*}" -I -m compileall -q "$stage/python/lib/python${BOX_PYTHON_VERSION%.*}"
   printf '%s\n' "$BOX_PYTHON_SHA256" > "$stage/python/.pbs-sha256"
   printf '%s\n' "$BOX_PYTHON_URL" > "$stage/python/.pbs-url"

@@ -4,17 +4,6 @@ import { Info } from "lucide-react";
 
 import { infoToggleAria } from "@/components/ui/infoToggleAria";
 
-/**
- * The small "i" beside a field label that opens its `details`.
- *
- * A real `<button>` with `aria-expanded`, collapsed by default, one press to open. The glyph is 20px
- * so it sits quietly beside an uppercase label; the `after:` box extends the press target to 44px
- * on every side without moving anything. Never put this INSIDE a `<label>`: a label forwards a click
- * to its control and folds every named descendant into the control's accessible name.
- *
- * The panel is the caller's (it belongs under the label row, above the control), so this only
- * draws the toggle. Pure half: `infoToggleAria.ts`.
- */
 export function InfoToggle({
   fieldLabel,
   expanded,
@@ -43,7 +32,6 @@ export function InfoToggle({
   );
 }
 
-/** The opened guidance. Mounted only while open, so `aria-controls` never points at nothing. */
 export function InfoPanel({ id, children }: { id: string; children: React.ReactNode }) {
   return (
     <p

@@ -9,33 +9,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * Every stage-20 answer is either applied on this device or named as unsupported, with a reason.
- *
- * THIS TEST IS THE FEATURE. Seventeen switches on stage 20 were saved by the form, carried by the
- * sync and read by nothing on the handset — and the reason that could happen, and could stay
- * happening, is that nothing anywhere had to have an opinion about them. A registry key that no
- * code mentions is invisible: the form renders it from the registry, the store keeps it because it
- * keeps everything, and the report simply never asks. The designer finds out by comparing their
- * file with the office's, if ever.
- *
- * So the ledger is asserted in BOTH directions against the shipped registry. A key the registry
- * gains and nobody decided about fails the build here, at the moment it is added, rather than in a
- * district office a year later.
- *
- * It reads the BUNDLED ASSET rather than a copy, because the bundled asset is what the app actually
- * renders stage 20 from on first launch with no network.
- */
 class ReportSettingsLedgerTest {
 
-    /**
-     * The registry as shipped in the APK.
-     *
-     * Located by walking up from the test's working directory rather than by assuming one: Gradle
-     * runs unit tests with the module directory as the working directory, but that is a default
-     * rather than a contract, and a test that silently cannot find the registry would pass by
-     * checking nothing at all.
-     */
     private val assetKeys: List<String> by lazy {
         val relative = "app/src/main/assets/design-workshop-schema.json"
         var directory: File? = File("").absoluteFile
@@ -98,8 +73,6 @@ class ReportSettingsLedgerTest {
                 entry.note.length >= 20,
             )
         }
-        // An UNSUPPORTED entry that did not explain itself would be worse than no entry: a designer
-        // reading "not supported" with no reason cannot tell whether to send the file or wait.
         STAGE_20_SETTINGS
             .filter { it.reach != SettingReach.APPLIED }
             .forEach { assertTrue("${it.key} must say why", it.note.length >= 40) }
@@ -107,10 +80,6 @@ class ReportSettingsLedgerTest {
 
     @Test
     fun `every toggle is honoured on this device now, transcripts included`() {
-        // Pinned as a LIST rather than a count so that a toggle falling back to unsupported is a
-        // deliberate edit to this line and not a number that quietly drifts. The transcript
-        // annexure was the last one: its gap was DATA rather than drawing, and DA-29 closed it by
-        // giving the device the transcripts (`DwTranscriptStore`), not by changing the renderer.
         assertEquals(
             emptyList<String>(),
             STAGE_20_SETTINGS.filter { it.reach == SettingReach.NOT_ON_DEVICE }.map { it.key },
@@ -147,9 +116,6 @@ class ReportSettingsLedgerTest {
                 "looks different: $said",
             said.any { it.contains("DCH_2019_LEGACY") },
         )
-        // And an id this build DOES know produces no substitution warning. The map and the
-        // infographics used to warn here as well; both are drawn on this device now, so the only
-        // section left that can warn is the transcript annexure, and only when it was asked for.
         assertTrue(
             reportWarnings("DCH_STANDARD", reportTemplate("DCH_STANDARD"), null, "DOCX")
                 .none { it.contains("is not available, so the report was generated") }
@@ -158,9 +124,6 @@ class ReportSettingsLedgerTest {
 
     @Test
     fun `the map and the infographics are no longer disowned`() {
-        // Both are drawn on this device now. A file that carries the front-page figures AND a note
-        // saying it does not is worse than either alone — the same claim the annexures had to make
-        // when they landed.
         val said = reportWarnings("DCH_STANDARD", reportTemplate("DCH_STANDARD"), null, "DOCX")
         assertEquals(
             "the warnings still disown a section this build draws: $said",
@@ -178,8 +141,6 @@ class ReportSettingsLedgerTest {
             "04 March 2026",
         )
         assertTrue("the line must date the file: $asked", asked.contains("04 March 2026"))
-        // A document handed to an officer does not narrate a section it lacks (2026-10-10): asking
-        // for transcripts leaves the line as the date and nothing else.
         assertEquals(
             "a designer who asked for transcripts gets the plain provenance line: $asked",
             "Generated in the field on 04 March 2026.",
@@ -188,7 +149,6 @@ class ReportSettingsLedgerTest {
         val unasked = fieldCopyNote(template, emptyMap(), "04 March 2026")
         assertTrue("nothing is outstanding here: $unasked", !unasked.contains("also carries"))
         assertTrue("and it still says which copy this is: $unasked", unasked.contains("in the field"))
-        // With no timestamp it still names the surface rather than printing a dangling "on ".
         assertEquals("Generated in the field.", fieldCopyNote(template, emptyMap(), ""))
     }
 
@@ -207,8 +167,6 @@ class ReportSettingsLedgerTest {
             mapOf("includeTranscripts" to kotlinx.serialization.json.JsonPrimitive(true)),
             "DOCX",
         )
-        // The handset does not build this annexure; that gap is recorded in docs/OPEN_FINDINGS.md
-        // rather than narrated on the export screen (2026-10-10).
         assertTrue(
             "the export screen must not narrate the transcript annexure: $asked",
             asked.none { it.contains("transcripts") },

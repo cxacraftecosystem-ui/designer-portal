@@ -1,22 +1,5 @@
 "use client";
 
-/**
- * The second step of a sign-in, drawn on the /login card in place of the sign-in controls.
- *
- * Reached after ANY first factor — the password, Google, Microsoft or Yahoo — when the account has
- * two-step verification on: `POST /auth/login` answered a challenge token instead of a session, and
- * this form trades it and a code for the session at `POST /auth/two-factor/verify`. Nobody is signed in
- * until that succeeds, so "Back to sign in" simply forgets the challenge.
- *
- * SIX BOXES FOR THE CODE, A SEPARATE BOX FOR A RECOVERY CODE (owner's rule, 2026-10-17). The
- * authenticator code goes in `OtpCodeInput` — six boxes, digits only, submitted the moment the sixth
- * lands — and "Use a recovery code instead" swaps in a plain text box for an `xxxx-xxxx` code
- * (`TwoStepCodeEntry`). The server still tells the two apart by shape.
- *
- * Every refusal is the server's sentence, in the card: a wrong code keeps the form, and a finished
- * challenge (five wrong codes, or five minutes) says to sign in again and offers the way back.
- */
-
 import { useEffect, useRef, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 
@@ -35,9 +18,7 @@ export function TwoStepChallengeForm({
   onCancel
 }: {
   challengeToken: string;
-  /** The account, signed in. The caller settles whatever else sign-in owes (consent, a password). */
   onSignedIn: (account: User) => void | Promise<void>;
-  /** Back to the sign-in controls; the challenge is dropped. */
   onCancel: () => void;
 }) {
   const { verifyTwoFactor } = useAuth();
@@ -47,11 +28,9 @@ export function TwoStepChallengeForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorKey, setErrorKey] = useState(0);
-  /** The challenge is finished; only signing in again leads anywhere. */
   const [dead, setDead] = useState(false);
   const box = useRef<TwoStepCodeEntryHandle | null>(null);
 
-  // On arrival: the six boxes are where the next keystroke belongs.
   useEffect(() => {
     box.current?.focus();
   }, []);
@@ -98,7 +77,6 @@ export function TwoStepChallengeForm({
         </div>
       </div>
 
-      {/* Mounted from first paint and emptied rather than removed, so the sentence is announced. */}
       <div
         role="alert"
         className={error ? "rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-error-600" : "sr-only"}

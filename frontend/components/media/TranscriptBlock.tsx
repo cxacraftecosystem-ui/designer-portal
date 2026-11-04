@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AudioLines, Loader2 } from "lucide-react";
 
 import { TranscriptInsights } from "@/components/media/TranscriptInsights";
+import { TranscriptRefine } from "@/components/media/TranscriptRefine";
 import { EditedFlag, MarkdownDocument } from "@/components/richtext/MarkdownDocument";
 import { useAuth } from "@/components/AuthProvider";
 import { TranscriptViewer } from "@/components/transcript/TranscriptViewer";
@@ -15,52 +16,49 @@ import type { MediaFile } from "@/lib/types";
 const PROCESSING = new Set(["QUEUED", "PROCESSING", "PENDING", "RUNNING"]);
 const DONE = new Set(["COMPLETED", "DONE", "EMPTY"]);
 
-/**
- * Inline transcript for an audio (or any transcribable) media file. Audio items first render an
- * inline themed player, then the transcript below it:
- * - While the backend transcription job is queued/processing, shows a spinner ("buffer icon").
- * - When done, shows the transcript text (or an "empty" note).
- * - On failure / unavailable, shows the reason so it never silently disappears.
- * Renders nothing for non-audio media with no transcript data.
- *
- * ANDROID PARITY — the "Transcribe now" / "Re-transcribe now" control at the foot of this block is
- * the web half of MainActivity's `MediaWithTranscript` -> `TranscribeNowButton`, which has shipped on
- * the phone since the feature landed. Until it did, a researcher could re-run a transcript standing
- * in a workshop and not at a desk: the identical account, the identical file, and one client simply
- * had no way to ask. The labels are Android's, verbatim, because the same person moves between the
- * two apps mid-workshop.
- *
- * `POST /media/{id}/transcribe-now` is `require_admin` AND 400s anything that is not AUDIO, so the
- * button renders only when both hold — never a control that exists to be refused.
- *
- * AND IT IS HELD, NOT HIDDEN, FOR AN ADMIN WHO HOLDS A POST ON THE FILE'S WORKSHOP (2026-10-09): the
- * server refuses a post holder every write to that workshop's content, a re-run transcript included
- * (`design_workshop_posts.refuse_a_holders_media_write`). `readOnlyReason` — the caller's, from
- * `mediaHeldReason` — disables the button and says why where "Runs immediately…" would be, as the
- * other held screens print theirs; the server's 403 still prints verbatim if one arrives anyway.
- *
- * `readOnly` drops the re-run altogether, for a record's read-only page: a re-run REPLACES the
- * transcript, so it is an update, and on those pages updating is only ever behind "Update".
- */
 type TranscriptBlockProps = {
   media: MediaFile;
   onUpdated?: (updated: MediaFile) => void;
-  /** Why the re-run is held, or null when it is not. See the header. */
   readOnlyReason?: string | null;
-  /** Hide the re-run control entirely — a read-only record page. See the header. */
   readOnly?: boolean;
 };
 
-/**
- * An audio recording opens the shared transcript viewer (`components/transcript/`, both portals):
- * turns, copy, downloads, karaoke. A recording with no structured transcript yet (stored before the
- * turn store, or a deployment without it) draws the stored text and states below, unchanged.
- */
 export function TranscriptBlock(props: TranscriptBlockProps) {
-  const { media } = props;
+  const [updated, setUpdated] = useState<MediaFile | null>(null);
+  const media = updated && updated.id === props.media.id ? updated : props.media;
+  const inner = { ...props, media };
   const isAudio = media.mediaType === "AUDIO" || (media.mimeType ?? "").toLowerCase().startsWith("audio/");
-  if (!isAudio) return <LegacyTranscriptBlock {...props} />;
-  return <TranscriptViewer mediaId={media.id} audioUrl={media.url} fallback={<LegacyTranscriptBlock {...props} />} />;
+  const isVideo = media.mediaType === "VIDEO" || (media.mimeType ?? "").toLowerCase().startsWith("video/");
+  const refine = (
+    <TranscriptRefine
+      media={media}
+      readOnly={props.readOnly || Boolean(props.readOnlyReason)}
+      onUpdated={(next) => {
+        setUpdated(next);
+        props.onUpdated?.(next);
+      }}
+    />
+  );
+  if (!isAudio && !isVideo) {
+    return (
+      <>
+        <LegacyTranscriptBlock {...inner} />
+        {refine}
+      </>
+    );
+  }
+  return (
+    <>
+      <TranscriptViewer
+        key={updated?.transcriptText ?? "stored"}
+        mediaId={media.id}
+        audioUrl={media.url}
+        video={isVideo}
+        fallback={<LegacyTranscriptBlock {...inner} />}
+      />
+      {refine}
+    </>
+  );
 }
 
 function LegacyTranscriptBlock({
@@ -71,14 +69,10 @@ function LegacyTranscriptBlock({
 }: {
   media: MediaFile;
   onUpdated?: (updated: MediaFile) => void;
-  /** Why the re-run is held, or null when it is not. See the header. */
   readOnlyReason?: string | null;
-  /** Hide the re-run control entirely — a read-only record page. See the header. */
   readOnly?: boolean;
 }) {
   const { user } = useAuth();
-  // The transcript is hoisted into local state (Android: `remember(media.id)`) so a fresh run
-  // replaces what is on screen immediately, instead of waiting for the parent's next list fetch.
   const [live, setLive] = useState<MediaFile | null>(null);
   const [running, setRunning] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -92,9 +86,8 @@ function LegacyTranscriptBlock({
   const isAudio = current.mediaType === "AUDIO" || (current.mimeType ?? "").toLowerCase().startsWith("audio/");
   const hasText = !!current.transcriptText && current.transcriptText.trim().length > 0;
 
-  if (!isAudio && !status && !hasText) return null;
+  if (!isAudio && current.mediaType !== "VIDEO" && !status && !hasText) return null;
 
-  // Inline playback above whatever transcript state renders below.
   const player = isAudio && current.url ? <AudioPlayer src={current.url} className="mt-2" /> : null;
 
   async function transcribeNow() {
@@ -106,25 +99,14 @@ function LegacyTranscriptBlock({
       setLive(updated);
       onUpdated?.(updated);
     } catch (err) {
-      // Android reverts to the previous status and says nothing, which leaves an admin pressing a
-      // button that appears to do nothing. Name the failure instead — this whole track exists
-      // because a transcript that did not happen said nothing about why.
       setFailure(err instanceof Error ? err.message : "Transcribing now failed. Try again, or check the AI key on the settings page.");
     } finally {
       setRunning(false);
     }
   }
 
-  /**
-   * Admin-only, audio-only re-run. `hasText` picks the label exactly as Android does: with a
-   * transcript already on screen this REPLACES it, and a control that said "Transcribe now" over
-   * existing text would not be saying so.
-   */
-  // `mediaType === "AUDIO"` EXACTLY, not the mime-sniffing `isAudio` the player uses: the route tests
-  // the stored mediaType column and 400s everything else, so a DOCUMENT row carrying an `audio/*`
-  // mime would render a button that can only be refused.
   const control =
-    !readOnly && isAdmin(user) && current.mediaType === "AUDIO" ? (
+    !readOnly && isAdmin(user) && (current.mediaType === "AUDIO" || current.mediaType === "VIDEO") ? (
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -135,8 +117,6 @@ function LegacyTranscriptBlock({
           {running ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <AudioLines className="h-4 w-4" aria-hidden />}
           {running ? "Transcribing…" : hasText ? "Re-transcribe now" : "Transcribe now"}
         </button>
-        {/* The amber pair and not amber ink alone: this sits on a themed card that inverts, and
-            `amber-800` on the dark ground is unreadable. Worded, never the greyed button alone. */}
         {readOnlyReason ? (
           <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs text-amber-800">{readOnlyReason}</span>
         ) : (
@@ -167,17 +147,6 @@ function LegacyTranscriptBlock({
     return (
       <>
         {player}
-        {/*
-          RENDER, COPY AND SAVE, from the one component the interview form and the consolidated page
-          also mount — see `components/richtext/MarkdownDocument.tsx`. A transcript is the artisan's
-          words, and until 2026-08-31 the only way out of this box was to select it with a mouse.
-
-          `edited` is TRUE or UNDEFINED and never false: a null stamp means "nothing on record",
-          which for every row stored before that date is not the same as "nobody edited this". The
-          heading stays above it because this block sits inside a media card that also carries a
-          player, a filename and the transcribe control, and an unlabelled slab of prose in that
-          stack does not announce what it is.
-        */}
         <div className="mt-2">
           <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-soft">Transcript</div>
           <MarkdownDocument
@@ -194,7 +163,17 @@ function LegacyTranscriptBlock({
     );
   }
 
-  if (PROCESSING.has(status) || (isAudio && !status)) {
+  if (!status) {
+    return (
+      <>
+        {player}
+        {control}
+        {failureNote}
+      </>
+    );
+  }
+
+  if (PROCESSING.has(status)) {
     return (
       <>
         {player}

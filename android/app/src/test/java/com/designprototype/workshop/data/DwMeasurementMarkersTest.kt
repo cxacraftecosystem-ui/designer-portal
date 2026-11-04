@@ -10,35 +10,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The claim a saved dimension makes about HOW it was measured, and the rule that withdraws it.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- * WHY THESE ARE TESTS AND NOT A CODE REVIEW
- * ══════════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Both directions of failure are invisible on the screen where they happen.
- *
- * A marker that is WRONGLY KEPT — left on a number somebody typed over after accepting a proposal —
- * renders identically to one that is right. The form shows the designer's own number, the save
- * succeeds, and the record quietly asserts that a photograph's geometry produced a figure a person
- * typed. Nobody finds out until somebody tries to re-derive it from marks that never existed.
- *
- * A marker that is WRONGLY SENT — naming a dimension this request carries no value for, or a column
- * outside the documented three — is worse than invisible: the server refuses the WHOLE save with a
- * 422, and Android's outbox will not queue a 4xx because the server saw it and said no. So the
- * record is not merely unmarked, it is GONE, and it was filled in somewhere with no signal.
- *
- * That is the whole reason this logic lives in a pure class with no Compose and no network in it.
- */
 class DwMeasurementMarkersTest {
 
     private fun geometry() = dwGeometryMarker(DW_TECHNIQUE_SCALE)
 
     private fun methodOf(body: JsonObject?, column: String): String? =
         (body?.get(column) as? JsonObject)?.get("method")?.jsonPrimitive?.content
-
-    /* ── The claim stands while the number is still the one that was proposed ─────────────────── */
 
     @Test
     fun `an untouched acceptance is marked`() {
@@ -55,14 +32,11 @@ class DwMeasurementMarkersTest {
         )
     }
 
-    /* ── …and is withdrawn the moment it stops being true ─────────────────────────────────────── */
-
     @Test
     fun `typing over an accepted reading drops its marker`() {
         val markers = DwMeasurementMarkers()
         markers.accept("lengthInches", "12.4", geometry())
 
-        // The designer looked at the object again and typed their own figure.
         val body = markers.body(mapOf("lengthInches" to "13"))
 
         assertNull(
@@ -85,8 +59,6 @@ class DwMeasurementMarkersTest {
         val markers = DwMeasurementMarkers()
         markers.accept("breadthInches", "12.0", geometry())
 
-        // Not a rounding detail: the panel rounds to the precision its error bar reaches, so the
-        // number of digits is itself part of what was measured.
         assertNull(markers.body(mapOf("breadthInches" to "12.00")))
     }
 
@@ -101,8 +73,6 @@ class DwMeasurementMarkersTest {
         )
     }
 
-    /* ── One field's edit must not take another field's marker with it ────────────────────────── */
-
     @Test
     fun `editing one dimension leaves the others marked`() {
         val markers = DwMeasurementMarkers()
@@ -114,8 +84,6 @@ class DwMeasurementMarkersTest {
         assertNull("the one that was typed over", methodOf(body, "lengthInches"))
         assertEquals("the one that was not", "PHOTO_GEOMETRY", methodOf(body, "breadthInches"))
     }
-
-    /* ── The two shapes the server accepts, and the one it refuses by name ────────────────────── */
 
     @Test
     fun `a vision reading echoes the server's own marker verbatim`() {
@@ -147,8 +115,6 @@ class DwMeasurementMarkersTest {
 
     @Test
     fun `an unknown technique is dropped rather than sent`() {
-        // The server refuses a technique outside GEOMETRY_TECHNIQUES, and a refusal here costs the
-        // whole record. The method is worth recording without it.
         val marker = dwGeometryMarker("TRIANGULATED")
 
         assertEquals("PHOTO_GEOMETRY", marker["method"]?.jsonPrimitive?.content)
@@ -158,8 +124,6 @@ class DwMeasurementMarkersTest {
     @Test
     fun `a column outside the documented three can never be marked`() {
         val markers = DwMeasurementMarkers()
-        // The tool form's unit-less `height`, and its four other typed boxes. The server answers a
-        // marker naming one of these with a 422 that names it, so this must not reach the wire.
         listOf("height", "width", "thickness", "weight", "radius", "costOfMaking").forEach {
             markers.accept(it, "5", geometry())
         }
@@ -169,26 +133,16 @@ class DwMeasurementMarkersTest {
 
     @Test
     fun `every markable column is one the server allows`() {
-        // Pins this file's set against the three names `DIMENSION_FIELDS` holds. A fourth added here
-        // without the server agreeing is a 422 on every save that uses it.
         assertEquals(setOf("lengthInches", "breadthInches", "heightInches"), DW_MEASUREMENT_DIMENSIONS)
     }
 
     @Test
     fun `a form nobody accepted anything on sends no key at all`() {
-        // The ordinary case, and the one that must stay byte-for-byte identical to what this app sent
-        // before the key existed: null, so `explicitNulls = false` drops it from the body entirely.
         assertNull(DwMeasurementMarkers().body(mapOf("lengthInches" to "12", "breadthInches" to "6")))
     }
 
-    /* ── The round trip that actually reaches the server ──────────────────────────────────────── */
-
     @Test
     fun `the marker survives the outbox`() {
-        // THE POINT OF THIS TEST. A record saved in a courtyard is serialised into the outbox and
-        // decoded back out a fortnight later, and if the marker did not survive that trip an offline
-        // record would lose its provenance while an online one kept it — the one asymmetry nobody
-        // would notice, because both saves succeed.
         val outbox = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
         val markers = DwMeasurementMarkers()
         markers.accept("lengthInches", "12.4", geometry())
@@ -211,8 +165,6 @@ class DwMeasurementMarkersTest {
 
     @Test
     fun `an entry queued before this key existed still replays`() {
-        // A handset may be a fortnight behind, and its outbox older still. An entry written without
-        // the key must decode to "no marker" rather than failing the replay.
         val outbox = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true }
         val legacy = """{"craftName":"Pattachitra","place":"Raghurajpur","artisanName":"A. Maharana",
             |"productName":"Palm leaf box","lengthInches":12.4}""".trimMargin()

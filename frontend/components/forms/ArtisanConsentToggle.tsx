@@ -1,14 +1,5 @@
 "use client";
 
-/**
- * The artisan's own answer to "may their recordings be sent to an outside service" (transcription,
- * AI summaries, answer drafting). ONE CONSENT STORE (19 Oct 2026): this reads and writes the
- * artisan's row in the `Consent` ledger through `/artisans/{id}/consent` — the same record the Field
- * Repository's artisan form reads and writes, so the two portals cannot disagree. Consent is assumed
- * by default and can be revoked (owner decision, 19 Oct 2026): the switch is ON unless a refusal is on
- * record, and an artisan's refusal stops every send of their recordings in both portals. Saved at
- * once, so it sits outside the form's dirty tracking.
- */
 import { useEffect, useState } from "react";
 
 import { Toggle } from "@/components/ui/Toggle";

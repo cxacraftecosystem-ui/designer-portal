@@ -90,8 +90,10 @@ correctly.
 
 ### The honest recommendation for the production box
 
-Production is one **t3.micro: 2 burstable vCPU, 1 GiB of RAM total**, already running uvicorn, the
-Prisma query engine and the media queue worker behind nginx behind CloudFront.
+Production is one **t3.medium: 2 burstable vCPU, 4 GiB of RAM** (since 2026-10-10; a t3.micro with
+1 GiB when the measurements below were taken), already running the API, the Prisma query engine and the
+media queue worker behind nginx behind CloudFront. The local matting figures below still rule it out:
+one matte wants most of the queue's 1,100 MB ceiling.
 
 - **Do not run `rembg_local` there.** Measured on a laptop, `import rembg` alone took the process
   from 35 MB to 167 MB, building a U2Net session took it to 564 MB, and a single 1.9-megapixel
@@ -626,3 +628,20 @@ to a decision, and put the new date beside the new figure.
 
 **Re-read this page when** a provider is added to `backend/app/ai_features/providers/`, when a flag in
 §3 is renamed, or when either test file above changes shape.
+
+
+## Release 0.0.10: AI fixes
+
+**Translation of unintelligible speech.** Gemini is told to write `[unclear]` when it cannot make out the original. Before 0.0.10 such an answer was shorter than 30% of the original, so the check that catches summaries rejected it twice and marked the turn FAILED. In the Field Repository on 3 November 2026 this happened to 16 single-turn transcripts made from older text transcripts (Hindi, Gujarati, Kannada, Tamil, Telugu and one with no detected language). Their source text was mostly repetitive or garbled speech-to-text output. From 0.0.10, an English answer that contains `[unclear]` skips the length check and the strict number check. An empty answer, or a short answer with no `[unclear]` marker, still fails. Digits in any Unicode script are read as ASCII digits when numbers are compared (`translate.numbers_in`).
+
+**Models.** `GEMINI_MEASUREMENT_MODEL` now defaults to `gemini-3.8-flash`. Grid measurement moves to `gemini-3.7-flash` when the configured model returns 404. Photo captions and identity OCR read the same setting. `OPENAI_CHAT_MODEL` now defaults to `gpt-6-luna` (GPT-6 Luna). An OpenAI model in the GPT-5, GPT-6 or o-series is sent no `temperature`, because those models accept only the default (`ai_providers.openai_sampling`). A box that sets either variable keeps its own value.
+
+**Refusals.** A Gemini prompt block (`promptFeedback.blockReason`), an empty candidate that finished for a safety reason, or an OpenAI `refusal` is now reported as declined (`ModelDeclined`), not as an empty answer. Text verbs return `REFUSED`, and the user sees that the model declined. They are not asked to try again. Transcript summaries close with `MODEL_DECLINED` and are not retried. Gemini's internal thought parts are never shown as the answer.
+
+**Billing and timeouts.** A provider's HTTP 402 is reported as "the service's credit has run out", not as a refused request. A summary job that hits 402 is held for 15 minutes and spends no attempt, as the Gemini transcript pipeline already does. A timeout is reported as "took too long to answer".
+
+**Refining transcripts without an OpenAI key.** When the deployment has no OpenAI key, refining a transcript runs on the deployment's resolved AI key (Gemini on the designer portal), so the Android Refine action works.
+
+**Text provider (coordinator decision, 4 November 2026).** Every text verb on the deployment's key (proofread, expand, summarise, translate, captions, refine transcript, answer drafts, transcript summaries) runs on Gemini 3.8 Flash and falls back to Gemini 3.7 Flash when 3.8 returns 404 (`ai_providers.post_gemini`, `gemini_models`). An OpenAI or Anthropic deployment key is not used for these jobs, even when it is configured, unless an operator sets `AI_TEXT_PROVIDER=OPENAI` or `AI_TEXT_PROVIDER=ANTHROPIC` in the box `.env`. A user's own key still runs their own choice. When OpenAI is selected, the default model is `gpt-6-luna` (GPT-6 Luna). When Anthropic is selected, the default model is `claude-sonnet-5-5` (Claude Sonnet 5.5). Transcription keeps its own provider order. On `GET /transcripts/{id}/versions`, cost and badges follow one rule: ADMIN, MASTER_ADMIN and MINISTRY_ADMIN see them, and no one else does.
+
+**Refine transcript on the web (R1).** Under a stored transcript, the uploader and the content admins see Refine transcript and Refine & translate (`components/media/TranscriptRefine.tsx`, `lib/transcriptRefine.ts`, identical in both portals). The cost confirmation, its "Do not remind me again" switch (kept in this browser), the refined Markdown and Approve or Reject match Android. Approve saves through `POST /media/{id}/transcript`. Read-only record pages and held workshops show no control.

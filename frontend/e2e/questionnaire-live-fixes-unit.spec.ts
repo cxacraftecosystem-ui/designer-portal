@@ -1,9 +1,3 @@
-/**
- * The questionnaire audit of 21 Oct 2026 (AUDIT_DR_2026-10-21.md), web half — one regression test per
- * item. Pure rules are called; wiring the page has no renderer for is read from source with the
- * comments stripped, as `questionnaire-edit-unit.spec.ts` does.
- */
-
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -32,7 +26,6 @@ import { interviewRestoreRefusal, restoredInterviewNotice } from "@/components/q
 const ROOT = join(__dirname, "..");
 const read = (relative: string) => readFileSync(join(ROOT, relative), "utf8").split("\r\n").join("\n");
 
-/** Comments out, strings kept — the helper `questionnaire-edit-unit.spec.ts` uses. */
 function code(source: string): string {
   let out = "";
   let index = 0;

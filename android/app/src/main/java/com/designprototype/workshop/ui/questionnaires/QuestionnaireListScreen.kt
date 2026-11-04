@@ -58,23 +58,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/**
- * Every questionnaire this designer authored, newest first.
- *
- * THE LIST IS NOT MERGED WITH ANYTHING LOCAL, unlike the design-workshop list next door, and the
- * asymmetry is deliberate. A design workshop is a fortnight of capture in a courtyard, so it exists
- * on the phone first and syncs later. A questionnaire is a form somebody typed into a spreadsheet on
- * a laptop and uploaded; there is nothing on this device that could stand in for it, and pretending
- * otherwise would mean showing a stale question set to somebody about to record answers against it.
- * When there is no signal this screen says so instead of inventing a list.
- *
- * There is deliberately no DELETE anywhere in this feature. A questionnaire with answers against it
- * is somebody's fieldwork; the API offers deactivation instead, which takes it out of every list and
- * keeps the answers — so the "Show deactivated" switch below is the only way back to one, and hiding
- * that switch would make deactivation indistinguishable from destruction.
- */
-
-/** How long the search box waits before it asks the server. Paces an ordinary typing speed. */
 private const val SEARCH_DEBOUNCE_MS = 350L
 
 @Composable
@@ -83,35 +66,16 @@ fun QuestionnaireListScreen(
     onOpen: (questionnaireId: String) -> Unit,
     onMessage: (String) -> Unit,
     onError: (String) -> Unit,
-    /**
-     * A `.dpwq` file another phone has just handed this app through the share sheet or a file
-     * manager, or null on an ordinary visit to this screen.
-     *
-     * CONSUMED ONCE, and that is not a style choice. A Uri delivered by `ACTION_SEND` carries a read
-     * grant scoped to that delivery; holding it and retrying tomorrow reads nothing. So the card
-     * copies the bytes into `filesDir` immediately and calls [onIncomingConsumed] whether the read
-     * succeeded or was refused — a second attempt on the same Uri cannot succeed, so leaving it set
-     * would re-refuse it on every recomposition.
-     */
     incoming: Uri? = null,
     onIncomingConsumed: () -> Unit = {},
-    /** Each increase opens New form, as the New form pill does (the questionnaire home's FAB). */
     newFormRequest: Int = 0,
-    /** Questionnaire v2: Start session on a form, from its row. Null leaves the rows as they were. */
     onStartSession: ((questionnaireId: String) -> Unit)? = null,
-    /** Questionnaire v2: the sessions on one form. Carried for the detail screen's router. */
     onOpenSessions: ((questionnaireId: String) -> Unit)? = null,
 ) {
-    // The rows, the tab and the switches are kept in the screen's memory, so Back from a form lands
-    // on the library as it was left, scrolled to the row that was opened (owner, 1 Nov 2026).
     var rows by com.designprototype.workshop.questionnaire.ui.rememberKept("forms.rows") { emptyList<CustomQuestionnaireSummaryDto>() }
     var loading by remember { mutableStateOf(true) }
     var offline by com.designprototype.workshop.questionnaire.ui.rememberKept("forms.offline") { false }
-    /** Set when [rows] are this phone's saved copy of the unfiltered list — see [ReadCache]. */
     var cachedNote by com.designprototype.workshop.questionnaire.ui.rememberKept("forms.cachedNote") { null as String? }
-    // The shared search and filters (owner, 31 Oct 2026), kept across navigation for this account:
-    // the text finds a form by its title, sections, questions and sessions; the rest keep the forms
-    // with a session that matches (artisans, researcher, workshop, dates, kind, source, transcript).
     val v2Context = LocalContext.current.applicationContext
     val v2 = remember { com.designprototype.workshop.questionnaire.data.QuestionnaireV2.get(v2Context) }
     val (formFilters, setFormFilters) = com.designprototype.workshop.questionnaire.ui.rememberKeptFilters(
@@ -121,21 +85,14 @@ fun QuestionnaireListScreen(
     val narrowed = formFilters.without("q")
     var showDeactivated by com.designprototype.workshop.questionnaire.ui.rememberKept("forms.showDeactivated") { false }
     var showCreate by remember { mutableStateOf(false) }
-    /** The library tab (UNIFY §4.2): Mine · Shared · Workshop, and Deleted for whoever may restore. */
     var tab by com.designprototype.workshop.questionnaire.ui.rememberKept("forms.tab") { FormsTab.MINE }
-    /** A bundle picked from the Open bundle pill; handed to the received card like a shared file. */
     var pickedBundle by remember { mutableStateOf<Uri?>(null) }
     val pickBundle = rememberQuestionnaireBundlePicker { pickedBundle = it }
-    // A request is answered once: coming Back to the library must not reopen the New form dialog.
     var answeredNewForm by com.designprototype.workshop.questionnaire.ui.rememberKept("forms.answeredNewForm") { newFormRequest }
     LaunchedEffect(newFormRequest) { if (newFormRequest > answeredNewForm) { answeredNewForm = newFormRequest; showCreate = true } }
     var reload by remember { mutableIntStateOf(0) }
-    /** Rows shown, of the total the server reports — set only when the walk stopped short. */
     var partial by com.designprototype.workshop.questionnaire.ui.rememberKept("forms.partial") { null as Pair<Int, Int>? }
 
-    // ── The .xlsx interchange ────────────────────────────────────────────────────────────────────
-    // The application context, so a download that is still copying into MediaStore when the designer
-    // navigates away cannot hold an Activity alive behind it.
     val appContext = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     var interchangeBusy by remember { mutableStateOf(false) }
@@ -148,10 +105,6 @@ fun QuestionnaireListScreen(
         if (interchangeBusy) return@rememberWorkbookPicker
         interchangeBusy = true
         uploading = true
-        // Cleared BEFORE the request. The seconds an upload takes are exactly when the PREVIOUS
-        // upload's report is still on screen, and a designer reading "38 questions added" over a
-        // spinner for a different file is being told about work that is not the work they are
-        // waiting on.
         uploadReport = null
         scope.launch {
             runCatching { repository.uploadQuestionnaireWorkbook(appContext, uri) }
@@ -171,24 +124,10 @@ fun QuestionnaireListScreen(
     }
 
     LaunchedEffect(reload, formFilters, showDeactivated) {
-        // Debounced only for TYPING. Keying on `search` cancels and restarts the effect per keystroke,
-        // so without this a five-letter craft name is five list requests and four replies nobody will
-        // read. `reload` is a deliberate act (a create) and must not wait behind a delay.
         if (search.isNotBlank()) delay(SEARCH_DEBOUNCE_MS)
         loading = true
         cachedNote = null
         runCatching {
-            // EVERY page the server says this account may see, not the first one.
-            //
-            // This asked for one page of 50 and dropped `total`. That is a correctness bug rather than
-            // a long-list limitation, because `GET /questionnaires` widens for a grant-holder — a
-            // non-admin sees their own forms PLUS the forms attached to a design workshop an admin put
-            // them on — while the rows stay ordered `createdAt desc`. The granted form was uploaded by
-            // somebody else BEFORE the grant, so it is older than everything the grantee has built and
-            // sorts LAST: the one row a grant exists to reveal is the one row a single page cannot
-            // reach. See data/QuestionnaireListing.kt for the live reading this was written from.
-            // THE UNFILTERED LIST IS KEPT ON THIS PHONE and shown when there is no connection. A search
-            // is not: it is a question for the server, and an old answer to it would read as current.
             if (search.isBlank() && narrowed.isEmpty) {
                 var listing: com.designprototype.workshop.data.PagedListing<CustomQuestionnaireSummaryDto>? = null
                 val read = ReadCache.read(
@@ -210,8 +149,6 @@ fun QuestionnaireListScreen(
                 )
             }
         }.onSuccess {
-            // QUESTIONNAIRES STARTED ON THIS PHONE AND NOT YET UPLOADED (2026-10-16) come first, under
-            // their temporary ids, so they can be opened and written offline.
             val waiting = if (search.isBlank() && narrowed.isEmpty) {
                 runCatching { repository.pendingQuestionnaires(appContext) }.getOrDefault(emptyList()).map { queued ->
                     CustomQuestionnaireSummaryDto(
@@ -227,19 +164,11 @@ fun QuestionnaireListScreen(
             }
             rows = waiting + it.items
             offline = false
-            // Advisory, never blocking. Silently showing a prefix is the defect itself, and the search
-            // box above narrows on the SERVER, so it reaches the rows this walk stopped short of.
             partial = if (it.truncated) it.items.size to it.total else null
         }.onFailure { error ->
             if (error !is CancellationException) {
                 offline = true
                 onError(error.apiErrorMessage("The questionnaires could not be listed."))
-                // Cleared, not left standing. "Showing 100 of 340" is a claim about a list that was
-                // just read; kept across a failed reload it would sit under the offline notice quoting
-                // a count from a request that never landed — two banners contradicting each other
-                // about the same screen. A CANCELLED walk is left alone deliberately: the run that
-                // replaces it sets both a moment later, and blanking here would flicker the banner off
-                // and on again with every keystroke.
                 partial = null
             }
         }
@@ -256,15 +185,6 @@ fun QuestionnaireListScreen(
             color = MaterialTheme.colorScheme.onSurface,
             style = MaterialTheme.typography.headlineSmall
         )
-        // NOT "your own" any more, and the correction matters. Since an admin can put a second
-        // designer on a design workshop, this list carries the forms attached to those workshops too —
-        // uploaded by a colleague, under a name the reader did not choose. Calling them all "yours"
-        // makes a co-designer distrust the row that is most likely to be the one they came here for.
-        // Each card already names its owner and the workshop it hangs off, so the line only has to
-        // stop contradicting them.
-        // NOT "built on a computer, answered here" any more. That sentence was true when this client
-        // bound none of the .xlsx endpoints; leaving it standing over a "Upload a workbook" button
-        // would be the screen contradicting itself about what the handset can do.
         Text(
             "Your questionnaires and those on your workshops. Open one to record answers, or exchange them as spreadsheets.",
             color = MaterialTheme.field.muted,
@@ -278,8 +198,6 @@ fun QuestionnaireListScreen(
             fields = com.designprototype.workshop.questionnaire.ui.FilterField.FORMS,
         )
 
-        // THE LIBRARY'S FOUR ACTIONS, as pills (UNIFY §4.2; the design bar puts three or more on pills).
-        // The spreadsheet two need a connection; the bundle opens with none.
         fun downloadProForma() {
             if (interchangeBusy) return
             interchangeBusy = true
@@ -322,28 +240,15 @@ fun QuestionnaireListScreen(
             UploadReportPanel(report = report, onDismiss = { uploadReport = null })
         }
 
-        // ── THE COURTYARD DOOR, and it is a different door from the spreadsheet above ───────────
-        //
-        // Everything in the card above needs a server at both ends: the pro-forma is downloaded from
-        // one and the workbook is parsed by one. This card is the only path in this feature that
-        // works with no internet at all, in either direction, which is why it is a card of its own
-        // rather than a third row inside that one. It is placed AFTER the spreadsheet deliberately —
-        // the spreadsheet is the ordinary way to build a questionnaire and this is the way to receive
-        // somebody else's, and a designer who has never been handed one should meet them in that
-        // order.
         ReceivedQuestionnairesCard(
             repository = repository,
             incoming = incoming ?: pickedBundle,
             onIncomingConsumed = { if (incoming != null) onIncomingConsumed() else { pickedBundle = null } },
-            // A newly adopted questionnaire is a row this list does not have yet, and the adoption
-            // happened on this device rather than through the search that populates it.
             onAdopted = { reload++ },
             onMessage = onMessage,
             onError = onError,
         )
 
-        // The tabs (UNIFY §4.2). L9: a content admin sees every deleted form under Deleted; a designer
-        // sees the forms they authored, which they may restore (owner, 22 Oct 2026). The server scopes it.
         val trashUser = repository.cachedUser()
         val mayListDeleted = trashUser != null &&
             (mayDeleteQuestionnaireItems(trashUser) || com.designprototype.workshop.ui.FieldPermissions.canRunDesignWorkshops(trashUser))
@@ -385,9 +290,6 @@ fun QuestionnaireListScreen(
                 Text("Loading…", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
 
-            // Said plainly rather than shown as an empty list. "You have no questionnaires" and "this
-            // phone cannot reach the server" look identical on screen and mean opposite things — one
-            // of them sends a designer off to build a form they have already built.
             cachedNote != null && rows.isNotEmpty() -> {
                 com.designprototype.workshop.ui.CachedCopyNote(cachedNote.orEmpty())
                 shown.forEach { row -> QuestionnaireRow(row = row, onOpen = { onOpen(row.id) }, onStartSession = onStartSession) }
@@ -412,9 +314,6 @@ fun QuestionnaireListScreen(
             }
         }
 
-        // Said rather than left for the designer to infer from a questionnaire that is not there —
-        // which is the failure this paging change exists to end. Below the rows, because it describes
-        // what is missing from them.
         partial?.let { (shown, total) ->
             Text(
                 "Showing $shown of $total. Search to find the rest.",
@@ -451,7 +350,6 @@ private fun QuestionnaireRow(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            // The whole card opens the questionnaire, and says so to TalkBack.
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(
@@ -488,18 +386,6 @@ private fun QuestionnaireRow(
                 Text(trail, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                /*
-                  THE PUBLISHED DEFAULT, NAMED — added 2026-08-28 with the `isShared` column.
-
-                  A designer's list can now contain a form they did not upload: the standard
-                  instrument an administrator published to everybody. Until this chip existed nothing
-                  on the row said why it was there, and a row a designer cannot account for reads as
-                  somebody else's fieldwork leaking into their list.
-
-                  A WORD AND NOT ONLY A TINT, which is this app's rule for every chip beside it: the
-                  distinction has to survive greyscale, a colour-blind reader and a printed
-                  screenshot. It says what the row is FOR rather than repeating the column's name.
-                */
                 if (row.isShared) {
                     QChip(
                         "Standard form",
@@ -514,16 +400,6 @@ private fun QuestionnaireRow(
                         MaterialTheme.field.onWarningContainer
                     )
                 }
-                /*
-                  THE KIND, drawn only where one was STATED — never "Kind not stated". On a list where
-                  most rows predate the column, a chip on every row would be twenty repetitions of an
-                  absence, burying the two rows that carry a real answer under the ones that do not.
-                  The detail screen says it in full, where there is one row to say it about.
-
-                  `row.kindLabel` and not a local lookup: the server sends its own label beside the
-                  token precisely so the two clients cannot word one stored value differently.
-                  [labelForQuestionnaireKind] is the fallback for a build that predates a token.
-                */
                 if (!row.kind.isNullOrBlank()) {
                     QChip(
                         row.kindLabel.ifBlank { labelForQuestionnaireKind(row.kind) },
@@ -531,8 +407,6 @@ private fun QuestionnaireRow(
                         MaterialTheme.field.muted
                     )
                 }
-                // The version moves on every supersede and every retire, which is the only cheap way a
-                // designer can tell that the form changed under a sitting they are part-way through.
                 if (row.version > 1) {
                     QChip(
                         "version ${row.version}",
@@ -541,7 +415,6 @@ private fun QuestionnaireRow(
                     )
                 }
             }
-            // v2: a live form on the server starts a session straight from its row.
             if (onStartSession != null && row.isActive && row.deletedAt == null && !com.designprototype.workshop.data.isTempId(row.id)) {
                 TextButton(onClick = { onStartSession(row.id) }) { Text("Start session") }
             }
@@ -549,12 +422,6 @@ private fun QuestionnaireRow(
     }
 }
 
-/**
- * Start an empty questionnaire.
- *
- * ONLY THE TITLE IS REQUIRED, matching `QuestionnaireCreate`. The sections and questions are what the
- * pro-forma is for, and asking for them here would put a spreadsheet-shaped form on a phone screen.
- */
 @Composable
 private fun CreateQuestionnaireDialog(
     repository: WorkshopRepository,
@@ -563,14 +430,10 @@ private fun CreateQuestionnaireDialog(
     onError: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    // The APPLICATION context, so a create that is still writing into the outbox when the designer
-    // dismisses this dialog cannot hold an Activity alive behind it — the same reason the list above
-    // takes one for its workbook download.
     val appContext = LocalContext.current.applicationContext
     var title by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var workshopId by remember { mutableStateOf("") }
-    /** The kind. Blank is the none row and means "not stated", which the server accepts. */
     var kind by remember { mutableStateOf("") }
     var workshops by remember { mutableStateOf(AttachableWorkshops()) }
     var busy by remember { mutableStateOf(false) }
@@ -582,11 +445,6 @@ private fun CreateQuestionnaireDialog(
         title = { Text("New questionnaire") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                /* Both prose, both dictated — the same two boxes and the same two microphones as
-                   the rename dialog in `QuestionnaireDetailScreen` and the web's authoring form.
-                   The SEARCH box at the top of this screen is deliberately left bare: it is a filter
-                   over a list already on screen, not a record anybody is composing, and the record
-                   forms draw the same line (nothing in `SearchScreen` dictates either). */
                 RecordProseField(
                     label = "Title *",
                     value = title,
@@ -604,23 +462,6 @@ private fun CreateQuestionnaireDialog(
                     minLines = 2,
                     modifier = Modifier.fillMaxWidth()
                 )
-                /*
-                  THE ATTACH CONTROL, AND THE SENTENCE IT OWES WHEN IT IS EMPTY.
-
-                  A questionnaire with no workshop on it is perfectly valid — the server accepts a
-                  null `designWorkshopId` and the none row is a real answer, not an unfilled field —
-                  so nothing here blocks the create. What this control must not do is go SILENT: an
-                  empty picker with one "Not attached" row in it and no words under it reads as "you
-                  are on no workshop", which on a handset with no signal is very often the opposite
-                  of the truth. `notice()` is whichever of DROPDOWN_DESIGN §3.5's sentences is
-                  actually the case, and it is the same string the record forms print for the same
-                  state, on both clients.
-
-                  `searchable` is left to the threshold: this list is a WALK across every page, so
-                  the options are the whole answer and a box over them reaches everything they hold.
-                  That is the opposite of `DesignWorkshopField`, whose twenty rows are one truncated
-                  page — same primitive, opposite ruling, and §3.6 is where the two are set out.
-                */
                 val attachOptions = workshops.options()
                 SearchableSelectField(
                     label = "Attach to a design workshop",
@@ -633,53 +474,13 @@ private fun CreateQuestionnaireDialog(
                     onSelect = { workshopId = it }
                 )
                 workshops.capNotice()?.let { cap ->
-                    // R4: the walk stopped short of what the server says this account may open, and
-                    // says so with both numbers rather than leaving the designer to notice that a
-                    // workshop they were expecting is not in the list.
                     EmptyNote(cap)
                 }
-                // The picker prints the empty sentence on the form itself only when the list is
-                // empty AND the control is disabled — the one state in which neither surface can be
-                // opened to read it. Here that is the `busy` case alone, so this arm covers the
-                // ordinary one and the `!busy` guard is what stops the same fact appearing twice
-                // under one control.
                 if (attachOptions.isEmpty() && !busy) {
                     workshops.notice()?.let { EmptyNote(it) }
                 }
-                /*
-                  WHAT KIND OF QUESTIONNAIRE THIS IS — the owner's request of 2026-08-30, and the
-                  control that makes it answerable: *"they also do market survey interviews, so
-                  create that differentiation as well, so that we can map the questionnaires and the
-                  transcripts to the correct stage in the report."*
-
-                  THE SAME WORDING AS THE WEB, to the character: the label, the two option labels and
-                  the sentence under the control are all shared, and the option labels come from
-                  QUESTIONNAIRE_KIND_LABELS, which the server's own test holds to
-                  `questionnaire_kinds.py`. A designer moves between the two clients mid-workshop.
-
-                  THE NONE ROW IS A REAL ANSWER. `includeNone` with "Not stated" as the placeholder:
-                  a designer who has not decided must be able to leave it, and the server stores NULL
-                  rather than refusing the create. Nothing here blocks the Start button.
-
-                  NO SEARCH BOX, and none appears: `SearchableSelectField` decides that from
-                  SEARCH_THRESHOLD (8) and this list has two members — which is the case that
-                  threshold answers correctly on its own, unlike the workshop picker above it.
-                */
                 SearchableSelectField(
                     label = "Kind",
-                    // ``(token, text)`` AND NOT the tidier ``(value, label)``, and this is not a
-                    // preference: naming them after the parameters they fill would write the
-                    // parameter name twice in a row here — and that exact two-word sequence is what
-                    // ``QuestionnaireDictationParityTest`` searches for, taking its FIRST occurrence
-                    // in the file, to prove the shared section-title dialog passes its caption
-                    // through to a dictated box. This dropdown sits above that dialog, so the
-                    // obvious names quietly stole the assertion and left a real guarantee passing
-                    // for a reason that had nothing to do with it. Measured, 2026-08-30: the test
-                    // went red on the first spelling and green on this one.
-                    //
-                    // THE SAME TRAP CATCHES A COMMENT. Do not restore the sequence in prose here
-                    // either — a source-reading test cannot tell code from the paragraph describing
-                    // it, which is how this note failed once before being reworded.
                     options = QUESTIONNAIRE_KIND_LABELS.map { (token, text) ->
                         SelectOption(value = token, label = text)
                     },
@@ -698,18 +499,6 @@ private fun CreateQuestionnaireDialog(
                 onClick = {
                     busy = true
                     scope.launch {
-                        /*
-                          SENT OR BANKED, and the transport decides which — see
-                          `createCustomQuestionnaireOrQueue`. The owner asked for this to *"work
-                          correctly offline as well"*, and until 2026-08-28 it was a bare POST: a
-                          designer in a courtyard pressed Start, watched it fail, and had nothing.
-
-                          A NULL IS A SUCCESS AND MUST BE SAID SO. It means the questionnaire is on
-                          this handset and goes up with the next sync pass — a different fact from
-                          "the repository has it", and the two have different next moves. The screen
-                          cannot open a form that has no server id yet, so it stays on the list and
-                          says where the row went rather than navigating into nothing.
-                        */
                         runCatching {
                             repository.createCustomQuestionnaireOrQueue(
                                 context = appContext,
@@ -720,8 +509,6 @@ private fun CreateQuestionnaireDialog(
                             )
                         }.onSuccess { created ->
                             if (created != null && com.designprototype.workshop.data.isTempId(created.id)) {
-                                // Kept on this phone under a temporary id, and opened anyway: its
-                                // sections and questions are written now and uploaded in order.
                                 onError(
                                     "“${title.trim()}” saved on this phone; uploads when online. You can add questions now."
                                 )

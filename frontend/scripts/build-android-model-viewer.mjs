@@ -1,19 +1,4 @@
 #!/usr/bin/env node
-/**
- * Bundle the web's 3D model viewer for the handset.
- *
- *     cd frontend && node scripts/build-android-model-viewer.mjs
- *
- * `lib/modelViewerAndroidEntry.ts` (which mounts `lib/modelViewerCore.ts`) and the three.js the web
- * installs are bundled into ONE minified script at
- * `android/app/src/main/assets/model-viewer/viewer.js`, which `DwModelViewer.kt` loads in a WebView.
- * The Android build has no Node toolchain, so the bundle is committed; its first line records the
- * three.js version and a hash of the viewer's sources, and `e2e/model-viewer-unit.spec.ts` fails when
- * either no longer matches — re-run this script and commit the result.
- *
- * esbuild is fetched by npx at the version pinned below rather than added to package.json: nothing
- * else in the web build uses it, and a pinned version keeps the bundle reproducible.
- */
 
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";

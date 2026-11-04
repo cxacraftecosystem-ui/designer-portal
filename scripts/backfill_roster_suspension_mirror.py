@@ -137,17 +137,8 @@ async def _connect() -> None:
         ) from exc
 
 
-#: A ceiling on each of the four candidate reads, so a script pointed at a large production
-#: database cannot pull a whole table into memory. Its own number rather than a borrowed one, and
-#: far above any plausible programme; if a run reports that it was hit, the answer is to raise it
-#: deliberately rather than to trust a cut list — the same reasoning as
-#: ``access_roster.BARRED_EMAIL_READ_LIMIT``, and the same failure direction, because a cut
-#: candidate list is an inconsistent pair this run silently did not repair.
 CANDIDATE_READ_LIMIT = 50_000
 
-#: The four buckets, in the order the report prints them. Named here so the plan, the report, the
-#: count line and the write loop cannot end up disagreeing about what exists — the four-way split IS
-#: the contract between this script and the operator reading it.
 BUCKETS: tuple[str, ...] = ("empanelment", "access", "needs_admin", "consistent")
 
 
@@ -264,7 +255,6 @@ async def plan() -> dict[str, list[tuple[str, str]]]:
 
     buckets: dict[str, list[tuple[str, str]]] = {name: [] for name in BUCKETS}
 
-    # ── DIRECTION 1: the allow-list bars them, the designer roster still says they are empanelled ─
     for address, access in sorted(barred_by_mailbox.items()):
         standing = access_roster.status_of(access)
         empanelment = live_by_mailbox.get(address)
@@ -281,13 +271,6 @@ async def plan() -> dict[str, list[tuple[str, str]]]:
             buckets["consistent"].append(
                 (address, f"allow-list says {standing} and the empanelment is already suspended")
             )
-    # ── DIRECTION 2: the empanelment ended, the allow-list still admits them AS A DESIGNER ────────
-    #
-    # The intersection is computed against ``admitted_by_mailbox`` — ACTIVE rows admitting at
-    # DESIGNER — and not against every ACTIVE row, because an admission at any other tier is not
-    # carried by the empanelment and is therefore not an inconsistency at all. That is the guard's
-    # first test, and it is applied here as a NARROWING of the candidate set rather than as a
-    # decision: the authoritative answer still comes from the guard itself, two lines down.
     for address, _empanelment in sorted(ended_by_mailbox.items()):
         access = admitted_by_mailbox.get(address)
         if access is None:
@@ -302,24 +285,10 @@ async def plan() -> dict[str, list[tuple[str, str]]]:
                 )
             )
             continue
-        # THE GUARD DECLINED, AND THE REPORT HAS TO SAY WHY OR IT READS AS THE SCRIPT MISSING
-        # SOMEBODY. The usual reason is the one the guard exists for: an account on this mailbox is
-        # not a designer, so their place in the product does not rest on the empanelment.
-        #
-        # ASKED THROUGH THE GUARD'S OWN LOOKUP, AND NOT THROUGH A SECOND ONE WRITTEN HERE. This line
-        # used to be its own ``find_many`` on ``email == address``, which is the mistake this
-        # script's docstring warns about in the large: ``User.email`` is not canonicalised while
-        # both rosters are, so for a Gmail mailbox that query answers "none" about an account that
-        # exists under a dotted spelling — and the report then told an operator the account holds
-        # "none rather than DESIGNER" about the very administrator the guard had just protected.
-        # ``access_roster._accounts_on_the_mailbox`` is the function the guard consults, so the plan
-        # and the write now describe the same set for the same reason they call the same code.
         accounts = await access_roster._accounts_on_the_mailbox(  # noqa: SLF001
             email_match_keys(address), address
         )
         if accounts is None:
-            # THE SWEEP WAS CUT, so nobody knows who is on this mailbox — including the guard, which
-            # is why it declined. Reporting a role here would be inventing one.
             buckets["needs_admin"].append(
                 (
                     address,
@@ -333,14 +302,6 @@ async def plan() -> dict[str, list[tuple[str, str]]]:
             continue
         held = "/".join(sorted({str(getattr(a.role, "value", a.role)) for a in accounts})) or "none"
         if held == "none":
-            # NO ACCOUNT AND THE GUARD STILL DECLINED, which the guard's own rules say cannot happen
-            # on the account test — an absent account is a mirror. So the decline came from the
-            # OTHER direction: the allow-list row is filed under a spelling this mailbox cannot
-            # reach. ``email_match_keys`` adds the canonical form to what it is given and derives one
-            # key from an address that already IS the mailbox, while ``_by_mailbox`` above found the
-            # row by canonicalising it — so a dotted allow-list row is visible to the plan and
-            # invisible to the guard. Saying "the account holds none rather than DESIGNER" about
-            # that pair would send an operator to look at a role that has nothing to do with it.
             buckets["needs_admin"].append(
                 (
                     address,
@@ -468,9 +429,6 @@ async def main() -> None:
         help="actually mirror the suspensions. Without it this is a DRY RUN and writes nothing.",
     )
     parser.add_argument(
-        # The older spelling, kept working on purpose and documented in the module docstring, for
-        # the reason its sibling keeps it: an unrecognised flag at the moment somebody is applying a
-        # fix costs more than a second entry in --help. Same ``dest``, so the two cannot disagree.
         "--execute",
         dest="fix",
         action="store_true",
@@ -493,10 +451,6 @@ async def main() -> None:
         report(buckets, fix=args.fix)
 
         if not args.fix:
-            # THE FINAL LINE OF A DRY RUN SAYS THAT NOTHING HAPPENED, in those words, at the bottom
-            # where somebody who scrolled past four sections of addresses is looking. A report that
-            # lists thirty people under "WOULD SUSPEND" and then stops reads, to a tired operator,
-            # like a report of thirty rows suspended.
             print(f"\nCOUNT — {_counts(buckets)}. NOTHING WAS WRITTEN; re-run with --fix to apply.")
             return
 
@@ -505,21 +459,11 @@ async def main() -> None:
         mirrored = 0
         declined = 0
         for address, cause in wanted:
-            # ``mirror_suspension`` and not a write of this script's own: the asymmetry, the alias
-            # keys, the idempotent WHERE clauses, the note and the guard all live in that one
-            # function, and a second implementation here is a second place for them to be got
-            # wrong. ``actor_id`` stays None — no administrator ran this at anybody.
             changed = await access_roster.mirror_suspension(address, cause, actor_id=None)
             if changed:
                 mirrored += changed
                 print(f"  mirrored {cause} onto {changed} row(s) for {address}")
             else:
-                # TWO DIFFERENT THINGS, AND THE LINE SAYS SO BECAUSE THE SCRIPT CANNOT TELL THEM
-                # APART. Either the target row changed between the plan and this write — somebody
-                # suspended it by hand, or restored the other side — or the mirror FAILED and
-                # swallowed the failure, which is what it is built to do rather than break an
-                # administrator's request. The failure is logged at ERROR by the mirror itself, so
-                # a run reporting declines is a run whose log is worth reading.
                 declined += 1
                 print(
                     f"  skipped {address} (nothing left to change, or the mirror failed and "
@@ -530,10 +474,6 @@ async def main() -> None:
                 f"CAPPED at --limit {args.limit}; {len(_writes(buckets)) - args.limit} pair(s) "
                 "remain. Run again to continue."
             )
-        # ``mirrored`` counts ROWS and ``declined`` counts ADDRESSES, deliberately: one address can
-        # carry two rows where a Gmail mailbox is spelled two ways, and a count line that quietly
-        # equated the two would under-report exactly the case this whole family of functions was
-        # written for.
         print(
             f"\nCOUNT — {_counts(buckets)}. {mirrored} row(s) suspended across "
             f"{len(wanted) - declined} address(es), {declined} address(es) declined at the write."

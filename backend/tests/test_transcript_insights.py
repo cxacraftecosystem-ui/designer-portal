@@ -1,14 +1,3 @@
-"""Interview summaries, key quotes and translations (services/transcript_insights).
-
-Runs everywhere: the database is ``transcript_insights_fakes.FakeDb`` and every provider call is a
-stub of ``ai._run_chat_verb``, so nothing here leaves the machine.
-``test_transcript_insights_db.py`` covers what only a real Postgres can show (the unique index, the
-cascade, the enum value).
-
-The designer extras sit beside the shared contract: the read gate (an insight is a copy of the
-transcript), the artisan's consent re-read at send time, and the daily AI allowance on Regenerate.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -79,7 +68,7 @@ def fake(monkeypatch):
     monkeypatch.setattr(
         ti,
         "get_settings",
-        lambda: SimpleNamespace(media_queue_job_max_attempts=3, openai_chat_model="gpt-4o-mini"),
+        lambda: SimpleNamespace(media_queue_job_max_attempts=3, openai_chat_model="gpt-6-luna"),
     )
     db.consent = SendVerdict(SendDecision.NOT_WORKSHOP_MATERIAL)
 
@@ -88,7 +77,6 @@ def fake(monkeypatch):
         return db.consent
 
     monkeypatch.setattr(dictation_consent, "transcription_verdict", verdict)
-    # Everyone may read every transcript unless a test narrows it (see the read-gate tests).
     db.scope = (None, frozenset())
 
     async def scope(_viewer):
@@ -113,7 +101,6 @@ def fake(monkeypatch):
 
 @pytest.fixture
 def provider(monkeypatch):
-    """Stub ``ai._run_chat_verb``. ``calls`` records (task, user_id, temperature)."""
     from app.services import ai
 
     state = SimpleNamespace(calls=[], replies=[], fail_on={}, unavailable=False)
@@ -133,15 +120,11 @@ def provider(monkeypatch):
                     "message": f"{what} failed: {state.fail_on[index]}. Nothing was changed."}
         text = state.replies.pop(0) if state.replies else "Translated."
         return {"available": True, "status": "COMPLETED", "text": text, "provider": "anthropic",
-                "model": "claude-sonnet-4-5", "responseModel": "claude-sonnet-4-5-20250929"}
+                "model": "claude-sonnet-5-5", "responseModel": "claude-sonnet-5-5-20261015"}
 
     monkeypatch.setattr(ai, "_run_chat_verb", run_chat_verb)
     return state
 
-
-# --------------------------------------------------------------------------------------------
-# Settings
-# --------------------------------------------------------------------------------------------
 
 
 def test_the_capability_is_off_by_default():
@@ -183,10 +166,6 @@ def test_a_bad_max_characters_value_falls_back_to_the_default_with_a_note(raw):
     )
 
 
-# --------------------------------------------------------------------------------------------
-# Sources
-# --------------------------------------------------------------------------------------------
-
 
 def test_select_sources_across_the_three_transcription_modes_and_an_edit():
     raw = Row(transcriptText=HINDI, transcriptSummary=HINDI, transcriptEditedAt=None)
@@ -209,10 +188,6 @@ def test_source_hash_is_stable_and_sensitive():
     assert ti.source_hash("a", "b") != ti.source_hash("ab", None)
     assert len(ti.source_hash("a", None)) == 64
 
-
-# --------------------------------------------------------------------------------------------
-# Parsing
-# --------------------------------------------------------------------------------------------
 
 
 def test_more_than_five_lines_is_trimmed_and_fenced_json_is_accepted():
@@ -244,10 +219,6 @@ def test_malformed_output_gives_an_empty_result_and_does_not_raise(reply):
     parsed = ti.parse_insight(reply, [ENGLISH])
     assert parsed["summary"] == [] and parsed["quotes"] == []
 
-
-# --------------------------------------------------------------------------------------------
-# Translation
-# --------------------------------------------------------------------------------------------
 
 
 def test_chunking_respects_paragraph_bounds():
@@ -287,8 +258,8 @@ def test_a_failed_chunk_fails_the_translation_and_the_summary_is_still_stored(fa
     row = fake.transcriptinsight.rows[0]
     assert row.translationStatus == ti.FAILED and row.translationText is None
     assert row.summaryLines[0] == "Dabu printing is done in the village."
-    assert row.provider == "anthropic" and row.modelId == "claude-sonnet-4-5"
-    assert row.modelVersion == "claude-sonnet-4-5-20250929"
+    assert row.provider == "anthropic" and row.modelId == "claude-sonnet-5-5"
+    assert row.modelVersion == "claude-sonnet-5-5-20261015"
     assert row.promptVersion == "transcript-insights/1"
 
 
@@ -306,10 +277,6 @@ def test_a_non_english_transcript_is_translated_at_the_designed_temperatures(fak
         (AiTask.TRANSLATE, "usr_owner", 0.1),
     ]
 
-
-# --------------------------------------------------------------------------------------------
-# Queue
-# --------------------------------------------------------------------------------------------
 
 
 def _completed_transcription(fake, media, text=ENGLISH):
@@ -357,8 +324,6 @@ def test_with_the_feature_off_nothing_is_queued_and_queued_jobs_are_not_drained(
         return []
 
     async def no_settings():
-        # Unpaused: a missing row reads as paused (transcription service, 18 Oct 2026), and this
-        # test is about the insights switch, not the pause.
         return {"transcriptionPaused": False}
 
     monkeypatch.setattr(fake.mediaprocessingjob, "find_many", find_many)
@@ -373,7 +338,6 @@ def test_with_the_feature_off_nothing_is_queued_and_queued_jobs_are_not_drained(
     asyncio.run(media_queue.process_next_media_jobs(limit=5, settings=settings))
     assert seen["where"]["jobType"] == {"not_in": ["TRANSCRIPTION", "TRANSCRIPT_INSIGHTS"]}
 
-    # On, insights jobs flow even outside the processing window.
     monkeypatch.setattr(ti, "enabled", lambda: True)
     asyncio.run(media_queue.process_next_media_jobs(limit=5, settings=settings))
     assert seen["where"]["jobType"] == {"not": "TRANSCRIPTION"}
@@ -468,8 +432,6 @@ def test_an_automatic_job_does_not_replace_an_edited_insight(fake, provider):
     assert len(provider.calls) == 1
 
 
-# --- designer: consent at send time and the daily allowance ------------------------------------
-
 
 def test_consent_withdrawn_after_enqueue_sends_nothing_and_fails_with_the_insights_sentence(
     fake, provider
@@ -485,7 +447,6 @@ def test_consent_withdrawn_after_enqueue_sends_nothing_and_fails_with_the_insigh
     assert "cannot be summarised there" in stored.error
     assert provider.calls == [] and fake.spent == []
     assert fake.consent_sends[-1] is dictation_consent.INSIGHTS
-    # The transcript on the clip is untouched.
     assert fake.mediafile.get(media.id).transcriptText == ENGLISH
     assert fake.mediafile.get(media.id).transcriptStatus == "COMPLETED"
 
@@ -507,7 +468,7 @@ def test_automatic_runs_do_not_spend_an_allowance(fake, provider):
     provider.replies = [summary_reply("en", quotes=[])]
     asyncio.run(media_queue._process_job(_insights_job(fake, media), SimpleNamespace()))
     assert fake.spent == []
-    assert provider.calls[0][1] is None  # the deployment's key
+    assert provider.calls[0][1] is None
 
 
 def test_every_send_description_still_has_its_fields():
@@ -515,10 +476,6 @@ def test_every_send_description_still_has_its_fields():
         assert described.material and described.destination and described.consequence
     assert dictation_consent.INSIGHTS.alternative.endswith(" ")
 
-
-# --------------------------------------------------------------------------------------------
-# Routes
-# --------------------------------------------------------------------------------------------
 
 
 OWNER = SimpleNamespace(id="usr_owner", role="DESIGNER")
@@ -569,7 +526,7 @@ def test_get_returns_the_contract_shape(fake, provider):
         "status": "NOT_NEEDED", "text": None, "note": "The transcript is already in English."
     }
     assert insight["provenance"]["promptVersion"] == "transcript-insights/1"
-    assert insight["provenance"]["modelVersion"] == "claude-sonnet-4-5-20250929"
+    assert insight["provenance"]["modelVersion"] == "claude-sonnet-5-5-20261015"
     assert insight["provenance"]["generatedAt"].endswith("Z")
     assert insight["edited"] is None
 
@@ -698,7 +655,6 @@ def test_regenerating_an_edited_insight_needs_discard_edits(fake, provider):
     again = client.post(f"/api/media/{media.id}/insights/regenerate", json={"discardEdits": True})
     assert again.status_code == 202
     assert len(_insight_jobs(fake)) == 1
-    # The allowance is spent by the worker when the run reaches a provider, never at enqueue.
     assert fake.spent == []
 
 
@@ -738,8 +694,6 @@ def test_the_batch_caps_at_50_and_leaves_out_unknown_ids(fake, provider):
 
 
 def test_with_include_translation_the_batch_answers_each_id_exactly_as_the_single_read(fake, provider):
-    """The handset's transcript cards ask together (one batch per screen, translation included)
-    where each card used to read its own ``GET /media/{id}/insights``; each item must be that read."""
     first = _ready(fake, provider)
     second = _ready(fake, provider)
     client = _client(OTHER)
@@ -748,7 +702,6 @@ def test_with_include_translation_the_batch_answers_each_id_exactly_as_the_singl
     assert sorted(body["items"]) == sorted([first.id, second.id])
     for media in (first, second):
         assert body["items"][media.id] == client.get(f"/api/media/{media.id}/insights").json()
-    # Without the flag nothing changes: no marker, translation text left out.
     plain = client.get(f"/api/media/insights?ids={first.id}").json()
     assert "translationIncluded" not in plain
     assert plain["items"][first.id]["insight"]["translation"]["text"] is None
@@ -760,8 +713,6 @@ def test_the_batch_route_is_not_swallowed_by_the_media_id_route(fake):
 
 
 def test_the_app_registers_the_insights_router_before_media():
-    # Read off the source: FastAPI now mounts included routers lazily, so api_router.routes no
-    # longer lists their paths, and the match order is the include order.
     from pathlib import Path
 
     source = (Path(__file__).resolve().parents[1] / "app" / "api" / "router.py").read_text(
@@ -772,16 +723,12 @@ def test_the_app_registers_the_insights_router_before_media():
     assert insights < single
 
 
-# --- designer: an insight is a copy of the transcript -------------------------------------------
-
 
 def test_a_viewer_who_cannot_read_the_transcript_gets_404_and_is_left_out_of_the_batch(
     fake, provider
 ):
     theirs = _ready(fake, provider, uploadedById="usr_owner")
     mine = _ready(fake, provider, uploadedById="usr_volunteer")
-    # A volunteer may take their own uploads and nothing else: an untagged file of another uploader
-    # loses its transcript in public_encode, so its insight does not travel either.
     fake.scope = ({"usr_volunteer"}, frozenset())
     client = _client(VOLUNTEER)
     assert client.get(f"/api/media/{theirs.id}/insights").status_code == 404
@@ -832,10 +779,6 @@ def test_editing_the_transcript_requeues_an_unedited_insight_and_only_marks_an_e
     assert _client(OWNER).get(f"/api/media/{other.id}/insights").json()["stale"] is True
 
 
-# --------------------------------------------------------------------------------------------
-# Backfill
-# --------------------------------------------------------------------------------------------
-
 
 def _backfill(fake, monkeypatch):
     from scripts import backfill_transcript_insights as backfill
@@ -885,10 +828,6 @@ def test_execute_queues_only_eligible_media_at_priority_90_and_is_idempotent(
     assert {j.mediaFileId for j in _insight_jobs(fake)} == {wanted.id, done.id}
 
 
-# --------------------------------------------------------------------------------------------
-# Verifier findings, 2026-10-18
-# --------------------------------------------------------------------------------------------
-
 
 def _automatic_job(fake, media, status="QUEUED"):
     row = Row(id=f"auto_{media.id}", mediaFileId=media.id, jobType="TRANSCRIPT_INSIGHTS",
@@ -915,8 +854,6 @@ def test_regenerate_on_an_edited_summary_claims_the_active_automatic_job(fake, p
     jobs = [j for j in fake.mediaprocessingjob.rows if j.jobType == "TRANSCRIPT_INSIGHTS"]
     assert jobs == [auto] and auto.requestedById == "usr_owner"
 
-    # The worker reads the requester fresh, so the claimed job runs instead of being skipped, on
-    # the requester's key and allowance.
     provider.replies = [summary_reply("en", quotes=[])]
     asyncio.run(media_queue._process_job(Row(**{**auto.__dict__, "requestedById": None,
                                                 "mediaFile": media}), SimpleNamespace()))
@@ -966,7 +903,7 @@ def test_a_refused_key_or_request_spends_once_and_closes_the_job(fake, provider,
     provider.fail_on = {1: fault}
     media = fake.add_media(transcriptText=ENGLISH, transcriptStatus="COMPLETED")
     job = _insights_job(fake, media, requested_by="usr_owner")
-    asyncio.run(media_queue._process_job(job, SimpleNamespace()))  # does not raise: no retry
+    asyncio.run(media_queue._process_job(job, SimpleNamespace()))
     stored = fake.mediaprocessingjob.get(job.id)
     assert stored.status == "FAILED" and stored.error == sentence
     assert fake.spent == [("usr_owner", "TRANSCRIPT_INSIGHTS")]
@@ -1004,3 +941,15 @@ def test_a_retried_failure_spends_nothing(fake, provider, fault):
 def test_the_failed_translation_note_names_no_action_a_reader_may_not_have():
     assert ti.TRANSLATION_FAILED_NOTE == "The translation couldn't be finished."
     assert "egenerate" not in ti.TRANSLATION_FAILED_NOTE
+
+
+def test_a_provider_out_of_credit_holds_the_job_and_spends_nothing(fake, provider):
+    from app.services import media_queue
+
+    provider.fail_on = {1: "the service's credit has run out"}
+    media = fake.add_media(transcriptText=ENGLISH, transcriptStatus="COMPLETED")
+    job = _insights_job(fake, media, requested_by="usr_owner")
+    asyncio.run(media_queue._process_job(job, SimpleNamespace()))
+    stored = fake.mediaprocessingjob.get(job.id)
+    assert stored.status == "QUEUED" and stored.error == ti.BILLING
+    assert fake.spent == []

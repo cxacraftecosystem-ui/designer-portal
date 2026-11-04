@@ -1,11 +1,3 @@
-"""The transcript view says read-only by the same rule every transcript write refuses by.
-
-``transcript_portal.read_only`` (what the view sends as ``readOnly``) and ``guard_write`` (what the
-speaker, turn, re-translate, retry and auto-draft routes ask) both read ``_write_refusal``. A holder of
-an inspection or oversight post on the file's workshop is told "Read-only: part of a workshop you
-oversee." up front, the words the web's held-post note already uses, instead of meeting a 403.
-"""
-
 from __future__ import annotations
 
 import asyncio

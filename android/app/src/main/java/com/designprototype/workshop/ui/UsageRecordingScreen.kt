@@ -59,52 +59,6 @@ import com.designprototype.workshop.data.usageNowStamp
 import com.designprototype.workshop.data.usageWindowStart
 import kotlinx.coroutines.launch
 
-/**
- * **USAGE RECORDING — this account's own answer, its own record, and the way out.**
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * WHY THIS SCREEN EXISTS ON THE HANDSET AND NOT ONLY ON THE WEB
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Agreeing is a condition of using the product, asked at a turnstile the person cannot get past
- * without answering. That is defensible for exactly one reason, and it is not that it is documented:
- * it is that the agreement can be TAKEN BACK, at no cost, by the person who gave it. If withdrawal
- * lived only on a laptop, then for the designers who work from a phone in a courtyard — which is
- * most of them, and the ones the recording is mostly about — the turnstile would be one-way, and
- * "you can withdraw at any time" would be a sentence about somebody else's device.
- *
- * So the withdrawal is here, on the client where the consent is most often given.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * THE FOUR THINGS ON IT, IN THE ORDER THEY MATTER
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * 1. **The answer on record**, with its DATE and its CIRCUMSTANCE. "You agreed" over a turnstile is
- *    a sentence that misleads by omission; the basis column exists so the record can say it was a
- *    condition of access, and a client that stored that and did not show it would be keeping an
- *    honest record and publishing a misleading one.
- * 2. **The controls** — withdraw, or agree again. Both, because a refusal that cannot be changed is
- *    a state rather than a choice, and a grant that cannot be withdrawn is not an agreement.
- * 3. **What is actually held**, which is what makes the notice's promise true rather than
- *    aspirational: "you can see exactly what we hold about you" is only honest once
- *    `GET /usage/me/trail` is on a screen. It is the aggregate AND the log, because they answer
- *    different questions and the log is the one a person actually means.
- * 4. **The decision log**, so this reads as a record of decisions and not as a toggle. A consent
- *    that shows only its current value invites a switch; one that shows "agreed on the 3rd at
- *    sign-in, withdrawn on the 9th in settings" is visibly a record.
- *
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- * NOTHING ON THIS SCREEN IS CACHED, AND THAT IS DELIBERATE
- * ══════════════════════════════════════════════════════════════════════════════════════════════
- *
- * Every other read-heavy screen in this app degrades to a copy on the device, because a design
- * workshop is a dated observation and yesterday's copy of it is still true. A person's usage trail is
- * the opposite kind of fact in the one way that counts: **withdrawing deletes it from the server**,
- * and a device that had kept a copy would still be holding, and showing, the very rows the person
- * asked to have destroyed. So this screen holds nothing between visits, says so when it cannot reach
- * the server, and never draws an empty list as an answer. (The notice itself IS kept — see
- * `UsageNoticeStore` — because it is published text about the policy and holds nobody's data.)
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UsageRecordingScreen(
@@ -125,14 +79,6 @@ fun UsageRecordingScreen(
     var confirmWithdraw by remember { mutableStateOf(false) }
     var noticeOpen by remember { mutableStateOf(false) }
 
-    // `isOnline` and not a fresh probe of our own: this app has ONE idea of whether it can reach the
-    // server, and a second one here would let this screen call a dead tunnel a server fault while the
-    // outbox behind it calls the same failure worth retrying.
-    //
-    // RE-READ AT EVERY LOAD rather than sampled once on entry. This screen is retried by somebody who
-    // has just walked out of a building, and a value frozen at the moment they opened it would keep
-    // telling them the phone has no connection long after it has one — sending them back up the hill
-    // the sentence exists to stop them climbing.
     var online by remember { mutableStateOf(repository.isOnline(context)) }
 
     suspend fun loadConsent() {
@@ -156,7 +102,6 @@ fun UsageRecordingScreen(
         mine = aggregate
         trail = log
         recordRead = when {
-            // BOTH FAILING IS A FAILURE; one failing is not a reason to claim the other said nothing.
             aggregate == null && log == null -> UsageReadState.Failed
             else -> UsageReadState.Answered(count = log?.events?.size ?: aggregate?.requests ?: 0)
         }
@@ -185,7 +130,6 @@ fun UsageRecordingScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
 
-            // ── 1. THE ANSWER ON RECORD ────────────────────────────────────────────────────────
             item {
                 PreferenceCard {
                     val state = consent?.consent?.state
@@ -200,9 +144,6 @@ fun UsageRecordingScreen(
                         state = consentRead,
                         noun = "answer",
                         online = online,
-                        // Unreachable in practice — the server always has an answer, even if it is
-                        // NOT_RECORDED — and written anyway, because "unreachable" is what everybody
-                        // said about the states the six shared sentences exist for.
                         emptyLine = "Your answer could not be shown. Try again."
                     )?.let {
                         Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 18.sp)
@@ -210,8 +151,6 @@ fun UsageRecordingScreen(
                     consent?.consent?.let { record -> usageConsentDetail(record) }?.let {
                         Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 18.sp)
                     }
-                    // The SERVER's sentence for this state, not a summary of it. Three states reach
-                    // three different sentences because the next moves differ.
                     consent?.gate?.reason?.takeIf { it.isNotBlank() }?.let {
                         Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
                     }
@@ -223,7 +162,6 @@ fun UsageRecordingScreen(
                 }
             }
 
-            // ── 2. THE CONTROLS ───────────────────────────────────────────────────────────────
             item {
                 val record = consent
                 if (record != null) {
@@ -238,9 +176,6 @@ fun UsageRecordingScreen(
                             )
                         }
                         withdrawal?.let { outcome ->
-                            // The server's own explanation, both when the delete ran and when it did
-                            // not. `storedDeleteRan = false` is never drawn as "0 rows deleted",
-                            // which reads as "there was nothing to delete" — the opposite fact.
                             Text(
                                 outcome.explanation,
                                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
@@ -267,10 +202,6 @@ fun UsageRecordingScreen(
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text(USAGE_WITHDRAW_LABEL) }
                             Text(
-                                // Said BESIDE the button and not only inside the dialog, because the
-                                // fear that stops somebody pressing it is the fear of losing access,
-                                // and a reassurance they only meet after pressing is a reassurance
-                                // they never meet.
                                 record.notice?.withdrawal?.costsNothing.orEmpty().ifBlank {
                                     "You stay signed in and lose nothing."
                                 },
@@ -290,11 +221,6 @@ fun UsageRecordingScreen(
                                             UsageClient.of(context).recordConsent(
                                                 UsageConsentBody(
                                                     decision = USAGE_CONSENT_GRANTED,
-                                                    // FREELY, and the server records it as such. This
-                                                    // is the half of the vocabulary that makes the
-                                                    // turnstile at the door defensible: the grants
-                                                    // taken there are conditions of access, and the
-                                                    // ones taken here are choices.
                                                     basis = USAGE_BASIS_OFFERED_IN_SETTINGS,
                                                     noticeVersion = version,
                                                     recordedAt = usageNowStamp(),
@@ -325,7 +251,6 @@ fun UsageRecordingScreen(
                 }
             }
 
-            // ── THE NOTICE ────────────────────────────────────────────────────────────────────
             item {
                 consent?.notice?.let { notice ->
                     PreferenceCard {
@@ -338,7 +263,6 @@ fun UsageRecordingScreen(
                 }
             }
 
-            // ── 3. WHAT IS ACTUALLY HELD ──────────────────────────────────────────────────────
             item {
                 PreferenceCard {
                     Text(
@@ -357,11 +281,6 @@ fun UsageRecordingScreen(
                         state = recordRead,
                         noun = "requests recorded about you",
                         online = online,
-                        // NOT "you have never used the app", which is exactly what an empty list
-                        // reads as and exactly the defect the route's own docstring names. The
-                        // truthful reading of an empty trail depends on the ANSWER, and the answer is
-                        // on screen a card above; this sentence names the two causes rather than
-                        // implying the person did nothing.
                         emptyLine = "Nothing recorded in this period."
                     )?.let {
                         Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 18.sp)
@@ -375,8 +294,6 @@ fun UsageRecordingScreen(
                             fontWeight = FontWeight.SemiBold
                         )
                     }
-                    // The server's own notes about what a trail is and is not — that an absence of
-                    // rows is not an absence of work, and that a duration is server time only.
                     trail?.notes.orEmpty().forEach {
                         Text("• $it", color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall, lineHeight = 17.sp)
                     }
@@ -401,21 +318,12 @@ fun UsageRecordingScreen(
                 }
             }
 
-            // NO `key` LAMBDA, deliberately. A LazyColumn CRASHES on duplicate keys, and the
-            // obvious key here is `event.id` — which is `""` for every row if a deployment ever
-            // serves the field empty, turning a screen that reports a privacy record into a screen
-            // that reports a stack trace. There is nothing for a key to buy: the list is replaced
-            // wholesale on every reload, never reordered and never partially updated, so positional
-            // identity is exactly right.
             items(trail?.events.orEmpty()) { event -> TrailRow(event) }
 
             trail?.let { log ->
                 if (log.events.size >= log.limit && log.limit > 0) {
                     item {
                         Text(
-                            // The cap is STATED rather than left to be discovered. A list that
-                            // quietly stops is indistinguishable from a short list, and here the
-                            // short reading would be "this is everything the platform holds".
                             "Newest $TRAIL_PAGE requests only (max ${log.maxRows}).",
                             color = MaterialTheme.field.muted,
                             style = MaterialTheme.typography.bodySmall,
@@ -425,7 +333,6 @@ fun UsageRecordingScreen(
                 }
             }
 
-            // ── 4. THE DECISION LOG ───────────────────────────────────────────────────────────
             item {
                 PreferenceCard {
                     Text(
@@ -482,10 +389,6 @@ fun UsageRecordingScreen(
                             }.onSuccess { answer ->
                                 consent = answer
                                 withdrawal = answer.withdrawal
-                                // Re-read rather than emptying the list here. The server is the one
-                                // that knows whether the delete ran, and a client that cleared its
-                                // own view on the strength of having asked would show an empty
-                                // record over a `storedDeleteRan = false` that says otherwise.
                                 loadRecord()
                             }.onFailure {
                                 actionError = it.usageWriteFailureLine(online)
@@ -502,14 +405,6 @@ fun UsageRecordingScreen(
     }
 }
 
-/**
- * One recorded request, as the log replays it.
- *
- * THE ROUTE TEMPLATE IS PRINTED IN A MONOSPACE FACE AND NOT TRANSLATED into a screen name, because
- * there is no honest translation: "A route template is not a feature" — one template serves several
- * things a person would name differently, and one screen calls several templates. Inventing a
- * friendly name here would be this client asserting a mapping the server explicitly does not have.
- */
 @Composable
 private fun TrailRow(event: UsageEventDto) {
     Column(
@@ -541,15 +436,6 @@ private fun TrailRow(event: UsageEventDto) {
     }
 }
 
-/**
- * What to say when a consent WRITE did not land.
- *
- * Two sentences and not one, on `outboxDeviceBanner`'s rule: telling somebody with four bars to go
- * and find a signal sends them up a hill that cannot help, and telling somebody in a tunnel that the
- * server refused them sends them to an administrator who cannot either. Both say plainly that
- * NOTHING WAS RECORDED, because the alternative — a screen that leaves it ambiguous after a
- * withdrawal — leaves a person believing their record was deleted when it was not.
- */
 private fun Throwable.usageWriteFailureLine(online: Boolean): String = apiErrorMessage(
     if (online) {
         "Couldn't send your answer. Nothing changed."
@@ -558,15 +444,6 @@ private fun Throwable.usageWriteFailureLine(online: Boolean): String = apiErrorM
     }
 )
 
-/** The window this screen reads. A week, matching the web usage page's own default. */
 private const val RECORD_WINDOW_DAYS: Long = 7
 
-/**
- * How many trail rows to ask for.
- *
- * Well under the server's `maxTrailRows` of 200, and deliberately: this is a phone, the rows are
- * read by a person scrolling with a thumb, and asking for the cap would spend a rural connection on
- * 150 rows nobody scrolls to. The screen SAYS it is showing the newest [TRAIL_PAGE] rather than
- * implying it has everything — a list that quietly stops is indistinguishable from a short one.
- */
 private const val TRAIL_PAGE: Int = 50

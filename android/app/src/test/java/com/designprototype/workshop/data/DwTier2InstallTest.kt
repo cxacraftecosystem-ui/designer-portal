@@ -8,15 +8,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * **TIER 2 ON THE PHONE: WHO IS OFFERED A MODEL, WHAT A ROW'S CONTROL IS, WHICH MODEL A VERB RUNS ON,
- * AND WHAT IT IS ASKED.** The pure half of `DwTier2Install.kt`, on the desktop JVM.
- */
 class DwTier2InstallTest {
 
     private val mib = 1024L * 1024L
 
-    /** The fleet's SM-M325F at 03:00 on 2026-08-13 — both rows TIGHT, on free memory alone. */
     private val fleetHandset = DwDeviceMeasurement(
         totalRamBytes = 5_789_032L * 1024L,
         availableRamBytes = 1_285_164L * 1024L,
@@ -45,10 +40,6 @@ class DwTier2InstallTest {
     private val e4b get() = DW_TIER2_PLANS.first { it.modelId == "gemma-4-E4B-it.litertlm" }
 
     private val notInstalled = DwTier2ModelStatus(DwTier2ModelState.NOT_INSTALLED)
-
-    // -----------------------------------------------------------------------------------------
-    // Eligibility by the measured device tier
-    // -----------------------------------------------------------------------------------------
 
     @Test
     fun `a phone the reading admits is offered a download, and only with a connection`() {
@@ -152,10 +143,6 @@ class DwTier2InstallTest {
         )
     }
 
-    // -----------------------------------------------------------------------------------------
-    // Which model a verb runs on, and when
-    // -----------------------------------------------------------------------------------------
-
     @Test
     fun `a verb runs on the smallest verified model, never one that failed to load here`() {
         assertNull(dwTier2ModelToRun(emptySet(), emptyList()))
@@ -194,10 +181,6 @@ class DwTier2InstallTest {
         assertEquals(setOf(DwTier2Verb.PROOFREAD, DwTier2Verb.TRANSLATION), DW_TIER2_ON_DEVICE_VERBS)
     }
 
-    // -----------------------------------------------------------------------------------------
-    // The prompts, the output, the provenance
-    // -----------------------------------------------------------------------------------------
-
     @Test
     fun `a proofread keeps the language and the craft words, and a translation names its target`() {
         val proofread = dwTier2SystemInstruction(DwTier2Verb.PROOFREAD)
@@ -234,10 +217,6 @@ class DwTier2InstallTest {
         assertEquals("ହାତୀ", body["sourceText"])
         assertFalse("the route fixes the tier", body.containsKey("tier"))
     }
-
-    // -----------------------------------------------------------------------------------------
-    // The words on the card
-    // -----------------------------------------------------------------------------------------
 
     @Test
     fun `the Tier 2 line names what runs here, or the suggestion, or nothing — never a refusal`() {
@@ -280,8 +259,6 @@ class DwTier2InstallTest {
 
     @Test
     fun `the gap admissions this feature replaced are gone from the source`() {
-        // Code only: the KDoc keeps dated quotations of what these sentences used to say, which is
-        // history rather than something a designer reads.
         fun code(path: String) = File(path).readLines().filterNot { line ->
             val t = line.trim()
             t.startsWith("*") || t.startsWith("//") || t.startsWith("/*")

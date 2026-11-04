@@ -5,11 +5,6 @@ import { expect, test } from "@playwright/test";
 
 import { choicesPayload, defaultChoices, resultingValue, type MergeField } from "@/lib/duplicates";
 
-/*
-  THE MERGE SCREEN'S FIELD TABLE. Defaults follow the kept record (or the other side where it is
-  empty), "Both" joins two texts, and locked rows (Aadhaar, Pehchan) are never sent as a choice.
-*/
-
 const ROOT = join(__dirname, "..");
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 

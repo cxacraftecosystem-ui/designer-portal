@@ -10,13 +10,6 @@ import { lastStageName, logTodayRow } from "@/lib/prototypeLog";
 import { fillValues, stillApplies, suggestedRows, usableCheck, type DwAssistSuggestion } from "@/lib/stageAssist";
 import { attendedDays, isLegacyAttendance, isWoman, rosterValues, withAttendance, workshopDays } from "@/lib/stageComputed";
 
-/**
- * The stage capture work of 2026-10-17 (A14, A15, A16, A21, B10, B11, C6, C7, C8, C10, C12), held
- * to the server's behaviour: the numbering port against `stage_schema.next_auto_number`, the counts
- * against `stage_computed`, the suggestion application against `stage_assist`'s payload, and the
- * wiring by reading the stage page's source.
- */
-
 const field = (over: Partial<DwField>): DwField =>
   ({ key: "k", label: "K", type: "TEXT", tier: "BASIC", required: false, ...over }) as DwField;
 
@@ -185,7 +178,6 @@ test.describe("wiring", () => {
     expect(page).toContain("applyAutoNumbers(");
     expect(page).toContain("useComputedCounts(");
     expect(page).toContain("useStageAssist(");
-    // C12: an empty venue is asked for after a stage 1 save.
     expect(page).toContain("setVenuePrompt(stageKey === SETUP_STAGE && !singleton.venueLocation)");
   });
 

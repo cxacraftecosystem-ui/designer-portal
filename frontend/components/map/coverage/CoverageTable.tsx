@@ -1,15 +1,5 @@
 "use client";
 
-/**
- * The coverage map as text: every unit with a record, state then district, with its counts. It
- * stands in for the SVG (which is `aria-hidden`) the way `MapPlaceList` does for the Places map,
- * and a row opens the same unit panel a click on the map does.
- *
- * The Field Repository's table. "Workshops" here is held design workshops plus field workshops (the
- * map's own metric); a Planned column appears when any place has one, and the Field Repository's
- * figures sit on their own row under ours, never added in.
- */
-
 import { unitTitle } from "@/components/map/coverage/CoverageUnitPanel";
 import { metricValue } from "@/components/map/coverage/coverageMath";
 import type { CoverageUnit } from "@/components/map/coverage/coverageTypes";

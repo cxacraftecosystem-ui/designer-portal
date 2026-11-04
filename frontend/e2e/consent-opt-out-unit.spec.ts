@@ -7,8 +7,6 @@ import { ARTISAN_CONSENT_DESCRIPTION, artisanConsentStatus } from "@/components/
 import { consentRefused } from "@/lib/aiVerbs";
 import { DW_CONSENT_QUESTION, DW_CONSENT_SWITCH_LABEL, dictationConsentSentence } from "@/lib/designWorkshops";
 
-/** Consent is assumed by default and can be revoked (owner decision, 19 Oct 2026). */
-
 test("only a refusal on record is a refusal", () => {
   expect(consentRefused("REFUSED")).toBe(true);
   expect(consentRefused("NOT_RECORDED")).toBe(false);

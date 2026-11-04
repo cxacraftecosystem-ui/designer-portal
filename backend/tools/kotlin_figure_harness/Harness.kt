@@ -4,17 +4,6 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.zip.Inflater
 
-/*
- * Recompute, on a bare JVM, everything `backend/tools/report_figure_oracle.py` wrote down, and compare.
- *
- * The three files under test — ReportRaster.kt, ReportChart.kt, ReportMap.kt — are compiled here from
- * their REAL paths in the Android source tree, unmodified. That is the whole point: what is checked is
- * the code that ships, not a copy of it.
- *
- * Pixels, not PNG bytes. The backend's CPython links zlib-ng and this JVM links stock zlib, so
- * identical pixels compress to different IDAT. See the oracle's docstring.
- */
-
 private const val EXPECTED_DIGITS = 16
 
 private fun dbits(value: Double): String =
@@ -22,7 +11,7 @@ private fun dbits(value: Double): String =
         .padStart(EXPECTED_DIGITS, '0')
 
 private fun fnv1a(data: ByteArray): String {
-    var digest = -0x340d631b7bdddcdbL // 0xCBF29CE484222325 as a signed Long
+    var digest = -0x340d631b7bdddcdbL
     for (byte in data) {
         digest = digest xor (byte.toLong() and 0xFFL)
         digest *= 0x100000001B3L
@@ -35,25 +24,15 @@ private fun sha256(data: ByteArray): String =
 
 private fun rgbTuple(colour: Rgb): String = "(${colour.red()}, ${colour.green()}, ${colour.blue()})"
 
-// --------------------------------------------------------------------------------------
-// Failure accounting
-// --------------------------------------------------------------------------------------
-
 private val failures = ArrayList<String>()
 private var checks = 0
 
 private fun expect(key: String, expected: String, actual: String) {
     checks += 1
     if (expected != actual) {
-        // Truncated: a mismatched pixel digest is 64 characters and a mismatched palette could be
-        // thousands of lines, and a wall of hex is what stops somebody reading the first real failure.
         failures.add("$key\n    oracle: ${expected.take(200)}\n    kotlin: ${actual.take(200)}")
     }
 }
-
-// --------------------------------------------------------------------------------------
-// PNG, decoded the way the oracle decodes it
-// --------------------------------------------------------------------------------------
 
 private class Decoded(
     val width: Int,
@@ -142,10 +121,6 @@ private fun histogram(rows: ByteArray): String {
     return out.toString()
 }
 
-// --------------------------------------------------------------------------------------
-// The scene — mirrors report_figure_oracle.draw_primitives line for line
-// --------------------------------------------------------------------------------------
-
 private fun primitivesScene(canvas: Raster) {
     val ink = rgb(17, 34, 51)
     val warm = rgb(200, 90, 40)
@@ -193,10 +168,6 @@ private fun primitivesScene(canvas: Raster) {
     canvas.floodFill(172, 227, PAPER, rgb(250, 220, 120), 20_000)
     canvas.floodFill(2, 250, PAPER, rgb(255, 0, 0), 40)
 }
-
-// --------------------------------------------------------------------------------------
-// The cases — the same list the oracle carries
-// --------------------------------------------------------------------------------------
 
 private val THEMES: Map<String, ReportTheme> = mapOf(
     "default" to ReportTheme(),
@@ -303,10 +274,6 @@ private val MAP_CASES = listOf(
     ), "alt", 420),
 )
 
-// --------------------------------------------------------------------------------------
-// Scalars — the same list, in the same order, as report_figure_oracle.scalar_lines
-// --------------------------------------------------------------------------------------
-
 private val MM_SAMPLES =
     doubleArrayOf(0.0, 1.0, 12.7, 30.48, 30.4800001, 105.6, 160.0, 199.9, 304.8, 400.0, 1000.0)
 
@@ -409,19 +376,12 @@ private fun scalarLines(): List<String> {
     return out
 }
 
-// --------------------------------------------------------------------------------------
-// Running it
-// --------------------------------------------------------------------------------------
-
 private fun compareFigure(oracle: File, name: String, png: ByteArray, expected: List<String>) {
     val decoded = decodePng(png)
     expect("$name/ihdr", expected.subList(1, 5).joinToString(" "),
         "${decoded.width} ${decoded.height} ${decoded.depth} ${decoded.colour}")
     expect("$name/pixels", expected[5], sha256(decoded.rows))
-    // The pixel digest already decides pass or fail; the palette is compared so a failure says whether
-    // the two images differ in COLOUR or only in where the colours landed.
     expect("$name/palette", File(oracle, "$name.pal").readText(Charsets.UTF_8), histogram(decoded.rows))
-    // And the raw grid, so a mismatch can be located rather than merely detected.
     val expectedRows = File(oracle, "$name.rgb").readBytes()
     if (!expectedRows.contentEquals(decoded.rows)) {
         var at = -1
@@ -447,10 +407,6 @@ fun main(args: Array<String>) {
     val webAssets = File(repo, "frontend/public/boundaries")
     val rawRes = File(repo, "android/app/src/main/res/raw")
 
-    // THE SHIPPED COPY MUST BE THE FILE THE SERVER READ. The Python oracle read the boundary text out
-    // of frontend/public; the APK carries its own copy. If a regenerated boundary set updates one and
-    // not the other, every geometry digest below would still agree with whichever copy this harness
-    // happened to read, and the divergence would only ever appear in a report. Check the bytes.
     for (name in listOf("state-borders.txt", "district-borders.txt")) {
         checks += 1
         val shipped = File(androidAssets, name)
@@ -507,8 +463,6 @@ fun main(args: Array<String>) {
         println("PARITY OK — every figure, palette and scalar matches the Python oracle")
     } else {
         println("PARITY FAILED — ${failures.size} mismatch(es)")
-        // Grouped first. Twenty-five raw mismatches scroll the interesting one off the screen, and
-        // what a reader needs before any of them is "which of the three modules drifted".
         println("  by kind:")
         failures.map { it.substringBefore('\n').substringAfterLast('/') }
             .groupingBy { it }.eachCount().toList().sortedByDescending { it.second }

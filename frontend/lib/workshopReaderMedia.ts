@@ -1,35 +1,14 @@
-/**
- * A WORKSHOP'S OWN FILES AND OWN QUESTIONS, FOR THE PEOPLE WHO READ IT AND CHANGE NONE OF IT.
- *
- * Sweep item F5 (2026-10-10). Inspectors read a workshop on `/design-workshop-inspections/[id]` and
- * its directorate post holders on `/officers/monitored/[id]`. Both screens used to count a media
- * field's files and say the read did not carry them, and count the answers to the workshop's own
- * questions without their wording. Both now show them, read-only:
- *
- * - **Files** come from a second read on each surface — `GET /design-workshop-inspections/{id}/media`
- *   and `GET /design-workshop-oversight/assigned/{id}/media` — behind the same read-only loader as
- *   the workshop itself. Every URL on it is a short-lived signature; there is no permanent link, no
- *   storage key, and nothing on these screens can upload, replace, caption or delete a file.
- * - **Questions** arrive on the workshop read itself as `customSections`, the same shape
- *   `GET /design-workshops/{id}/custom-sections` serves the designer.
- *
- * Everything here that decides what to DRAW is a pure function, so `e2e/workshop-reader-media-unit.spec.ts`
- * can pin it without a browser.
- */
-
 import { apiFetch } from "@/lib/api";
 import { customAnswerText, customStageBlocks, type DwCustomDefinition, type DwCustomField } from "@/lib/customSections";
 import { isFilled, listValue, type DwEntryData, type DwFieldStamp, type DwValue } from "@/lib/designWorkshops";
 import type { MediaType } from "@/lib/types";
 
-/** One file as a reader is given it — a whitelist of columns, and `url` only when it was signed. */
 export type ReaderMediaFile = {
   id: string;
   originalFilename: string;
   mediaType: MediaType;
   mimeType: string;
   sizeBytes?: number | string;
-  /** A signed link that expires in minutes. Absent when the file could not be signed. */
   url?: string | null;
   caption?: string | null;
   transcriptText?: string | null;
@@ -39,7 +18,6 @@ export type ReaderMediaFile = {
 
 export type ReaderMediaList = { items: ReaderMediaFile[]; truncated: boolean };
 
-/** Which surface is reading — the two routes differ only in their prefix. */
 export type ReaderSurface = "inspection" | "oversight" | "approval";
 
 export function readerMediaPath(surface: ReaderSurface, workshopId: string): string {
@@ -54,7 +32,6 @@ export function getReaderMedia(surface: ReaderSurface, workshopId: string) {
   return apiFetch<ReaderMediaList>(readerMediaPath(surface, workshopId));
 }
 
-/** How one file is drawn. Decided by the stored type first, the MIME type second. */
 export type ReaderMediaKind = "image" | "audio" | "video" | "document";
 
 export function readerMediaKind(file: Pick<ReaderMediaFile, "mediaType" | "mimeType">): ReaderMediaKind {
@@ -66,13 +43,6 @@ export function readerMediaKind(file: Pick<ReaderMediaFile, "mediaType" | "mimeT
   return "document";
 }
 
-/**
- * The files one media field holds, resolved against the workshop's own files.
- *
- * `shown` keeps the field's own order. `elsewhere` counts ids that are not among this workshop's
- * files — a file filed against another record (an artisan's portrait, say) — which is a different
- * fact from "no file", so the screen says it in words rather than drawing an empty frame.
- */
 export function resolveFieldMedia(
   value: DwValue | undefined,
   byId: ReadonlyMap<string, ReaderMediaFile>
@@ -92,19 +62,10 @@ export function mediaIndex(list: ReaderMediaList | null | undefined): Map<string
   return new Map((list?.items ?? []).map((file) => [file.id, file]));
 }
 
-/** One answered custom question, with its wording and who wrote it. */
 export type ReaderCustomAnswer = { field: DwCustomField; text: string; stamp?: DwFieldStamp | null };
 
-/** One section's answered questions, in the order the designer asks them. */
 export type ReaderCustomBlock = { title: string; retired: boolean; answers: ReaderCustomAnswer[] };
 
-/**
- * The answers in one stage's `custom` bucket, put back beside their questions.
- *
- * Retired questions that hold an answer are KEPT — an answer given under a wording that was later
- * changed is still evidence — and flagged so the screen can say the question is no longer asked.
- * `unmatched` counts answers whose question this workshop no longer defines at all.
- */
 export function customAnswersForStage(
   definition: DwCustomDefinition | null | undefined,
   stageKey: string,
@@ -130,7 +91,6 @@ export function customAnswersForStage(
   return { blocks, unmatched };
 }
 
-/** A file's size the way a person reads one, or "" when it is not known. */
 export function readableSize(bytes: number | string | null | undefined): string {
   const n = typeof bytes === "string" ? Number(bytes) : bytes;
   if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) return "";

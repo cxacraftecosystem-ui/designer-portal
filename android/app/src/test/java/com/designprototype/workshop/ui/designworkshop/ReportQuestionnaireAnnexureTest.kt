@@ -35,33 +35,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The questionnaire annexure the HANDSET writes, pinned against the one the office writes.
- *
- * ── WHAT THIS EXISTS FOR ──────────────────────────────────────────────────────────────────────────
- *
- * The report handed to a visiting ministry officer at the close of a workshop is the copy this phone
- * produced. Until this lane it carried no questionnaire answers at all and said so, and the reason it
- * gave was true: nothing under `data/` held one. Now it holds them, and the whole risk moves to a
- * different place — TWO renderings of one appendix of evidence, one in Python and one in Kotlin,
- * drifting apart where nobody is comparing them.
- *
- * ── THE EXPECTED STRINGS ARE THE SERVER'S OWN OUTPUT, NOT A TRANSCRIPTION ─────────────────────────
- *
- * Every literal below was produced by running the fixture in this file through
- * `backend/app/services/report_questionnaires.py` in the project's own venv and printing the result —
- * the discipline `DwOverflowParityTest` states: the correct behaviour is not "renders something", it
- * is "prints what the server prints", because the designer's copy and the ministry's copy have to be
- * the same document. The separators are `·` U+00B7 and `—` U+2014 and the quotes in the lead
- * paragraph are curly, exactly as Python emits them; a straight quote here would be a silent
- * divergence on every report.
- *
- * To regenerate after a deliberate change on the server, build the same three dataclasses and print
- * `questionnaire_annexure_blocks`, `_questionnaire_provenance` and `_sitting_provenance`.
- */
 class ReportQuestionnaireAnnexureTest {
-
-    // ── the fixture, identical on both sides ─────────────────────────────────────────────────────
 
     private val answers = listOf(
         DwQuestionnaireAnswer(
@@ -69,16 +43,12 @@ class ReportQuestionnaireAnnexureTest {
             notes = "counted with the master weaver",
             sectionCode = "A", sectionTitle = "Household", isRequired = true,
         ),
-        // Required and blank: prints, because the gap is itself the finding.
         DwQuestionnaireAnswer(
             prompt = "Who weaves?", sectionCode = "A", sectionTitle = "Household", isRequired = true,
         ),
-        // Optional and blank: prints nothing, so a forty-question form is not forty rows.
         DwQuestionnaireAnswer(
             prompt = "Optional and unanswered", sectionCode = "A", sectionTitle = "Household",
         ),
-        // Answered under a wording that was later reworded. The answer stays with the wording it was
-        // given under — losing that is the "twelve looms becomes twelve weavers" failure.
         DwQuestionnaireAnswer(
             prompt = "Old wording of the dye question", answerText = "Indigo",
             sectionCode = "B", sectionTitle = "Dyeing", isRetired = true,
@@ -103,13 +73,6 @@ class ReportQuestionnaireAnnexureTest {
         isRequired = required, isRetired = retired,
     )
 
-    /**
-     * Created and never filled in. Left out of the annexure and raised as a warning instead.
-     *
-     * IT STILL CARRIES A ROW PER QUESTION, because the mapping builds every sitting against the same
-     * ordered question list — that is what makes two sittings of one form comparable side by side.
-     * What keeps it out of the document is `answeredCount == 0`, not an absence of rows.
-     */
     private val emptySitting = DwQuestionnaireSitting(
         entryId = "cmempty00000000000", title = "Never filled in",
         answers = listOf(
@@ -135,12 +98,8 @@ class ReportQuestionnaireAnnexureTest {
     private fun cacheOf(vararg items: DwQuestionnaireItem, complete: Boolean = true) =
         DwQuestionnaireCache(
             workshopId = "w1", items = items.toList(), complete = complete,
-            // Blank, so the annexure's one device-only freshness line is out of the way of the
-            // shape comparisons below. It has its own test.
             fetchedAt = "",
         )
-
-    // ── reading the blocks ───────────────────────────────────────────────────────────────────────
 
     private fun runText(runs: List<Run>) = runs.joinToString("") { it.text }
 
@@ -173,8 +132,6 @@ class ReportQuestionnaireAnnexureTest {
         )
         return builder.build().blocks
     }
-
-    // ── the shape, block for block ───────────────────────────────────────────────────────────────
 
     @Test
     fun `the annexure is the server's, block for block`() {
@@ -218,11 +175,6 @@ class ReportQuestionnaireAnnexureTest {
                 "Answers recorded" to 18.0f),
             table.columns.map { it.header to it.widthPct },
         )
-        // `numeric` IS PART OF THE SHAPE, not a rendering preference. Both writers right-align a
-        // numeric column and group its digits, so a flag set on one side and not the other gives the
-        // office and the field the same figures in visibly different columns — and this annexure
-        // exists to be read side by side with the office's copy. Pinned because the widths above
-        // would have gone on passing while the three counts drifted left.
         assertEquals(
             listOf(false, false, true, true, true),
             table.columns.map { it.numeric },
@@ -233,13 +185,6 @@ class ReportQuestionnaireAnnexureTest {
         )
     }
 
-    /**
-     * A sitting created and never filled in is not an empty heading in an appendix of evidence.
-     *
-     * `printed_sittings` drops it on the server and [DwQuestionnaireItem.printedSittings] drops it
-     * here, which is also why the provenance line above reads "1 sitting" for an item that holds
-     * two.
-     */
     @Test
     fun `an unfilled sitting is left out rather than printed as a blank heading`() {
         val headings = annexureBlocks(cacheOf(item)).filterIsInstance<HeadingBlock>()
@@ -249,35 +194,18 @@ class ReportQuestionnaireAnnexureTest {
             headings.contains("Never filled in"))
     }
 
-    // ── the three states, which are the point of the lane ────────────────────────────────────────
-
-    /**
-     * NEVER FETCHED. The device cannot tell an unattached workshop from an attached one, so it draws
-     * nothing and the conditional warning stands — byte for byte the report this build produced
-     * before the annexure existed.
-     */
     @Test
     fun `a device that has never read the list prints nothing at all`() {
         assertEquals(emptyList<Block>(), annexureBlocks(null))
         assertEquals(DwQuestionnaireCopy.UNKNOWN, dwQuestionnaireCopy(null))
     }
 
-    /**
-     * NOTHING ATTACHED. The single commonest case, and the one that must stay silent: no heading, no
-     * page break, no apology. `append_questionnaire_annexure` with an empty list appends nothing
-     * either, so the two copies are still byte-identical here.
-     */
     @Test
     fun `a workshop with no questionnaire attached prints nothing at all`() {
         assertEquals(emptyList<Block>(), annexureBlocks(cacheOf()))
         assertEquals(DwQuestionnaireCopy.NONE_ATTACHED, dwQuestionnaireCopy(cacheOf()))
     }
 
-    /**
-     * ATTACHED AND ANSWERED BY NOBODY. Printed by neither copy — the server drops it too — and
-     * reported to the designer as a warning instead, because they chose that form for this workshop
-     * on purpose and would otherwise have to notice the shortfall in a sixty-page document.
-     */
     @Test
     fun `an attached questionnaire nobody answered prints nothing and warns`() {
         assertEquals(emptyList<Block>(), annexureBlocks(cacheOf(unanswered)))
@@ -290,15 +218,6 @@ class ReportQuestionnaireAnnexureTest {
         )
     }
 
-    /**
-     * ATTACHED, AND THIS DEVICE HAS NO COPY OF THE ANSWERS.
-     *
-     * THIS IS THE CASE THE LANE EXISTS FOR. An empty annexure and a missing one are different
-     * documents: printing a heading with nothing under it reads as "nobody answered", which is a
-     * false statement about somebody's fieldwork, and printing nothing at all is the silent
-     * divergence between the phone's copy and the office's that this whole area exists to end. The
-     * questionnaire is NAMED and the file says the answers are not in it.
-     */
     @Test
     fun `an attached questionnaire whose answers are missing is named rather than implied absent`() {
         val unread = DwQuestionnaireItem(
@@ -315,8 +234,6 @@ class ReportQuestionnaireAnnexureTest {
             "and must point at the record that does have them: $text",
             text.contains("Their answers are in the online workshop record"),
         )
-        // No index table and no per-questionnaire heading: there is nothing answered to index, and a
-        // numbered heading over nothing is what makes a report look corrupt.
         assertTrue("nothing may be indexed here: $text", !text.contains("Answers recorded"))
     }
 
@@ -333,10 +250,6 @@ class ReportQuestionnaireAnnexureTest {
         )
     }
 
-    /**
-     * A copy assembled from single-questionnaire reads cannot claim to be the whole list, and the
-     * document says so rather than implying completeness it has not established.
-     */
     @Test
     fun `an incomplete list admits it is incomplete`() {
         val text = annexureBlocks(cacheOf(item, complete = false))
@@ -346,18 +259,12 @@ class ReportQuestionnaireAnnexureTest {
             "and it must not imply it has the whole set: $text",
             text.contains("Other questionnaires may also be attached to this workshop"),
         )
-        // A complete one says nothing of the kind — the note must not become noise on every report.
         assertFalse(
             annexureBlocks(cacheOf(item)).joinToString("\n", transform = ::describe)
                 .contains("may also be attached"),
         )
     }
 
-    /**
-     * The one line this copy carries that the office's does not, and the reason it is worth the
-     * divergence: a report built from a fortnight-old copy of the answers is still worth having, and
-     * what makes it safe to hand over is that it says how old it is.
-     */
     @Test
     fun `the file dates the copy of the answers it was built from`() {
         val dated = cacheOf(item).copy(fetchedAt = "2026-03-01T06:12:44Z")
@@ -369,8 +276,6 @@ class ReportQuestionnaireAnnexureTest {
         )
     }
 
-    // ── the wire shape becomes the report shape ──────────────────────────────────────────────────
-
     private fun question(
         id: String, prompt: String, required: Boolean = false, active: Boolean = true,
     ) = CustomQuestionDto(id = id, prompt = prompt, isRequired = required, isActive = active)
@@ -378,8 +283,6 @@ class ReportQuestionnaireAnnexureTest {
     private val wire = CustomQuestionnaireDto(
         id = "cmq0001", title = "Barpali loom survey", description = "Household level.",
         designWorkshopId = "w1", version = 3, sourceFilename = "barpali.xlsx",
-        // What `GET /questionnaires/{id}?includeRetired=true` reports: FOUR active plus the retired
-        // one. The report must not print this number — see the assertion below.
         questionCount = 5,
         sections = listOf(
             CustomSectionDto(
@@ -414,42 +317,23 @@ class ReportQuestionnaireAnnexureTest {
         ),
     )
 
-    /**
-     * The mapping produces exactly the fixture the parity assertions above are written against, so
-     * the port is pinned end to end: wire shape in, the server's document out.
-     */
     @Test
     fun `one questionnaire payload becomes the item the annexure prints`() {
         assertEquals(item, dwQuestionnaireItemOf(wire))
     }
 
-    /**
-     * `questionCount` IS RECOMPUTED AND NOT COPIED, and the two numbers genuinely differ.
-     *
-     * `load_form` counts every question in the payload it built, and this client asks for the payload
-     * WITH retired questions in it; `report_items` counts `q.isActive` only. A reader compares this
-     * figure against the instrument in their hand and the instrument no longer asks the retired one,
-     * so copying the wire value would print "5 question(s)" over a four-question form.
-     */
     @Test
     fun `the printed question count excludes retired questions even though the payload counts them`() {
         assertEquals(5, wire.questionCount)
         assertEquals(4, dwQuestionnaireItemOf(wire).questionCount)
     }
 
-    /**
-     * WALKED SECTION BY SECTION. `QuestionnaireFormQuestion.sortOrder` is scoped to its section, and
-     * the server's own comment records what a flat ordering did to the document: one single-row table
-     * per question with the label repeated above each, A/B/A/B down the page, in the appendix of
-     * evidence handed to a ministry officer.
-     */
     @Test
     fun `answers come out in section order and not interleaved`() {
         val labels = dwQuestionnaireItemOf(wire).sittings.first().printedAnswers.map { it.sectionLabel }
         assertEquals(listOf("A — Household", "A — Household", "B — Dyeing", "B — Dyeing"), labels)
     }
 
-    /** A question retired after it was answered keeps its own wording and is marked as such. */
     @Test
     fun `a superseded question keeps the wording its answer was given under`() {
         val retired = dwQuestionnaireItemOf(wire).sittings.first().answers.single { it.isRetired }
@@ -457,15 +341,6 @@ class ReportQuestionnaireAnnexureTest {
         assertEquals("Indigo", retired.answerText)
     }
 
-    // ── what the designer is told, and when ──────────────────────────────────────────────────────
-
-    /**
-     * The warning is GUARDED by what the device holds, exactly as the transcript warning is guarded
-     * by the designer's own `includeTranscripts` answer.
-     *
-     * Both guards exist for one reason: a warning that is true in general and false in the case in
-     * front of the designer is how a designer learns to stop reading warnings.
-     */
     @Test
     fun `the unsupported-section warning stands only while the device has nothing`() {
         val template = reportTemplate("DCH_STANDARD")
@@ -475,9 +350,6 @@ class ReportQuestionnaireAnnexureTest {
                 "so: $never",
             never.any { it.contains("If a questionnaire is attached") },
         )
-        // And the reason it gives must be the one that is still true. "This device keeps no copy of
-        // them" was the root cause and is now false; leaving it would send a designer to wait for the
-        // office over a gap they can close themselves with a bar of signal.
         assertTrue(
             "the warning must not still claim the device cannot hold them: $never",
             never.none { it.contains("This device keeps no copy") },
@@ -499,11 +371,6 @@ class ReportQuestionnaireAnnexureTest {
         )
     }
 
-    /**
-     * The other half of `ReportTemplateDocumentTest`'s "either rendered or named as unsupported"
-     * invariant, from the side that test cannot reach: with a copy of the answers on the device the
-     * section DOES draw, so the pairing is complete rather than permanently resolved by the warning.
-     */
     @Test
     fun `the section is genuinely drawn once the device holds the answers`() {
         val template = reportTemplate("DCH_STANDARD").copy(
@@ -533,8 +400,6 @@ class ReportQuestionnaireAnnexureTest {
                 table.rows.any { row -> row.any { runText(it).contains("Indigo and madder") } }
             },
         )
-        // And with no copy on the device the same call draws nothing, which is what keeps the
-        // warning honest for the handset that has never had signal on this workshop.
         val nothing = buildWorkshopDocument(
             schema = SchemaResponse(version = "test", stages = emptyList()),
             draft = null, workshopId = "w1", templateId = "DCH_STANDARD",
@@ -542,8 +407,6 @@ class ReportQuestionnaireAnnexureTest {
         )
         assertEquals(emptyList<Block>(), nothing.blocks)
     }
-
-    // ── M16 (audit 21 Oct 2026): the kind, as the server groups and prints it ─────────────────────
 
     @QFeature("A12")
     @Test

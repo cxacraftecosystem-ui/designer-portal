@@ -13,22 +13,11 @@ import type { PageResult } from "@/lib/types";
 
 export const DELETED_QUESTIONNAIRES_PAGE_SIZE = 20;
 
-/** The restore notice, named when the form has a title. */
 export function restoredQuestionnaireNotice(title: string): string {
   const named = title.trim();
   return named ? `“${named}” is restored.` : "That questionnaire is restored.";
 }
 
-/**
- * THE QUESTIONNAIRE TRASH — soft-deleted forms and the one control that brings one back.
- *
- * `DELETE /questionnaires/{id}` only sets `deletedAt` (owner, 2026-10-20), so a deleted form keeps
- * every section, sitting and answer. A content admin's list is every deleted form; anyone else's is
- * the forms they authored (`ownOnly`), which the server scopes and lets them restore (owner,
- * 22 Oct 2026). `ownOnly` draws nothing until there is something to restore, so an author with an
- * empty trash sees no card. Same shape as `DeletedWorkshopsCard`: server-paged, rows kept on a
- * failed refresh, and a pager on `total` rather than on the rows shown.
- */
 export function DeletedQuestionnairesCard({
   onRestored,
   ownOnly = false

@@ -1,10 +1,3 @@
-"""The 21 Oct 2026 questionnaire audit fixes (AUDIT_DR_2026-10-21.md), pinned without a database.
-
-The behaviour is proved end to end in ``test_interview_live_fixes`` and ``test_questionnaire_live_fixes``
-(database-backed); these drive the same functions with recording fakes, or read their source, so the
-ordinary ``Checks`` run (which has no database) still fails when one of the fixes is undone.
-"""
-
 import asyncio
 import inspect
 from pathlib import Path
@@ -48,8 +41,6 @@ def _researcher(user_id: str = "usr_2") -> Any:
 def _row(**columns: Any) -> Any:
     return SimpleNamespace(**{"notes": None, "answerOrigin": None, **columns})
 
-
-# ── H4: unchanged before authorship, and every conflict named ───────────────────────────────
 
 
 def _interview_db(monkeypatch, stored: list[Any]) -> _Delegate:
@@ -110,8 +101,6 @@ def test_the_fold_writes_its_fill_and_its_answers_in_one_transaction():
     assert "client=tx" in code
 
 
-# ── H5: the delete is soft, and the readers filter it ───────────────────────────────────────
-
 
 def test_deleting_an_interview_is_a_soft_delete_that_frees_its_set():
     from app.api.routes import questionnaire
@@ -162,8 +151,6 @@ def test_require_live_record_refuses_a_soft_deleted_row():
         asyncio.run(require_live_record(_One(SimpleNamespace(id="i1", deletedAt="2026-10-21")), "i1"))
     assert gone.value.status_code == 404
 
-
-# ── M5: per item ─────────────────────────────────────────────────────────────────────────────
 
 
 def _forms_db(monkeypatch, stored: list[Any], questions: list[Any]) -> _Delegate:
@@ -232,8 +219,6 @@ def test_the_answers_put_refuses_an_empty_batch_and_narrows_what_it_returns():
     assert 'where["answeredById"] = current_user.id' in code
     assert "_sees_every_sitting(" in code
 
-
-# ── M17, M1, M2: what "answered" means, and who may remove ──────────────────────────────────
 
 
 def test_a_notes_only_answer_counts_as_answered(monkeypatch):
@@ -318,8 +303,6 @@ def test_the_re_upload_passes_the_removal_rule_and_runs_in_one_transaction():
     from app.services import questionnaire_forms
 
     route = inspect.getsource(routes.reupload_questionnaire)
-    # Author or content admin (owner, 22 Oct 2026): `_require_owner` admits exactly those two, and
-    # it runs before the workbook is applied, so whoever reaches the edit may remove.
     assert "may_remove=True" in route
     assert route.index("_require_owner(record, current_user)") < route.index("apply_parsed_edit(")
     edit = inspect.getsource(questionnaire_forms.apply_parsed_edit)
@@ -337,7 +320,6 @@ def test_taking_a_section_out_is_the_authors_or_an_admins():
 
 
 def test_a_forms_delete_restore_and_question_removal_are_the_authors_or_an_admins():
-    """Owner, 22 Oct 2026: the author OR a content admin; a sitting's delete stays admin-only."""
     from app.api.routes import questionnaire_forms as routes
 
     for handler in (routes.delete_questionnaire, routes.restore_questionnaire, routes.remove_question):
@@ -350,8 +332,6 @@ def test_a_forms_delete_restore_and_question_removal_are_the_authors_or_an_admin
     assert "require_content_admin" in inspect.getsource(routes.restore_entry)
 
 
-# ── M4: atomic creates ──────────────────────────────────────────────────────────────────────
-
 
 def test_a_workbook_upload_and_a_new_section_are_each_one_transaction():
     from app.api.routes import questionnaire_forms as routes
@@ -359,7 +339,6 @@ def test_a_workbook_upload_and_a_new_section_are_each_one_transaction():
 
     create = inspect.getsource(questionnaire_forms.create_from_parsed).split('"""')[-1]
     assert "async with db.tx(" in create
-    # On the form's tables (UNIFY U5: the instrument tables once unified), batched, in the transaction.
     assert "Tx.sections.create_many(" in create
     assert "Tx.questions.create_many(" in create
     assert "await db.questionnaireformquestion.create(" not in create

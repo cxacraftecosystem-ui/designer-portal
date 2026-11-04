@@ -1,29 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-/**
- * INDEPENDENT verification of the "offline create drops the chosen workshop link" claim.
- *
- * Goes further than a draft read: it lets the app's OWN sync push the draft and then asks the
- * SERVER whether the created design workshop carries `workshopId`. A control run does the same
- * thing online, so a null on the server can only mean the offline path lost it.
- */
-
 const API = process.env.E2E_API_URL ?? "http://localhost:8000";
-/*
- * THE ACCOUNT THIS FILE SIGNS IN AS CHANGED, AND THE REASON IS THE POINT.
- *
- * It used to be `designer@example.org`, and every test below opens the CREATE form. Design-workshop
- * creation is now admin-and-above: a designer may still open every workshop they have access to,
- * fill its 22 stages and produce its report, but may not bring a new one into existence — so the
- * "New design workshop" control is HIDDEN for them and these tests timed out clicking a button that
- * is correctly not there.
- *
- * The behaviour under test is unchanged and is not about permission at all: it is the offline
- * create, the local draft, and what happens when the server's answer to a create is lost. Those are
- * properties of the create path whoever performs it, so the fix is to perform it as an account that
- * may — NOT to relax the gate, and not to delete the coverage. `design-workshop-create-gate-unit`
- * is where the permission itself is asserted.
- */
 const WHO = { email: process.env.E2E_EMAIL ?? "admin2@example.org", password: process.env.E2E_PASSWORD ?? "LocalDev123!" };
 
 async function token(page: Page): Promise<string> {
@@ -63,19 +40,16 @@ async function readDrafts(page: Page) {
   }
 }
 
-/** Open the create form and pick the first real workshop in "Start from a recorded workshop". */
 async function fillForm(page: Page, title: string): Promise<string> {
   await page.goto("/design-workshops");
   await page.getByRole("button", { name: /new design workshop/i }).click();
   const trigger = page.getByRole("button", { name: "Start from a recorded workshop" });
   await expect(trigger).toBeVisible({ timeout: 30_000 });
   await trigger.click();
-  // The first option is the "do not link" sentinel; take the one after it.
   const options = page.getByRole("option");
   await expect(options.nth(1)).toBeVisible({ timeout: 30_000 });
   const label = (await options.nth(1).textContent()) ?? "";
   await options.nth(1).click();
-  // The searchable dropdown renders into a dialog; make sure nothing is left overlaying the form.
   for (let i = 0; i < 5; i += 1) {
     if (!(await page.locator("[data-field-dialog-overlay]").count())) break;
     await page.keyboard.press("Escape");
@@ -97,17 +71,12 @@ test("offline create keeps the chosen workshop link", async ({ page, context }) 
   if (await overlay.count()) console.log("DIALOG IN THE WAY:", (await overlay.first().innerText()).slice(0, 400));
 
   await context.setOffline(true);
-  // Submit through the form itself: a stray modal overlay in this build eats the pointer, and what
-  // is under test is the create handler, not the button's hit box.
   await page.evaluate(() => {
     const form = document.querySelector("form");
     (form as HTMLFormElement).requestSubmit();
   });
-  // `router.push` cannot fetch the next route's payload with no connection, so the tab lands on the
-  // browser's own error page — where IndexedDB is unreadable. The draft is already on disk by then.
   await page.waitForTimeout(3000);
 
-  /* Come back and read what was written, then let the app's own sync push it. ------------ */
   await context.setOffline(false);
   await page.goto("/design-workshops");
   await page.waitForTimeout(1500);
@@ -137,7 +106,6 @@ test("offline create keeps the chosen workshop link", async ({ page, context }) 
   console.log("SERVER workshopId AFTER OFFLINE CREATE:", JSON.stringify(detail.workshopId));
   console.log("SERVER clusterName:", JSON.stringify(detail.clusterName), "state:", JSON.stringify(detail.state));
 
-  /* Control: the same form, online. ----------------------------------------------------- */
   const onlineTitle = `skeptic online link ${Date.now()}`;
   await fillForm(page, onlineTitle);
   await page.evaluate(() => {
@@ -156,7 +124,6 @@ test("offline create keeps the chosen workshop link", async ({ page, context }) 
   expect(detail.workshopId, "offline create must link the workshop too").toBeTruthy();
 });
 
-/** The same loss, while ONLINE, when the create request merely 500s once. */
 test("a transient 500 on create takes the same lossy fallback", async ({ page }) => {
   await signIn(page);
   await page.route("**/api/design-workshops", async (route) => {

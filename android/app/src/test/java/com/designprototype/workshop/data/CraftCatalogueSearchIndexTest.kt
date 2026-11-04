@@ -3,11 +3,6 @@ package com.designprototype.workshop.data
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/**
- * The picker's search folds each craft once per catalogue (2026-10-20 audit). This holds the indexed
- * search to the rule it replaced, word for word: the old per-keystroke implementation is kept here
- * as the reference, and every query below must rank the 455-craft master list identically.
- */
 class CraftCatalogueSearchIndexTest {
     private val body: String = javaClass.getResourceAsStream("/craft-catalogue.json")!!.bufferedReader().readText()
     private val catalogue: CraftCatalogue = CraftCatalogueCache.parse(body)!!

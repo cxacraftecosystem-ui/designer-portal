@@ -16,13 +16,6 @@ import type { User } from "@/lib/types";
 
 import { installSessionCookie } from "./support/fakeSessionCookie";
 
-/**
- * Request fan-outs on the web client: what a screen used to ask once per row, or several times at
- * once, and now asks once. Each test counts the requests that reach `fetch`.
- *
- * ⚠ LINE-ENDING AGNOSTIC: single-line `toContain`s only.
- */
-
 const FRONTEND = join(__dirname, "..");
 const read = (...parts: string[]) => readFileSync(join(FRONTEND, ...parts), "utf8");
 const realFetch = globalThis.fetch;
@@ -50,10 +43,6 @@ function serve(answer: (url: string) => { status: number; body?: unknown }) {
   return asked;
 }
 
-/**
- * A server whose GETs wait until the test lets them answer — so a read can be held in the air across
- * a save. `release(i, body)` answers the i-th held GET; anything that is not a GET answers at once.
- */
 function serveHeld(other: (url: string, method: string) => { status: number; body?: unknown }) {
   const asked: { url: string; method: string }[] = [];
   const held: ((body: unknown) => void)[] = [];
@@ -95,8 +84,6 @@ test.afterEach(() => {
   delete (globalThis as Record<string, unknown>).window;
   (globalThis as Record<string, unknown>).fetch = realFetch;
 });
-
-/* ── lib/inFlight ─────────────────────────────────────────────────────────── */
 
 test("reads asked at the same moment ride one request, and each caller gets its own copy", async () => {
   let started = 0;
@@ -211,8 +198,6 @@ test("signing out starts a new read generation and drops the held posts", () => 
   expect(body).toContain("forgetMyWorkshopPosts();");
 });
 
-/* ── lib/myWorkshopPosts ──────────────────────────────────────────────────── */
-
 const MY_POSTS = {
   workshops: {
     w1: { oversight: [{ capacity: "REGIONAL_DIRECTOR", userId: "u-admin" }], inspectors: [{ userId: "u-admin" }] },
@@ -295,8 +280,6 @@ for (const [name, save] of [
     }
   });
 }
-
-/* ── Screens ──────────────────────────────────────────────────────────────── */
 
 test("the measure tab resolves its photographs through the media batch, not one GET each", () => {
   const host = read("components", "sketches", "UploadTabHost.tsx");

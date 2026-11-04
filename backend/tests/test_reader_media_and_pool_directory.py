@@ -1,24 +1,3 @@
-"""Three reads built from the gap sweep (F5, F13, F8), and who each one admits and refuses.
-
-* **F5 — a workshop's own files for the people who read it read-only.**
-  ``GET /design-workshop-inspections/{id}/media`` (its inspectors) and
-  ``GET /design-workshop-oversight/assigned/{id}/media`` (whoever holds its Assistant or Regional
-  Director post — a Ministry Admin included). Each role is asserted both ways: admitted on the
-  workshop its row names, refused on a workshop it holds no row on, and refused on the other surface.
-  The URL that travels is a SIGNATURE, never the stored one, and the key and the public URL do not
-  travel at all; a file of another workshop is not in the answer.
-* **F5 — the questions behind the custom answers** travel on both reads as ``customSections``.
-* **F13 — the inspection list's filters** narrow the inspector's own rows and can never add one.
-* **F8 — ``GET /design-ratings/workshops``**, the directory of workshops that opened a piece to the
-  pool: listed only when a piece is open, five facts per row, and refused (404) to everybody the POOL
-  round refuses.
-
-THE SHAPE IS THE ONE ``tests/conftest.py`` PRESCRIBES: a SYNC module fixture seeds everything inside
-one ``asyncio.run`` and only then starts the ``TestClient``; the tests are sync and never touch
-``db``. The storage signer is replaced by a recorder, so the assertions do not depend on whether this
-machine holds storage credentials, and so "signed" is a fact the test can see.
-"""
-
 import asyncio
 import os
 import uuid
@@ -243,10 +222,6 @@ def _get(world: dict[str, Any], slug: str, path: str):
     return world["client"].get(f"/api{path}", headers=_as(world, slug))
 
 
-# --------------------------------------------------------------------------------------
-# F5 — the files, on the inspection surface
-# --------------------------------------------------------------------------------------
-
 
 def _assert_the_workshops_files_only_and_signed(world: dict[str, Any], body: dict) -> None:
     ids = {item["id"] for item in body["items"]}
@@ -284,14 +259,9 @@ def test_roles_that_cannot_inspect_are_refused_the_inspection_files(world, slug)
 
 
 def test_a_ministry_admin_posted_as_director_is_not_thereby_an_inspector(world):
-    """Admitted to the inspection SURFACE by role, refused this workshop because no row names them."""
     response = _get(world, "ministry", f"/design-workshop-inspections/{world['inspected']}/media")
     assert response.status_code == 404
 
-
-# --------------------------------------------------------------------------------------
-# F5 — the files, on the oversight surface
-# --------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("slug", ["director", "ministry"])
@@ -315,7 +285,6 @@ def test_roles_that_cannot_hold_a_post_are_refused_the_oversight_files(world, sl
 
 
 def test_neither_files_read_is_a_write_door(world):
-    """GET only. A post holder gains no way to change a file through either path."""
     for path in (
         f"/api/design-workshop-inspections/{world['inspected']}/media",
         f"/api/design-workshop-oversight/assigned/{world['inspected']}/media",
@@ -323,22 +292,16 @@ def test_neither_files_read_is_a_write_door(world):
         for method in ("post", "put", "patch", "delete"):
             response = getattr(world["client"], method)(path, headers=_as(world, "director"))
             assert response.status_code == 405, f"{method.upper()} {path}"
-    # And the media write door itself still refuses a reader who did not upload the file.
     response = world["client"].delete(f"/api/media/{world['photo']}", headers=_as(world, "inspector"))
     assert response.status_code == 403
 
 
 def test_the_files_read_does_not_widen_the_general_media_read(world):
-    """An inspector still gets no URL for this workshop's file from ``GET /media/{id}``."""
     response = _get(world, "inspector", f"/media/{world['photo']}")
     assert response.status_code == 200
     body = response.json()
     assert "url" not in body and "objectKey" not in body
 
-
-# --------------------------------------------------------------------------------------
-# F5 — the custom questions travel with both reads
-# --------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -355,10 +318,6 @@ def test_both_reads_carry_the_workshops_own_questions(world, slug, path):
     labels = {field["label"] for section in sections for field in section["fields"]}
     assert "Which mandi buys the cloth?" in labels
 
-
-# --------------------------------------------------------------------------------------
-# F13 — the inspection list's filters
-# --------------------------------------------------------------------------------------
 
 
 def _listed(world: dict[str, Any], slug: str, query: str) -> set[str]:
@@ -393,7 +352,6 @@ def test_each_filter_narrows_the_inspectors_own_rows(world, query, expected):
 
 
 def test_no_filter_reaches_a_workshop_the_inspector_holds_no_row_on(world):
-    """``elsewhere`` matches every one of these values and is never listed."""
     got = _listed(
         world,
         "inspector",
@@ -406,10 +364,6 @@ def test_a_status_outside_the_vocabulary_is_a_422_not_an_empty_list(world):
     response = _get(world, "inspector", "/design-workshop-inspections?statusFilter=draft")
     assert response.status_code == 422
 
-
-# --------------------------------------------------------------------------------------
-# F8 — the pool directory
-# --------------------------------------------------------------------------------------
 
 
 def _directory(world: dict[str, Any], slug: str):
@@ -437,7 +391,6 @@ def test_the_pool_directory_is_refused_to_everybody_the_pool_round_refuses(world
 
 
 def test_a_listed_workshops_pool_round_opens_for_a_stranger(world):
-    """Every row listed is a round that answers: the designer holds no grant on ``inspected``."""
     response = _get(
         world,
         "designer",

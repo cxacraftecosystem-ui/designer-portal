@@ -62,11 +62,9 @@ import type { Craft } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { cn } from "@/lib/utils";
 
-/** Section id the craft media batch publishes under, so the page-level tray can aggregate it. */
 const MEDIA_SECTION = "craft-media";
 const MEDIA_SECTION_LABEL = "Craft media";
 
-/** Rows per page of the craft table — the whole list is in the browser, so this only paces reading. */
 const PAGE_SIZE = 25;
 
 type Tab = "crafts" | "categories" | "review";
@@ -74,7 +72,6 @@ type Tab = "crafts" | "categories" | "review";
 export default function CraftsPage() {
   return (
     <UploadsProvider>
-      {/* Next 16: `useEditDeepLink` reads useSearchParams, which must sit inside a Suspense boundary. */}
       <Suspense fallback={<div className="panel p-4 text-sm text-ink-500">Loading...</div>}>
         <CraftsPageBody />
       </Suspense>
@@ -83,17 +80,6 @@ export default function CraftsPage() {
   );
 }
 
-/**
- * The craft master list (REQUIREMENTS_2026-10-20 §2.6): Crafts | Categories | Needs review.
- *
- * The list is the catalogue (`GET /crafts/catalogue`), the one source every picker reads, so this
- * table and every dropdown in both portals show the same crafts. Adding or editing a craft takes
- * `canManageCrafts`; categories, merges and the review queue are content-admin work; Delete is drawn
- * in admin view only.
- *
- * DICTATED: Craft name · Local name · Description. Category, sub-category, states and GI status are
- * closed vocabularies behind dropdowns.
- */
 function CraftsPageBody() {
   const confirm = useConfirm();
   const { user } = useAuth();
@@ -103,11 +89,9 @@ function CraftsPageBody() {
   const allowManage = canManageCrafts(user);
   const contentAdmin = canAdministerCraftList(user);
   const { catalogue, error: catalogueError, reload: reloadCatalogue } = useCraftCatalogue();
-  /** Reference counts per craft, for content admins (the full catalogue carries them). */
   const [referenceCounts, setReferenceCounts] = useState<Map<string, number> | null>(null);
   const [tab, setTab] = useState<Tab>("crafts");
 
-  // Filters over the list. All client-side: the catalogue is the whole list.
   const [query, setQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [subCategoryFilter, setSubCategoryFilter] = useState("");
@@ -116,15 +100,12 @@ function CraftsPageBody() {
   const [page, setPage] = useState(1);
 
   const [editing, setEditing] = useState<Craft | null>(null);
-  // Page state, seeded in `resetForm` only — `formElement.reset()` reaches the DOM and not React.
   const [name, setName] = useState("");
   const [localName, setLocalName] = useState("");
   const [subCategoryId, setSubCategoryId] = useState("");
   const [stateOfOrigin, setStateOfOrigin] = useState<string[]>([]);
   const [stateOfPractice, setStateOfPractice] = useState<string[]>([]);
   const [giStatus, setGiStatus] = useState<GiStatus>("NON_GI");
-  // Remounting on every reset is what clears the children that hold their own state (the
-  // description box above all), which no amount of `form.reset()` can reach.
   const [formKey, setFormKey] = useState(0);
   const [mediaFiles, setMediaFiles] = useState<File[]>([]);
   const [collabId, setCollabId] = useState<string | null>(null);
@@ -142,7 +123,6 @@ function CraftsPageBody() {
     resetKey: editing?.id ?? null
   });
 
-  // How many records use each craft: a standard column (§2.6), and the number behind merge or delete.
   useEffect(() => {
     if (!catalogue) return;
     let cancelled = false;
@@ -156,7 +136,6 @@ function CraftsPageBody() {
     };
   }, [catalogue]);
 
-  /** Search, filters and page, so Back from a craft's read-only page lands on the same rows. */
   const memory = useListMemory(
     "crafts",
     {
@@ -179,11 +158,9 @@ function CraftsPageBody() {
       setStateFilter(filters.state ?? "");
       if (filters.tab === "categories" || filters.tab === "review") setTab(filters.tab);
     }
-    // Once, on arrival.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Warn on hard navigation (close tab / reload) while the craft form has unsaved edits.
   useEffect(() => {
     if (!dirty) return;
     function onBeforeUnload(event: BeforeUnloadEvent) {
@@ -196,7 +173,6 @@ function CraftsPageBody() {
 
   useLeaveGuard(dirty, () => guard(() => router.back()));
 
-  /** Run `action` now, or park it behind the unsaved-changes dialog when the form is dirty. */
   function guard(action: () => void) {
     if (dirty) setConfirmAction(() => action);
     else action();
@@ -215,7 +191,6 @@ function CraftsPageBody() {
     setFormKey((key) => key + 1);
   }
 
-  // `/crafts?edit=<id>` loads that craft into the form; `/crafts?new=1` opens a blank one.
   const { loading: deepLinkLoading } = useEditDeepLink<Craft>({
     endpoint: "/crafts",
     basePath: "/crafts",
@@ -227,10 +202,8 @@ function CraftsPageBody() {
     errorMessage: "Unable to load that craft"
   });
 
-  // `/crafts?new=<name>`: "Add it to the list" from a craft picker, with the name already typed.
   const typedNew = searchParams.get("new");
   const typedNewHandled = useRef(false);
-  /** The form the picker was on: saving the craft goes back there (lib/craftAddDraft). */
   const returnToRef = useRef<string | null>(null);
   useEffect(() => {
     if (typedNewHandled.current || !typedNew || typedNew === "1" || !allowManage) return;
@@ -262,7 +235,6 @@ function CraftsPageBody() {
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // React nulls event.currentTarget after the first await — capture it before any async work.
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     if (!(await workshop.confirmSubmission())) {
@@ -285,7 +257,6 @@ function CraftsPageBody() {
         description
       };
       if (exifItems.length) payload.extraMetadata = { mediaExif: exifItems };
-      // Offline this queues to the outbox with its media rather than failing at the Save button.
       const outcome = await saveOrQueue<Craft>({
         label: `Craft · ${payload.name || "Untitled"}`,
         endpoint: editing ? `/crafts/${editing.id}` : "/crafts",
@@ -305,8 +276,6 @@ function CraftsPageBody() {
         setConfirmAction(null);
         formElement.reset();
         setSaving(false);
-        // As the success path: back to the form that asked for this craft, or the navigation the
-        // unsaved-changes dialog's Save was for. A queued craft has no id yet, so nothing is marked added.
         const queuedBackTo = !editing ? returnToRef.current : null;
         returnToRef.current = null;
         const after = afterSaveRef.current;
@@ -335,7 +304,6 @@ function CraftsPageBody() {
         );
         const stranded = outcomes.filter((outcome) => outcome.failure !== null);
         if (stranded.length) {
-          // Keep only the bytes that did not land, so the capture card means what it says.
           setMediaFiles(stranded.map((outcome) => outcome.file));
           setError(
             `${stranded.length} of ${countNoun(mediaFiles.length, "file")} failed to upload: ${stranded
@@ -376,7 +344,6 @@ function CraftsPageBody() {
       await deleteCraft(craft.id);
       reloadCatalogue();
     } catch (err) {
-      // 409 CRAFT_IN_USE carries the server's sentence: "Used by {n} records. Merge it into another craft instead."
       setError(err instanceof Error ? err.message : "Unable to delete craft");
     }
   }
@@ -409,14 +376,12 @@ function CraftsPageBody() {
         description={catalogue ? `${catalogue.crafts.length} crafts in ${catalogue.categories.length} categories.` : "The craft list."}
         icon={<Landmark className="h-5 w-5" aria-hidden />}
       />
-      {/* C26: an administrator maps crafts to the shared code both portals carry. */}
       {isContentAdmin(user) && adminMode ? <UnmappedCraftsPanel /> : null}
       {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
       {deepLinkLoading ? (
         <div className="mb-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-muted">Loading the craft…</div>
       ) : null}
 
-      {/* Segmented tabs, not an action row. */}
       <div role="tablist" aria-label="Craft list" className="mb-4 inline-flex rounded-full border border-line-200 bg-card p-1">
         {tabs.map((item) => (
           <button
@@ -457,7 +422,6 @@ function CraftsPageBody() {
               onSubmit={submit}
               onInput={() => setDirty(true)}
               onKeyDown={handleFormEnter}
-              // scroll-mt-28 clears the island nav when the form is scrolled into view.
               className="panel mb-5 grid scroll-mt-28 gap-3 p-4 md:grid-cols-2 lg:grid-cols-4"
             >
               <div className="flex flex-wrap items-center gap-2 md:col-span-2 lg:col-span-4">
@@ -479,7 +443,6 @@ function CraftsPageBody() {
                   setDirty(true);
                 }}
               />
-              {/* Not title-cased: a local script has no capitals. */}
               <DictatedTextInput
                 name="localName"
                 label="Local name"
@@ -532,7 +495,6 @@ function CraftsPageBody() {
                 />
               </FieldBlock>
               <FieldBlock label="GI status" required>
-                {/* Two named modes, a segmented choice — not an on/off setting. */}
                 <div role="radiogroup" aria-label="GI status" className="inline-flex w-fit rounded-full border border-line-200 bg-card p-1">
                   {(["GI", "NON_GI"] as const).map((value) => (
                     <button
@@ -583,7 +545,6 @@ function CraftsPageBody() {
               />
               {editing ? (
                 <div className="md:col-span-2 lg:col-span-4">
-                  {/* `recordHold={null}`: a craft is never filed under a design workshop. */}
                   <ExistingMedia linkedRecordType="craft" linkedRecordId={editing.id} recordHold={null} title="Previously uploaded craft media" />
                 </div>
               ) : null}
@@ -692,7 +653,6 @@ function CraftsPageBody() {
                   </thead>
                   <tbody className="divide-y divide-line-200">
                     {pageRows.map((craft) => (
-                      // The whole row opens the craft read-only; Update loads it into the form above.
                       <OpenableRow key={craft.id} href={RECORD_VIEW_HREF.craft(craft.id)}>
                         <td className="px-4 py-3 tabular-nums text-ink-500">{craft.sourceSerial ?? "—"}</td>
                         <td className="px-4 py-3">
@@ -751,7 +711,6 @@ function CraftsPageBody() {
   );
 }
 
-/** The table's rows: the catalogue narrowed by the filters, ranked by the search when there is one. */
 function filterCrafts(
   catalogue: CraftCatalogue,
   filters: { query: string; categoryFilter: string; subCategoryFilter: string; giFilter: string; stateFilter: string }

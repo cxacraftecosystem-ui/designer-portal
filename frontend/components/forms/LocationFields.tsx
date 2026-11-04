@@ -14,14 +14,7 @@ import {
 
 import { Field, Select, TextInput } from "@/components/FormControls";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
-// The MapLibre loader moved to components/forms/MapPointPicker so this card and the design-workshop
-// stage form share ONE module-level cache. Two caches meant two downloads of the same megabyte in a
-// session where a designer opened an artisan record and then a stage, on the rural connection this
-// whole feature is written for.
 import { flyToPlace, loadMapLibre, type MapLibre } from "@/components/forms/MapPointPicker";
-// The place search is shared with the stage form's GEO field rather than reimplemented here, so the
-// rule it enforces — a search moves the camera and never writes a value — has exactly one home. See
-// its header, and `lib/placeSearch.ts` for why it returns no address fields at all.
 import { PlaceSearchBox } from "@/components/forms/PlaceSearchBox";
 import { apiFetch } from "@/lib/api";
 import { formatDate } from "@/lib/format";
@@ -29,86 +22,16 @@ import type { PlaceHit } from "@/lib/placeSearch";
 import { getCachedAddressReference, putCachedAddressReference } from "@/lib/referenceCache";
 import type { AddressReference } from "@/lib/types";
 import { RequiredMark } from "@/components/ui/RequiredMark";
-// §3.5's cached-and-stale sentence, shared with every other picker in the app that can be served
-// from this device. The district list is the one on this card that can.
 import { cachedListLine } from "@/lib/workshopOptions";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { statedPrefillValues, type StatedPrefill } from "@/components/forms/statedPrefill";
 
 const maptilerKey = process.env.NEXT_PUBLIC_MAPTILER_API_KEY;
 
-/**
- * TWO PLACES, NOT ONE, and the whole of this file is that sentence.
- *
- * Read against the live database, twice: all fifteen artisans that carry a location sit between
- * 22.313 and 22.315 N, 87.309 and 87.313 E — Kharagpur, West Bengal. The places their researchers
- * typed are Bagru, Balotra, Kutch, Rudraprayag, Ballupur, Sanganer and Kappaladoddi, none of them
- * inside 1,500 km of that point. The coordinates are not a hardcoded constant and not a bug: they
- * jitter naturally and carry genuine accuracy radii from 26 m to 2,506 m. They are real GPS fixes
- * OF THE DESK THE RECORD WAS TYPED AT — ordinary, reasonable behaviour that the form had no way to
- * express, so the fix was read as the artisan's address and the researchers hand-encoded the real
- * village and district into a free-text box because there was nowhere else to put them.
- *
- * So this card renders two groups, and a reader has to be able to tell them apart at a glance:
- *
- *   STATED ADDRESS (first, white, purple-accented, required). State, district, village, pincode and
- *     an optional pin. A statement by the researcher about the SUBJECT. NOTHING on this device ever
- *     writes it. The geocoder may offer a value; a person accepts it.
- *
- *   CAPTURED AT (second, tinted, dashed, collapsed). Coordinates, radius, time. Where the DEVICE
- *     was. Filled automatically, on mount, with nothing clicked. Never described as the subject's
- *     location.
- *
- * The rule that follows from the split, and the one to keep when editing this file: the automatic
- * capture may write into the second group and may never write into the first.
- */
-
-/**
- * The canonical state list, its districts, and the pincode rule — fetched once per page load from
- * the API that validates against them (`GET /reference/address`, backed by
- * backend/app/services/address.py).
- *
- * Deliberately NOT constants in this file. A list hard-coded here would be a second copy of the
- * server's, and the day the two disagree is the day a researcher picks a district the API refuses.
- * That argument is far stronger for districts than it ever was for states: 795 names that change
- * several times a year, and only correct PER STATE. The payload is a pure constant server-side, so
- * one request per page load is the whole cost; a failure is not cached, so the next form that
- * mounts asks again.
- *
- * THE ONE THING IT IS NOT ALLOWED TO BE IS THE ONLY SOURCE OF THE STATE LIST — see OFFLINE_STATES.
- * This is still where the names come from when the request lands; it is no longer what stands
- * between a researcher with no signal and a saved record.
- */
 let addressReferenceRequest: Promise<AddressReferenceRead> | null = null;
 
-/**
- * The address reference, and where this copy came from.
- *
- * `cachedAt` is null on a live answer and an ISO-8601 stamp when the network could not be reached
- * and `lib/referenceCache.ts` answered instead — which is what lets the district picker print
- * §3.5's cached-and-stale sentence with a date on it rather than looking merely short.
- */
 export type AddressReferenceRead = { reference: AddressReference; cachedAt: string | null };
 
-/**
- * The address reference, with `districts` guaranteed present.
- *
- * The type says `districts` is required and the DEPLOYED api does not send it yet — the key ships
- * with this change. A response is data, not a contract, so trusting the annotation crashed the
- * artisan form outright: `reference.districts.byState` on an object with no `districts`. Normalising
- * once here is what keeps that from being five separate optional chains scattered through the
- * callers, each of which could be forgotten independently.
- *
- * An empty `byState` is the honest degraded state: every state offers no districts, the dropdown
- * says so, and the form still saves. It repairs itself the moment the backend is deployed, with no
- * client change.
- *
- * EXPORTED so the one other screen that needs the state list — the designer profile's address —
- * shares this module-level promise instead of issuing its own `/reference/address` request and
- * normalising the payload a second time. Two copies of that normalisation is one copy that will
- * eventually forget the `districts` guard above, and the way that omission surfaced last time was a
- * white screen on the artisan form.
- */
 function normaliseAddressReference(payload: AddressReference): AddressReference {
   const districts = payload?.districts;
   if (districts && districts.byState) return payload;
@@ -126,51 +49,12 @@ function normaliseAddressReference(payload: AddressReference): AddressReference 
   };
 }
 
-/**
- * The address reference with its provenance — live if the server can be reached, out of this
- * browser's store if it cannot.
- *
- * ── THE `version` THE ROUTE ASKS CLIENTS TO HONOUR, AND WHAT HONOURING IT MEANS HERE ──────────
- *
- * `backend/app/api/routes/reference.py` says it in the route's own docstring: *"The payload is a
- * pure constant — no database read — so a client should cache it and re-fetch only when `version`
- * changes."* Until this change NO CLIENT DID. This one stored nothing at all and re-fetched 11.7 KB
- * on every page load; Android reached the right outcome the expensive way, by encoding the whole
- * payload and comparing 12 KB of JSON. It is the only server-provided invalidation signal in this
- * API and it was being paid for and thrown away.
- *
- * Honouring it is two things, and the second is the one that matters:
- *
- *  1. `putCachedAddressReference` compares the version and SKIPS THE PAYLOAD WRITE when it has not
- *     moved, which is the saving the docstring is actually asking for. The `fetchedAt` stamp still
- *     moves — "last refreshed" means the last time the server CONFIRMED the list, not the last time
- *     it differed, and the two are a year apart on a near-constant.
- *  2. AN UNCHANGED VERSION RETURNS THE OBJECT ALREADY IN STORAGE, so `reference` keeps its identity
- *     across a reload and the `useMemo`s below it — `stateOptions`, `districtOptions` — do not
- *     recompute over 795 names for an answer that has not changed.
- *
- * ── AND THE HALF THIS BUYS FOR FREE: 795 DISTRICTS, OFFLINE ───────────────────────────────────
- *
- * `OFFLINE_STATES` has always kept the STATE box answerable with no signal, and the district
- * genuinely cannot be bundled (see that constant's note). What it can be is REMEMBERED: a browser
- * that has loaded this app once now answers "District" in a courtyard from the copy it kept, and the
- * card says how old that copy is instead of silently offering nothing. That is §3.2's parity gap
- * closed on this client — the handset has had `AddressReferenceCache` since it had an address card.
- *
- * A FAILURE IS ONLY SERVED FROM STORAGE, NEVER SUPPRESSED: with no cached copy the rejection is
- * re-thrown exactly as before, the module promise is cleared so the next form to mount asks again,
- * and every caller's existing `.catch` behaves as it always has.
- */
 export function loadAddressReferenceRead(): Promise<AddressReferenceRead> {
   addressReferenceRequest ??= (async (): Promise<AddressReferenceRead> => {
-    // Read first, so the answer is already to hand if the request never arrives. It costs one
-    // IndexedDB get against a store that is not on any hot path.
     const cached = await getCachedAddressReference<AddressReference>();
     try {
       const payload = normaliseAddressReference(await apiFetch<AddressReference>("/reference/address"));
       const unchanged = cached !== null && cached.version === payload.version;
-      // Not awaited: no form waits on storage for a list it is already holding, and a refused write
-      // is not a failed read.
       void putCachedAddressReference(payload);
       return { reference: unchanged ? cached.payload : payload, cachedAt: null };
     } catch (error) {
@@ -182,44 +66,12 @@ export function loadAddressReferenceRead(): Promise<AddressReferenceRead> {
   return addressReferenceRequest;
 }
 
-/**
- * The payload alone, for the four callers that only ever wanted the lists.
- *
- * KEPT AS THE DEFAULT DOOR rather than migrating them: the provenance is only actionable on a
- * surface that draws a sentence about it, and three of the four (`StageAddressField`,
- * `StageRecordingPlace`, `DesignerProfileForm`) hand the names straight to a picker. Both share the
- * one module-level promise, so this is still exactly one request per page load.
- */
 export function loadAddressReference(): Promise<AddressReference> {
   return loadAddressReferenceRead().then((read) => read.reference);
 }
 
-/**
- * Indian PIN codes are six digits and never begin with 0 (the first digit is the postal zone).
- *
- * EXPORTED so the design workshop's own PIN box slices to the same six rather than restating the
- * number. The registry declares `participant.pincode` and the two `recordPincode` fields
- * `max_length=10`, which is four characters more than a PIN code has, so the workshop box was
- * accepting and printing values the record page could not have produced. Six is stated once, here,
- * beside the zone table that depends on it.
- */
 export const PINCODE_LENGTH = 6;
 
-/**
- * Postal zone (the first digit of a PIN) to the states and union territories that zone serves.
- *
- * This is what makes a pincode checkable at all without a table of every code in India: the leading
- * digit is assigned geographically, so a code and a state can contradict each other in a way that is
- * provable rather than suspected. A Rajasthan code under Uttarakhand is not a maybe.
- *
- * Puducherry appears twice on purpose — Yanam sits inside Andhra Pradesh and takes a zone-5 code
- * while the rest of the territory is zone 6, so a single zone per state would flag real addresses.
- * Zone 9 is absent for the same reason it must be: it is the Army Postal Service, tied to no
- * civilian state, so every 9 against a state on this list is a genuine disagreement.
- *
- * The union of these lists is exactly the 36 names `services/address.py` serves, which is what lets
- * an unrecognised name below mean "the server's list has moved on" rather than "wrong".
- */
 const POSTAL_ZONES: Record<string, readonly string[]> = {
   "1": ["Chandigarh", "Delhi", "Haryana", "Himachal Pradesh", "Jammu and Kashmir", "Ladakh", "Punjab"],
   "2": ["Uttar Pradesh", "Uttarakhand"],
@@ -243,50 +95,10 @@ const POSTAL_ZONES: Record<string, readonly string[]> = {
   "8": ["Bihar", "Jharkhand"]
 };
 
-/**
- * The 36 states and union territories, offline, and the reason a record can be saved with no signal.
- *
- * WHAT WENT WRONG WITHOUT IT. The state dropdown was fed only by `GET /reference/address`, and it is
- * REQUIRED on every new record. On a dropped connection that fetch fails, so the list arrived empty
- * and the dropdown offered its placeholder and nothing else — a required closed list with no
- * members. Native constraint validation then refuses the submit, `saveOrQueue` is never reached, and
- * the IndexedDB outbox that exists precisely so a half-finished interview survives no signal never
- * sees the record. The interview and its photographs die with the tab. That is every one of the six
- * forms carrying this card, /media included, and offline capture is the whole promise of the app.
- *
- * The district dropdown was already guarded against exactly this — it stands down from required when
- * it has nothing to offer (see `districtRequired`) — and the state was not.
- *
- * WHY A LOCAL LIST RATHER THAN A KINDER FAILURE. Standing the state down the way the district does
- * would let the record save, but it would also let a researcher WITH a connection skip the field
- * during any hiccup, and the state is the one part of the address the whole dataset is grouped by.
- * The list is 36 entries that change on the order of once a decade, so there is nothing to be gained
- * by making them wait for a network round trip to answer a question they can answer from where they
- * are standing. The district genuinely cannot be bundled — 795 names, revised several times a year,
- * meaningful only per state — which is why the two are treated differently and always will be.
- *
- * WHY THIS IS NOT A SECOND COPY, which is the objection the comment above rightly raises. It is not
- * a new list; it is the one already in POSTAL_ZONES, read out. Those names are load-bearing already
- * — `postalZoneMismatch` accuses a researcher's pincode of being wrong against them — and the table
- * above states the invariant this depends on: the union of its rows is exactly the 36 names
- * `services/address.py` serves, verified against the live payload and pinned by
- * e2e/location-offline-state.spec.ts. So there is one list in this file, not two, and it cannot
- * drift from the zone check that sits beside it. When the fetch lands, the served list takes over
- * regardless.
- */
 export const OFFLINE_STATES: readonly string[] = Array.from(
   new Set(Object.values(POSTAL_ZONES).flatMap((names) => names))
 ).sort((a, b) => a.localeCompare(b));
 
-/**
- * The reason `state` and `pincode` cannot both be right, or null when they agree (or when either is
- * missing, or the state is a name this table does not know — an unrecognised name means the server's
- * list has outgrown the table, and guessing against it would flag correct addresses).
- *
- * Advisory, never blocking. It is a zone check, not a lookup of the real code, so it can only prove
- * a contradiction — and a field app that refuses to save a record over a heuristic is a field app
- * that loses the day's work at the edge of coverage.
- */
 export function postalZoneMismatch(state: string, pincode: string): string | null {
   if (!state || pincode.length !== PINCODE_LENGTH) return null;
   const zone = pincode[0];
@@ -298,14 +110,6 @@ export function postalZoneMismatch(state: string, pincode: string): string | nul
   );
 }
 
-/**
- * The reason `value` is not a usable pincode, or null when it is fine (blank included — the field is
- * optional).
- *
- * Same three checks, in the same order and with the same sentences, as `pincode_error` in
- * backend/app/services/address.py — so the researcher reads one message whether it was caught here
- * or by the API, and reads it before the round trip rather than as a 422 after it.
- */
 export function pincodeValidationError(value: string | null | undefined): string | null {
   const digits = (value ?? "").trim();
   if (!digits) return null;
@@ -317,9 +121,7 @@ export function pincodeValidationError(value: string | null | undefined): string
   return null;
 }
 
-/** Initial location values for edit forms (matches the API's Location payload). */
 export type LocationInitialValues = {
-  /** PROVENANCE: where the device was. Never the subject's address — see the file header. */
   latitude?: number | string | null;
   longitude?: number | string | null;
   altitude?: number | string | null;
@@ -327,7 +129,6 @@ export type LocationInitialValues = {
   capturedAt?: string | null;
   placeName?: string | null;
   address?: string | null;
-  /** STATED: the researcher's answer about the subject. Columns on Location. */
   state?: string | null;
   district?: string | null;
   village?: string | null;
@@ -344,15 +145,6 @@ function comparableName(value: string) {
   return value.toLowerCase().replace(/[^a-z]/g, "");
 }
 
-/**
- * The entry of `states` that `text` names, or "" when nothing in the list matches.
- *
- * The geocoder's wording is not the register's ("NCT of Delhi", "Daman and Diu"), so an exact match
- * is tried first and a containment match second — long enough on either side that a short name like
- * Goa cannot be swallowed by an unrelated word. Returning "" rather than the raw text is deliberate:
- * the list is closed, so a name the API would reject is worse than no suggestion at all, and a value
- * the dropdown cannot show is a value the researcher cannot see, let alone correct.
- */
 function matchIndianState(text: string, states: readonly string[]): string {
   const wanted = comparableName(text);
   if (!wanted) return "";
@@ -366,23 +158,10 @@ function matchIndianState(text: string, states: readonly string[]): string {
   return loose ?? "";
 }
 
-/**
- * A district name folded to the key both sides of a comparison can meet on, with one trailing
- * administrative word removed.
- *
- * MapTiler is inconsistent about that word in a way no amount of care at the call site fixes: the
- * same field returns "Jammu district" lowercase and "Akola District" capitalised. The words to strip
- * are NOT hard-coded here — they arrive in the reference payload
- * (`districts.normalisation.trailingWordsStripped`), which is the same list
- * backend/app/services/address.py folds with, so a client and the validator that will judge its
- * answer cannot disagree about what "Akola District" means.
- */
 function districtKey(value: string, trailingWords: readonly string[]): string {
   const folded = comparableName(value);
   for (const word of trailingWords) {
     const tail = comparableName(word);
-    // The guard matters: without it a district genuinely named after one of these words would be
-    // folded away to nothing and then match everything.
     if (tail && folded.length > tail.length + 2 && folded.endsWith(tail)) {
       return folded.slice(0, -tail.length);
     }
@@ -390,20 +169,17 @@ function districtKey(value: string, trailingWords: readonly string[]): string {
   return folded;
 }
 
-/** The entry of `districts` that `text` names, or "" — same closed-list discipline as the state. */
 function matchDistrict(text: string, districts: readonly string[], trailingWords: readonly string[]) {
   const wanted = districtKey(text, trailingWords);
   if (!wanted) return "";
   return districts.find((entry) => districtKey(entry, trailingWords) === wanted) ?? "";
 }
 
-/** A geocoded postal code, kept only when it satisfies the same rule the researcher is held to. */
 function usablePincode(text: string): string {
   const digits = text.replace(/\D/g, "");
   return pincodeValidationError(digits) ? "" : digits;
 }
 
-/** MapTiler geocoding features: the kind of place is the part of `id` before the dot. */
 type GeocodeFeature = {
   id?: string;
   text?: string;
@@ -411,7 +187,6 @@ type GeocodeFeature = {
   context?: Array<{ id?: string; text?: string }>;
 };
 
-/** The name of the first `kind` ("region", "subregion") found, most specific feature first. */
 function pickPlace(features: GeocodeFeature[], kind: string): string {
   for (const feature of features) {
     const kinds = feature.place_type ?? (feature.id ? [feature.id.split(".")[0]] : []);
@@ -423,24 +198,6 @@ function pickPlace(features: GeocodeFeature[], kind: string): string {
   return "";
 }
 
-/**
- * Ask MapTiler what is at these coordinates. Throws on anything the caller should ignore.
- *
- * WHICH FIELD IS THE DISTRICT, because the natural guess is wrong and was measured to be wrong. In
- * MapTiler's Indian hierarchy `region` is the STATE, `subregion` is the DISTRICT, `county` is the
- * TEHSIL and `municipality` is a city corporation. `county` is the trap: it answers "Sanganer
- * Tehsil" for Bagru, "Bhuj Taluka" for Kutch, "Joshimath Tehsil" for Rudraprayag — all real place
- * names, all the wrong administrative level, and all plausible enough to be saved. Tested against
- * sixteen real coordinates, `subregion` was right fifteen times and empty once, for a test point in
- * the Bay of Bengal that had no answer to give.
- *
- * `subregion` also survives where `postal_code` does not: 57 of 60 sampled rural Indian points
- * return no postcode at all, and every one of them still returns a district. That asymmetry is the
- * reason district is a requirable field and pincode is not.
- *
- * `municipality` and `place` are read only for the review flag below, where the question is "does
- * anything the geocoder says appear in what the researcher wrote", not "what shall we suggest".
- */
 async function reverseGeocode(lat: string, lng: string, signal: AbortSignal) {
   const response = await fetch(
     `https://api.maptiler.com/geocoding/${encodeURIComponent(lng)},${encodeURIComponent(lat)}.json` +
@@ -459,67 +216,24 @@ async function reverseGeocode(lat: string, lng: string, signal: AbortSignal) {
   };
 }
 
-/**
- * The accuracy radius past which a fix cannot be allowed to name a place.
- *
- * A satellite fix is good to tens of metres. A browser with no satellite lock — indoors, in a
- * workshop, on a laptop — silently falls back to Wi-Fi, the mobile network, or the IP address, and
- * reports kilometres while returning coordinates that look every bit as precise. One of the fifteen
- * live records carries a 2,506 m radius. Rural districts and PIN areas are a few kilometres across,
- * so past a kilometre the geocoder is choosing between neighbours on the strength of an error term.
- *
- * WHAT THE LIMIT NOW GOVERNS. Nothing is auto-filled from a fix any more, so this is no longer the
- * line between "written" and "not written" — it is the line between OFFERED and NOT OFFERED. Above
- * it no suggestion appears at all, because a one-tap "yes" over a district picked out of a 2.5 km
- * circle is precisely as wrong as writing it in silently, and rather easier to click. The
- * coordinates themselves are still KEPT — see the coarse-fix notice for why losing them would be
- * worse — and named, with their radius, in words rather than only as a number in a box.
- */
 const PINCODE_ACCURACY_LIMIT_METRES = 1000;
 
-/**
- * The radius at which the automatic capture stops waiting for something better.
- *
- * `watchPosition` reports the first thing the device has (usually a Wi-Fi or cell estimate, within a
- * second) and then re-reports as the satellites lock, which is what lets the card fill itself in
- * immediately and still end up with a real reading. Something has to end the watch, though, or a
- * phone in a courtyard streams updates for as long as the form is open and burns the battery a
- * day of fieldwork depends on. A hundred metres is a genuine satellite lock by any reading, and the
- * difference between 90 m and 12 m does not change a single thing anybody does with this record.
- */
 const GOOD_ENOUGH_FIX_METRES = 100;
 
-/**
- * How long the automatic capture keeps hunting before it settles for the best it saw.
- *
- * A cold GPS start inside a workshop with a tin roof genuinely takes thirty to sixty seconds, so a
- * shorter budget would routinely file the network estimate as the answer when a real fix was ten
- * seconds away. Nothing waits on this: the coordinates from the first callback are already in the
- * boxes and the rest of the form was never blocked.
- */
 const AUTO_CAPTURE_BUDGET_MS = 60_000;
 
-/** How long the one-shot "Use current GPS" button waits. Shorter — somebody is standing there. */
 const MANUAL_CAPTURE_TIMEOUT_MS = 30_000;
 
-/**
- * "state, district and pincode" — the fields an automatic write touched, as a sentence.
- *
- * Named rather than counted. "3 fields were filled in" tells a researcher to go and hunt for them;
- * naming them tells them where to look, which is the whole value of announcing the write at all.
- */
 const FIELD_NAMES = (fields: Array<"state" | "district" | "pincode">): string => {
   const words = fields.map((field) => (field === "pincode" ? "pincode" : field));
   if (words.length <= 1) return words[0] ?? "";
   return `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
 };
 
-/** "±40 m" / "±12 km" — the radius as a field researcher would say it. */
 function accuracyLabel(metres: number) {
   return metres < 1000 ? `±${Math.round(metres)} m` : `±${(metres / 1000).toFixed(1)} km`;
 }
 
-/** "27 Jul 2026, 03:12" — the capture time as the summary line reads it out. */
 function momentLabel(iso: string) {
   const when = new Date(iso);
   if (Number.isNaN(when.getTime())) return "";
@@ -532,58 +246,21 @@ function momentLabel(iso: string) {
   });
 }
 
-/**
- * Where the automatic capture has got to. Rendered, always — an auto-filled field that fills itself
- * in silence is the thing this card must not be.
- *
- * `denied`, `unavailable` and `timeout` are the three ways a device says no, kept apart because the
- * researcher's next move differs in each: unblock the browser, turn location on, or go outside. All
- * three end in the same place — the map pin — which is why none of them can be allowed to stop a
- * save. See LOCATION_REQUIRED_MESSAGE.
- */
 type CaptureStatus = "idle" | "locating" | "captured" | "denied" | "unavailable" | "timeout" | "unsupported";
 
-/**
- * What the browser refuses to submit over when the capture coordinate is missing.
- *
- * It names the fallback rather than the failure, because by the time anybody reads this the fix has
- * already not happened and telling them so again helps nobody.
- */
 const LOCATION_REQUIRED_MESSAGE =
   "Location required. Use 'Pick on map' or type the coordinates.";
 
-/**
- * The same demand, made of a record that did not otherwise have to meet it, and the reason is
- * plumbing rather than principle.
- *
- * The state, district, village and pincode are COLUMNS ON THE LOCATION ROW, and `locationFromForm`
- * cannot build that row without a coordinate — so on one of the legacy records, which saves happily
- * with no coordinate at all, an address typed into the fields above would be dropped on the way out
- * with nothing said. Blocking here is the only version of this that does not lose the researcher's
- * work: the alternative is a save that appears to succeed and quietly discards the one thing they
- * opened the record to add.
- */
 const ADDRESS_NEEDS_COORDINATE_MESSAGE =
   "State and district need coordinates. Use GPS or drop a pin, or clear them.";
 
-/** What a point says about itself, once both closed lists have had their say. */
 export type PointAddress = {
   state: string;
   district: string;
   pincode: string;
-  /** Everything the geocoder named, for the review flag's "did the researcher write any of this". */
   names: string[];
 };
 
-/**
- * Resolve a point against the API's own lists: the region against the served state list, the
- * subregion against that state's districts, the postal code against the pincode format. Anything
- * that will not resolve comes back "" — the lists are closed, and a value the API would reject is
- * worse than no answer.
- *
- * "" is a real answer and the caller must treat it as one. It is the common case, not the edge one:
- * 95% of sampled rural points in the states this repository covers carry no postal code at all.
- */
 export async function resolvePoint(lat: string, lng: string, signal: AbortSignal): Promise<PointAddress> {
   const [place, reference] = await Promise.all([
     reverseGeocode(lat, lng, signal),
@@ -592,7 +269,6 @@ export async function resolvePoint(lat: string, lng: string, signal: AbortSignal
   const names = [place.region, place.subregion, place.municipality, place.place].filter(Boolean);
   if (!reference) return { state: "", district: "", pincode: usablePincode(place.postalCode), names };
   const state = matchIndianState(place.region, reference.statesAndUnionTerritories);
-  // No district list means an API that predates it; offer the state alone rather than nothing.
   const district =
     state && reference.districts
       ? matchDistrict(
@@ -604,20 +280,6 @@ export async function resolvePoint(lat: string, lng: string, signal: AbortSignal
   return { state, district, pincode: usablePincode(place.postalCode), names };
 }
 
-/**
- * The state and district hiding in a free-text place box, or nulls.
- *
- * Needed only because of how the data got here. The fifteen records that predate the stated address
- * have their real location nowhere but in prose — "Bagru, Jaipur, Rajasthan", "Kutch, Gujrat",
- * "Rudraprayag, Dehradun" — so the review flag has nothing else to compare a coordinate against.
- *
- * READ-ONLY, and that is the whole contract. Nothing this returns is ever written to a field or
- * offered as a suggestion. It exists to decide whether to show a sentence, and the sentence asks a
- * researcher to make the call. Which is exactly right, because the strings above cannot be parsed
- * reliably and this function does not pretend otherwise: "Kutch, Gujrat" matches neither list
- * (the canonical district is Kachchh and the state is misspelt), and "Rudraprayag, Dehradun" names
- * two different districts of Uttarakhand with no way to tell which one was meant.
- */
 function readPlaceText(text: string, reference: AddressReference | null) {
   const folded = comparableName(text);
   if (!folded || !reference) return { state: "", district: "" };
@@ -637,14 +299,6 @@ function readPlaceText(text: string, reference: AddressReference | null) {
   return { state, district: "" };
 }
 
-/**
- * Does anything the geocoder named appear in what the researcher wrote?
- *
- * The review flag's escape hatch, and it needs one: a record whose place box says "Kharagpur" and
- * whose coordinates are in Kharagpur has no stated STATE to compare, so without this it would be
- * flagged for a disagreement it does not have. Four characters is the floor — shorter than that and
- * a fragment matches by accident.
- */
 function mentions(text: string, names: readonly string[]) {
   const folded = comparableName(text);
   return names.some((name) => {
@@ -653,16 +307,6 @@ function mentions(text: string, names: readonly string[]) {
   });
 }
 
-/**
- * A notice inside the location card. Two tones only: `info` for what is happening, `warn` for what
- * the researcher has to do something about.
- *
- * `amber-100` behind `amber-800` rather than the repo's usual `bg-amber-50` pairing: 100 and 800 are
- * this project's own amber rungs (tailwind.config.ts writes 100/500/800 itself; 50 and 200 are
- * Tailwind's stock shades, which do not pair with them), and both are literal colours the theme never
- * inverts. These warnings are the only thing standing between a 14 km network estimate and a
- * research record, so they have to be legible in both themes, which a fixed light chip is.
- */
 function CardNotice({
   tone,
   icon,
@@ -684,37 +328,8 @@ function CardNotice({
   );
 }
 
-/** Which of the two coordinate pairs the open map is pointing at. Never both at once. */
 type MapTarget = "subject" | "capture";
 
-/**
- * The location card: a STATED ADDRESS the researcher owns, and a CAPTURED AT the device owns.
- *
- * Pass `initial` on edit forms (the record's stored location, or null when it has none): the fields
- * are pre-filled and the device location is NOT auto-captured. Omitting `initial` (new-record forms)
- * starts the automatic capture on mount — into the provenance group only.
- *
- * WHAT "MANDATORY" MEANS, because it is the decision the rest of this file hangs off, and it now has
- * two halves.
- *
- * A COORDINATE, unchanged. A record cannot be saved without one, and it can be saved without the GPS
- * ever having worked: a pin dropped on the map, or two numbers typed in, satisfy the requirement
- * exactly as a satellite fix does. The alternative — "the fix must have succeeded" — hands the veto
- * over a day of fieldwork to a permission prompt somebody tapped Block on last month, a laptop with
- * no GPS radio, and a tin roof. A missing coordinate is a gap in a dataset; a rejected save is an
- * interview that never got written down, and the second is not recoverable.
- *
- * A STATE AND A DISTRICT, new, and the reason this file was rewritten. Both come from a closed list,
- * so a researcher with no signal can answer them from memory of where they are standing — which is
- * the test every mandatory field here has to pass, and the test the pincode still fails, which is
- * why the pincode is still optional. The two pass it differently and the difference is the whole of
- * the offline story: the 36 states are BUNDLED (OFFLINE_STATES), so that dropdown is answerable with
- * no network at all, while the 795 districts cannot be and the district therefore stands down from
- * required whenever its list has not arrived. A field is only allowed to be mandatory here if it is
- * answerable here. Required on NEW records; on an
- * EDIT they are required only if the record already carries them, so the sixteen artisans recorded
- * before these fields existed stay editable and saveable by the person best placed to fix them.
- */
 export function LocationFields({
   initial,
   onDirty,
@@ -724,42 +339,21 @@ export function LocationFields({
   statedPrefill
 }: {
   initial?: LocationInitialValues | null;
-  /** Raise the surrounding form's unsaved-changes flag; see the state dropdown below for why. */
   onDirty?: () => void;
-  /**
-   * Override the rules worked out below. Only pass this for a surface where a location genuinely is
-   * not part of the record; the default is what every record form wants.
-   */
   required?: boolean;
-  /**
-   * Who the stated address is about, for the heading. "the artisan" on the artisan form; the default
-   * reads correctly on the five forms whose subject is the record itself.
-   */
   subjectLabel?: string;
-  /**
-   * The record's free-text place box, READ ONLY, for the review flag. On the fifteen legacy records
-   * this is the only place the real location exists ("Bagru, Jaipur, Rajasthan"), so without it a
-   * coordinate in West Bengal has nothing to disagree with.
-   */
   statedPlace?: string | null;
-  /**
-   * A stated address another source supplied (C27: the Field Repository's), written into the state,
-   * district and village boxes once per `key` and marked "check it" until the reader changes one.
-   * Never the coordinates, and never on its own: the caller bumps `key` when a person pressed Fill.
-   */
   statedPrefill?: StatedPrefill | null;
 }) {
   const mapRef = useRef<HTMLDivElement | null>(null);
   const mapInstance = useRef<maplibregl.Map | null>(null);
   const subjectMarker = useRef<maplibregl.Marker | null>(null);
   const captureMarker = useRef<maplibregl.Marker | null>(null);
-  // The loaded module, kept so the marker sync can build a Marker without re-awaiting the import.
   const maplibreModule = useRef<MapLibre | null>(null);
   const headingId = useId();
 
   const initialPincode = (initial?.pincode ?? "").replace(/\D/g, "").slice(0, PINCODE_LENGTH);
 
-  // ---- CAPTURED AT: the device's own answer. Written automatically, never by the group below. ----
   const [latitude, setLatitude] = useState(asText(initial?.latitude));
   const [longitude, setLongitude] = useState(asText(initial?.longitude));
   const [altitude, setAltitude] = useState(asText(initial?.altitude));
@@ -768,17 +362,11 @@ export function LocationFields({
   const [placeName, setPlaceName] = useState(initial?.placeName ?? "");
   const [address, setAddress] = useState(initial?.address ?? "");
 
-  // ---- STATED ADDRESS: the researcher's answer. No automatic writer exists for any of these. ----
   const [stateName, setStateName] = useState(initial?.state ?? "");
   const [district, setDistrict] = useState(initial?.district ?? "");
   const [village, setVillage] = useState(initial?.village ?? "");
   const [pincode, setPincode] = useState(initialPincode);
   const [subjectLatitude, setSubjectLatitude] = useState(asText(initial?.subjectLatitude));
-  /*
-   * C27's prefill, applied while rendering when its key changes (React's "adjust state when a prop
-   * changes" pattern, so no effect and no extra paint). `prefillNote` stays until the reader edits
-   * one of the three boxes, which is when it stops being the other source's answer.
-   */
   const [appliedPrefillKey, setAppliedPrefillKey] = useState(0);
   const [prefillNote, setPrefillNote] = useState<string | null>(null);
   if (statedPrefill && statedPrefill.key !== appliedPrefillKey) {
@@ -794,117 +382,42 @@ export function LocationFields({
   const [subjectLongitude, setSubjectLongitude] = useState(asText(initial?.subjectLongitude));
 
   const [reference, setReference] = useState<AddressReference | null>(null);
-  /**
-   * ISO-8601 when the reference came off a server, set ONLY when this page load could not reach one
-   * and `lib/referenceCache.ts` answered instead. Null on a live read, which is the ordinary case
-   * and the one with nothing to report.
-   */
   const [addressCachedAt, setAddressCachedAt] = useState<string | null>(null);
-  // What the current point would suggest. This is the ONLY thing a fix the device produced by itself
-  // is ever allowed to do to the stated address — whether the boxes are full or empty.
   const [suggestion, setSuggestion] = useState<(PointAddress & { metres: number | null }) | null>(null);
-  /**
-   * WHAT WAS JUST FILLED IN FOR THE RESEARCHER, and what it replaced.
-   *
-   * Pointing at a place WRITES the state, district and pincode rather than offering them. That is the
-   * right behaviour for an explicit act — dropping a pin on a place IS a statement about that place,
-   * and making somebody confirm their own action twice is friction that gets clicked through rather
-   * than read.
-   *
-   * SET BY THAT ACT AND BY NOTHING ELSE. There is no passive counterpart and there must never be one:
-   * a fix that arrived on its own is offered (see `offerSuggestion`), because a reading of where this
-   * device is has no standing to answer a question about where the artisan is. Anything that sets this
-   * without a human having pointed at the place is the bug this file exists to end.
-   *
-   * A write with no visible trace is the other half of that bug (a Bagru pincode saved onto a Dehradun
-   * record, because 95% of rural points return no postal code and the stale value survived). So the
-   * write is loud instead of silent: this state drives a notice naming every field that changed, and
-   * Undo puts back precisely what was there before. `previous` is the whole point — an undo that
-   * cleared the fields instead of restoring them would destroy a typed answer just as thoroughly as
-   * the silent overwrite did.
-   */
   const [autofill, setAutofill] = useState<{
     applied: Array<"state" | "district" | "pincode">;
     previous: { state: string; district: string; pincode: string };
   } | null>(null);
-  // Set when the last fix was too coarse for the geocoder to be allowed to name a district.
   const [coarseFixMetres, setCoarseFixMetres] = useState<number | null>(null);
-  // Set when the lookup itself failed — offline is the normal weather here, and a suggestion that
-  // never arrives with no explanation reads as the form having decided the answer was nothing.
   const [lookupFailed, setLookupFailed] = useState(false);
-  // The stored coordinate disagreeing with the stored place. Computed once, on edit forms, and
-  // never acted on: see `reviewStoredPoint`.
   const [review, setReview] = useState<{ found: PointAddress; stated: string } | null>(null);
-  // Raised the first time the browser refuses the form, so a half-filled card is not narrated back
-  // as a list of errors before anybody has finished with it (Aadhaar field parity).
   const [addressProblemShown, setAddressProblemShown] = useState(false);
   const [pincodeProblemShown, setPincodeProblemShown] = useState(false);
   const pincodeRef = useRef<HTMLInputElement>(null);
   const [mapTarget, setMapTarget] = useState<MapTarget | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [captureStatus, setCaptureStatus] = useState<CaptureStatus>("idle");
-  // Seconds the current hunt has been running, so "Locating" is visibly a process and not a stuck
-  // spinner. A cold fix under a workshop roof takes most of a minute and looks identical to a hang.
   const [captureSeconds, setCaptureSeconds] = useState(0);
-  // The radius of the fix now in the boxes, for the line that reports it back.
   const [capturedMetres, setCapturedMetres] = useState<number | null>(null);
   const [provenanceOpen, setProvenanceOpen] = useState(false);
   const latitudeRef = useRef<HTMLInputElement>(null);
   const longitudeRef = useRef<HTMLInputElement>(null);
-  // The open `watchPosition`, and the best radius it has produced so far. Both refs rather than
-  // state: the watch's own callback reads them, and a re-render per satellite update would fight the
-  // researcher typing into the boxes underneath.
   const watchId = useRef<number | null>(null);
   const bestMetres = useRef<number | null>(null);
-  // The point whose lookup failed, kept so it can be retried when the network returns. Coordinates
-  // first, names later, is the normal order of events in the field, not the exception.
   const pendingLookup = useRef<{
     lat: string;
     lng: string;
     metres: number | null;
-    /** Whether the point came from an explicit act, so the retry behaves the way the original would. */
     autoApply: boolean;
   } | null>(null);
   const lookup = useRef<AbortController | null>(null);
-  /**
-   * Whether an EXPLICIT lookup has gone out and not yet come back.
-   *
-   * An explicit write stands from the moment the researcher asks for it, not from the moment it lands.
-   * A rural reverse geocode takes seconds and `watchPosition` re-reports about once a second, so
-   * without this a satellite update arriving in that window aborts the pin's lookup — silently, since
-   * an aborted request raises no failure notice and files no retry — and the pin the researcher just
-   * dropped never fills anything in. The `autofill`-based guard cannot cover it: `autofill` is only set
-   * once the response has been applied.
-   */
   const explicitPending = useRef(false);
 
-  /**
-   * A live mirror of the three stated fields the geocoder may write.
-   *
-   * `applyGeocodedAddress` runs inside a promise callback created when the lookup went out, and a
-   * rural lookup can take seconds — during which the researcher may have typed into these boxes. The
-   * closure's copies would be stale, so the comparison ("is this already answered?") and the undo
-   * snapshot both read this instead.
-   */
   const statedRef = useRef({ state: stateName, district, pincode });
-  // Synced in an effect rather than during render (a render-phase ref write is a lint error and a
-  // concurrent-rendering hazard). An effect is sufficient here and provably so: the only reader is a
-  // promise callback resolving a network response, which is a macrotask, and React has always flushed
-  // its effects for a commit before the next macrotask runs. So by the time a lookup returns, this
-  // mirror is current with the last keystroke.
   useEffect(() => {
     statedRef.current = { state: stateName, district, pincode };
   }, [stateName, district, pincode]);
 
-  /**
-   * A mirror of {@link autofill}, for the same reason as `statedRef` and one more.
-   *
-   * `offerSuggestion` is called from `watchPosition`'s callback, which fires roughly once a second
-   * for as long as the automatic capture is hunting. Those calls hold whatever closure existed when
-   * the watch was opened, so the live value has to come from a ref — and it is needed there to
-   * enforce the rule below, that a satellite update must not wipe out the record of a write the
-   * researcher explicitly asked for.
-   */
   const autofillRef = useRef(autofill);
   useEffect(() => {
     autofillRef.current = autofill;
@@ -913,84 +426,24 @@ export function LocationFields({
   const pincodeProblem = pincodeValidationError(pincode);
   const zoneProblem = postalZoneMismatch(stateName, pincode);
 
-  /**
-   * Whether the researcher is standing where this happened, as far as this component can tell.
-   *
-   * `initial === undefined` is a new record and the answer is yes. Anything else is an edit form,
-   * and an edit form is as likely to be open on a desk in another state a week later — which is why
-   * an edit NEVER auto-captures. Stamping the editor's chair onto a record documented in Bagru is
-   * the failure this whole file exists to end, and it would arrive by this door as readily as by
-   * the one that has been shut.
-   */
   const isEditForm = initial !== undefined;
-  /** A stored coordinate. `initial === null`, or a location row with no coordinate, is neither. */
   const hadStoredCoordinate = asText(initial?.latitude) !== "" && asText(initial?.longitude) !== "";
-  /**
-   * Enforced on every new record, and on an edit of a record that already HAS a location — where the
-   * rule costs nothing and stops a stored coordinate being quietly emptied.
-   *
-   * NOT enforced when editing one of the records that predate the requirement. The sixteenth artisan
-   * must still be correctable, and a researcher who opened it to fix a phone number cannot conjure a
-   * coordinate for a workshop they are not standing in.
-   */
   const mandatory = required ?? (!isEditForm || hadStoredCoordinate);
   const hasCoordinate = latitude.trim() !== "" && longitude.trim() !== "";
-  /** Anything at all in the stated group. See ADDRESS_NEEDS_COORDINATE_MESSAGE for what it costs. */
   const hasStatedAddress = Boolean(stateName || district || village || pincode || subjectLatitude);
   const coordinateRequired = mandatory || hasStatedAddress;
 
   const districtOptions = useMemo(() => {
-    // Optional at every hop, not just the first. `reference?.districts.byState` guards only
-    // `reference`, so a payload from a server that has the endpoint but not yet the districts key
-    // — which is precisely the deployed API right now — threw and took the whole artisan form down
-    // with it. A missing district list must degrade to "no options", never to a crash: the form
-    // still has to be usable while the backend catches up.
     const served = (stateName && reference?.districts?.byState?.[stateName]) || [];
-    // The record's own value goes at the front until the list arrives, or an edit form would show
-    // "Select district" over a district the record really holds — which reads as "not answered" and
-    // invites the researcher to answer it again.
     return district && !served.includes(district) ? [district, ...served] : served;
   }, [district, reference, stateName]);
 
-  /**
-   * The state dropdown's options: the served list when it has arrived, the bundled one until then,
-   * with the record's own value kept at the front if it is in neither. Same reason as
-   * `districtOptions` for the record's own value; see OFFLINE_STATES for why the fallback is a list
-   * rather than an empty array.
-   *
-   * The served list wins whenever it exists, so the day the register changes the deployed API is
-   * still the authority and no client needs shipping.
-   */
   const stateOptions = useMemo(() => {
     const served = reference?.statesAndUnionTerritories ?? OFFLINE_STATES;
     return stateName && !served.includes(stateName) ? [stateName, ...served] : served;
   }, [reference, stateName]);
 
-  /**
-   * Required on a new record; on an edit, required only if the record already carries the value.
-   *
-   * THE ASYMMETRY IS THE POINT, and it is the same one the coordinate rule makes. All fifteen live
-   * locations have a NULL state and a NULL district. Demanding them on an edit would mean a
-   * researcher who opened one of those records to correct a phone number could not save it until
-   * they had also decided, possibly from a desk 1,500 km away, which district the artisan lives in —
-   * so they would either abandon the correction or invent an answer, and invented data is worse than
-   * absent data. Requiring them where the record already has them costs nothing and stops a stored
-   * value being emptied by a save. The server draws the line in the same place, on the same
-   * reasoning: `require_location` in backend/app/schemas/common.py enforces the pair on CREATE and
-   * `forbid_clearing_location` deliberately does not on UPDATE.
-   */
   const stateRequired = (required ?? (!isEditForm || Boolean(initial?.state))) && stateOptions.length > 0;
-  /**
-   * ...and never while there is nothing to choose from. A required dropdown with no options is a
-   * form nobody can submit, and an empty district list means the reference fetch has not landed —
-   * which on a field connection is a normal minute of the morning, not a fault.
-   *
-   * The same clause now guards the state, where it is a floor rather than the fix: OFFLINE_STATES
-   * means `stateOptions` is never empty, so it should never fire. It is here because the invariant
-   * is what matters — this card never demands an answer it is not offering — and a later change
-   * that narrowed or dropped the bundled list would otherwise reintroduce a lost interview in
-   * silence, which is exactly how the state came to be missing this guard while the district had it.
-   */
   const districtRequired =
     (required ?? (!isEditForm || Boolean(initial?.district))) && districtOptions.length > 0;
   const stateMissing = stateRequired && !stateName;
@@ -1005,75 +458,23 @@ export function LocationFields({
         setAddressCachedAt(read.cachedAt);
       })
       .catch(() => {
-        // Offline, or the endpoint is unhappy, which out here is a normal minute of the morning.
-        // Swallowed on purpose: the state dropdown falls back to OFFLINE_STATES and stays
-        // answerable, the district stands down from required, and the record still saves — into the
-        // outbox if that is all there is. Nothing about a failed reference fetch may cost a record.
       });
     return () => {
       live = false;
     };
   }, []);
 
-  // Native constraint validation is what actually stops the submit, so the browser scrolls to this
-  // box and names the problem rather than the save failing somewhere out of sight.
   useEffect(() => {
     pincodeRef.current?.setCustomValidity(pincodeProblem ?? "");
   }, [pincodeProblem]);
 
-  /**
-   * Close the satellite watch. Called by every path that ends the hunt — a good enough fix, the
-   * budget running out, a refusal, and a researcher who has just said where the device is by
-   * pinning it or typing it, whose answer must not be overwritten by the next satellite update.
-   */
   function stopWatching() {
     if (watchId.current === null) return;
     navigator.geolocation.clearWatch(watchId.current);
     watchId.current = null;
   }
 
-  /**
-   * Ask a point what it would suggest, and hold the answer for a human to accept or refuse.
-   *
-   * THE STALENESS RULE, which is the bug that used to live in this function's ancestor. The old code
-   * wrote the geocoder's reply into the state and pincode boxes directly, and only `if (code)` — so
-   * a point with no postal code left the PREVIOUS point's code sitting in the box while the state,
-   * which almost always resolves, moved on without it. Two artisans into a morning that is a
-   * Rajasthan pincode filed under Uttarakhand, saved by a researcher who watched the form fill
-   * itself in and had no reason to doubt it. It was not a corner case either: 95% of sampled rural
-   * points return no postal code at all, so the stale value was the usual outcome.
-   *
-   * Two things kill it here. First, no box is written at all — the reply becomes a SUGGESTION, and a
-   * suggestion nobody accepted changes nothing. Second, the suggestion is cleared when the request
-   * GOES OUT rather than when it comes back, because the seconds in between are exactly when a rural
-   * connection leaves the last place's offer sitting under this place's coordinates, and a researcher
-   * tapping "Use this" does not wait.
-   */
-  /**
-   * WRITE the geocoded address into the stated fields, and record what it replaced.
-   *
-   * EXACTLY ONE CALLER REACHES THIS, and that is the point of the function rather than an accident of
-   * refactoring: the explicit path, where a person has pointed at the place being described. It is a
-   * request for THIS place's address, so a value describing the place before it is not worth more than
-   * the one they asked for. Every field is written, INCLUDING a blank pincode, because leaving the
-   * previous point's PIN under the new point's coordinates is exactly how a Bagru pincode ended up on
-   * a Dehradun record. Hence `overwrite: true`.
-   *
-   * THERE WAS A SECOND CALLER AND IT WAS THE BUG. The automatic capture used to arrive here with
-   * `overwrite: false` — "fill only the boxes that are still empty" — which on a new record means all
-   * of them, so a fix of the desk the form was open on wrote the artisan's state, district and pincode
-   * unprompted. "Only the empty ones" restrains nothing on a form nobody has typed into yet. That path
-   * now offers instead of writing; see `offerSuggestion`. `overwrite` stays a parameter because the
-   * state/district agreement rule below is written in terms of it, and because a future caller that
-   * fills blanks would need every one of these guards on the day it is written.
-   *
-   * Returns the fields it actually changed, so the caller can decide whether there is anything to say.
-   */
   function applyGeocodedAddress(found: PointAddress, { overwrite }: { overwrite: boolean }) {
-    // THE REF, NOT THE CLOSURE. This runs inside a promise callback that was created when the lookup
-    // went out, and a rural lookup can take seconds — during which the researcher may well have typed
-    // into these very boxes. Reading the closure's copies would compare against, and restore, values
-    // that were already stale, which is the silent-overwrite bug wearing a different hat.
     const previous = { ...statedRef.current };
     const applied: Array<"state" | "district" | "pincode"> = [];
 
@@ -1085,30 +486,9 @@ export function LocationFields({
       applied.push("state");
     }
 
-    /**
-     * THE STATE THE BOX WILL ACTUALLY HOLD once the write above has, or has not, happened — and every
-     * write below has to agree with it.
-     *
-     * A district is only meaningful INSIDE its state: "Bilaspur" is a district of Chhattisgarh and a
-     * different one of Himachal Pradesh, and the API validates the pair and rejects a mismatch. So the
-     * three writes cannot be independent, which is what they were.
-     *
-     * THE CASE THAT BROKE. A passive fix at a point the geocoder reads as Gujarat/Kachchh, on a form
-     * where the researcher has already typed Rajasthan and left the district blank. The state is NOT
-     * written (it is not empty, and passive never overwrites) — but the district branch only looked at
-     * `previous.district`, saw it empty, and wrote "Kachchh". The form then held Rajasthan + Kachchh: a
-     * pair that exists nowhere, that the researcher never entered, and that fails on save with an error
-     * about a district they did not choose. The pincode had the same shape through
-     * `postalZoneMismatch`, which would then accuse a correct pincode of disagreeing with a state.
-     *
-     * Requiring agreement is the whole fix: a district resolved against one state is written only where
-     * that state is the one standing.
-     */
     const effectiveState = wroteState ? found.state : previous.state;
     const geocodedStateStands = !found.state || found.state === effectiveState;
 
-    // Written even when BLANK on the explicit path — a district belonging to the previous state is
-    // worse than none, and the state above may have just changed underneath it.
     if (geocodedStateStands && (overwrite || !previous.district) && found.district !== previous.district) {
       if (found.district || overwrite) {
         setDistrict(found.district);
@@ -1130,7 +510,6 @@ export function LocationFields({
     return { applied, previous };
   }
 
-  /** Put back exactly what was there before the last automatic write. */
   function undoAutofill() {
     if (!autofill) return;
     setStateName(autofill.previous.state);
@@ -1140,24 +519,6 @@ export function LocationFields({
     onDirty?.();
   }
 
-  /**
-   * A HUMAN HAS TAKEN OVER ONE OF THE THREE BOXES the geocoder wrote.
-   *
-   * Two things then have to change together, and neither was happening. The notice must stop NAMING
-   * that box — it says "filled in from the place you pointed at: state, district and pincode", which
-   * becomes false the moment somebody edits one of them. And Undo must stop WRITING to it: restoring
-   * the pre-write snapshot would throw away the value the researcher has just typed, which is the same
-   * silent overwrite the whole announce-and-undo mechanism exists to prevent, arriving by the one
-   * control that was supposed to be the safe way out.
-   *
-   * Both are fixed by moving the field's snapshot UP to what the human typed. Undo then restores it to
-   * itself — a no-op for the claimed box, still correct for the ones nobody has touched — and the
-   * notice drops the name because `applied` no longer lists it.
-   *
-   * THE RECORD SURVIVES with an empty `applied` rather than being cleared outright, because its mere
-   * existence is what tells a passive GPS fix to stand down (see `explicitStanding`). Typing a district
-   * must not hand the three boxes back to the satellites.
-   */
   function claimField(field: "state" | "district" | "pincode", value: string) {
     setAutofill((current) => {
       if (!current) return current;
@@ -1169,62 +530,18 @@ export function LocationFields({
     });
   }
 
-  /**
-   * Look up what is at these coordinates and — on the explicit path ONLY — write it.
-   *
-   * THE TWO PATHS ARE NOT TWO FLAVOURS OF THE SAME THING. `autoApply` marks an act by a person who
-   * pointed at a place: that writes. Its absence marks a fix the device produced on its own, and that
-   * OFFERS, whether or not the boxes it would fill are empty. The second rule is the one the whole
-   * file is about — a reading of where this device is may never answer the question "where is the
-   * artisan", and a blank field is not consent, it is an unfinished form.
-   *
-   * WHAT HAS NOT CHANGED. The offer — and now the write — is cleared when the request GOES OUT rather
-   * than when it comes back, because the seconds in between are exactly when a rural connection leaves
-   * the last place's answer sitting under this place's coordinates.
-   */
   function offerSuggestion(
     lat: string,
     lng: string,
     accuracyMetres?: number | null,
     { autoApply = false }: { autoApply?: boolean } = {}
   ) {
-    /**
-     * AN EXPLICIT WRITE OUTRANKS A PASSIVE LOOKUP, and this is the guard that makes it so.
-     *
-     * `watchPosition` re-reports as the satellites lock — roughly once a second while the automatic
-     * capture is hunting — and every report reaches here through `acceptFix`. Without this, a
-     * researcher who dropped a pin on the subject's place mid-hunt would watch the next satellite
-     * update silently clear the "filled in from the place you pointed at" notice, taking its Undo with
-     * it. Their answer would survive in the boxes (a passive write only fills EMPTY ones) but their
-     * ability to reverse it would not, which is precisely the half-visible behaviour this whole
-     * mechanism exists to avoid.
-     *
-     * So while an explicit act owns these three boxes, a passive fix stands down entirely: it does not
-     * clear the notice, does not abort the lookup in flight, does not write, and does not look up. The
-     * pin has already answered those boxes and a fix taken somewhere else has no business
-     * second-guessing it — and asking anyway would be asking the researcher to re-decide something
-     * they have already decided, on the strength of a reading taken somewhere they are not.
-     */
-    // "An explicit act owns these three boxes" — true from the moment one is REQUESTED (`explicitPending`)
-    // until it is undone or superseded (`autofill` itself, which only an explicit act ever sets). Both
-    // halves are needed: the ref covers the seconds a rural lookup is in flight, the notice covers
-    // everything after it lands.
     const explicitStanding = !autoApply && (explicitPending.current || autofillRef.current !== null);
 
-    // A PASSIVE FIX MUST NOT ABORT AN EXPLICIT LOOKUP. This abort is what stops the previous point's
-    // answer landing under this point's coordinates, so it has to stay — but only for a call that
-    // outranks what is in flight. Letting a satellite update cancel the pin's lookup was the loudest
-    // version of this bug: the researcher pointed at a place and nothing whatsoever happened.
-    // A map pin carries no accuracy because it needs none — the researcher pointed at the place.
-    // Recorded BEFORE the stand-down below, so the "this fix was too coarse to name a place" notice
-    // always describes the newest fix rather than an older one it happens to be sitting under.
     const coarse = typeof accuracyMetres === "number" && accuracyMetres > PINCODE_ACCURACY_LIMIT_METRES;
     setCoarseFixMetres(coarse ? accuracyMetres : null);
 
     if (explicitStanding) {
-      // The offer is stale even though the write is not: it described a point nobody is asking about
-      // any more. Everything else is left exactly as the explicit act left it — including the lookup
-      // still in flight, which is the whole point.
       setSuggestion(null);
       return;
     }
@@ -1234,11 +551,6 @@ export function LocationFields({
     setLookupFailed(false);
     if (!maptilerKey) return;
     if (autoApply) explicitPending.current = true;
-    // A fix wider than a district cannot choose between neighbouring districts, so it is not invited
-    // to try — and it is certainly not invited to WRITE. Rural districts and PIN areas are a few
-    // kilometres across, so past a kilometre the geocoder is picking a neighbour on the strength of an
-    // error term. Above the line there is no offer and no write, only the notice explaining the
-    // silence. This limit is the one thing the auto-fill must not soften.
     if (coarse) return;
 
     const controller = new AbortController();
@@ -1248,37 +560,9 @@ export function LocationFields({
         if (controller.signal.aborted) return;
         if (autoApply) explicitPending.current = false;
         pendingLookup.current = null;
-        // Nothing to offer is a complete answer, and it stays visible as an absence rather than as
-        // the last point's suggestion.
         if (!found.state && !found.district) return;
 
-        /**
-         * PASSIVE — A FIX NOBODY ASKED FOR. IT OFFERS, AND IT DOES NOT WRITE. NOT EVEN INTO AN EMPTY BOX.
-         *
-         * This branch used to call `applyGeocodedAddress` with `overwrite: false`, which fills every
-         * field that happens to be blank. On a NEW record every field IS blank, so the first fix the
-         * device produced — a fix of the DESK the record was being typed at — wrote its own state,
-         * district and pincode into the artisan's address before anybody had touched the form. That is
-         * the exact failure the two-group split at the top of this file exists to end, arriving through
-         * the one door nobody was watching: the fifteen live records carry a Kharagpur coordinate under
-         * a Rajasthan place name because a device's reading was allowed to answer a question about the
-         * subject.
-         *
-         * "Only the empty ones" is not a safeguard here, it is the whole hazard. A researcher who has
-         * typed nothing yet is not consenting to anything; they are simply not finished. The blank box
-         * is the question, not permission to answer it.
-         *
-         * So the device's reading is stated as what it is — an offer, naming the place and its radius —
-         * and a person accepts or refuses it. On site that is one tap and the address is right; at a
-         * desk 1,500 km away it is one tap the other way and the address stays empty for the person who
-         * knows it. The write path below is reached only by an EXPLICIT act (`autoApply`), where a human
-         * has already pointed at the place being described.
-         */
         if (!autoApply) {
-          // Offered only where there is something to decide. A fix that agrees with what is already in
-          // the boxes has nothing to ask, and a chip asking it anyway is noise over the researcher's
-          // own answer. Read through the ref, not the closure: a rural lookup takes seconds and they
-          // may have typed since it went out.
           const stated = statedRef.current;
           const differs =
             (found.state && found.state !== stated.state) ||
@@ -1289,50 +573,22 @@ export function LocationFields({
         }
 
         const { applied, previous } = applyGeocodedAddress(found, { overwrite: true });
-        // Loud rather than silent, even here: the researcher pointed at the place, but they did not
-        // choose these three names for it, so the write says which boxes it took and offers them back.
         if (applied.length) setAutofill({ applied, previous });
       })
       .catch(() => {
         if (controller.signal.aborted) return;
-        // Released even on failure, or one offline pin drop would lock out every passive fix for the
-        // rest of the form's life. The pending POINT is what carries the intent forward, below.
         if (autoApply) explicitPending.current = false;
         setLookupFailed(true);
-        // Hold the point rather than the failure. A GPS fix needs no network and a reverse geocode
-        // needs one, so out in a village the coordinates land and the names do not — which is the
-        // normal sequence here, not a fault. Retried below the moment there is signal again.
-        //
-        // The MODE is held too. A pin the researcher dropped before losing signal is still an explicit
-        // statement about that place when the network comes back ten minutes later; downgrading the
-        // retry to a passive offer would silently make the offline path behave differently from the
-        // online one for the same action.
         pendingLookup.current = { lat, lng, metres: accuracyMetres ?? null, autoApply };
       });
   }
 
   useEffect(() => () => lookup.current?.abort(), []);
 
-  /**
-   * Coordinates first, names later: re-ask for the point that was looked up offline, as soon as the
-   * browser says there is a connection.
-   */
   useEffect(() => {
     function retry() {
       const point = pendingLookup.current;
       if (!point) return;
-      /**
-       * AN EXPLICIT REPLAY IS AUTHORISED BY THE PIN, so it has to still BE the pin.
-       *
-       * "Remove pin" clears the coordinates and leaves this ref standing, so without this check the
-       * sequence — go offline, drop a pin, remove it, regain signal — replays an OVERWRITE of the
-       * state, district and pincode minutes later, from a point nobody is pointing at any more. The
-       * write would be announced, which is the promise this card makes, but announced is not the same
-       * as asked for.
-       *
-       * The coordinates are compared as the strings the pin wrote, which is exactly what
-       * `placeSubjectPin` stored — so this is an identity test, not a distance one.
-       */
       if (point.autoApply && (point.lat !== subjectLatitude || point.lng !== subjectLongitude)) {
         pendingLookup.current = null;
         return;
@@ -1341,27 +597,9 @@ export function LocationFields({
     }
     window.addEventListener("online", retry);
     return () => window.removeEventListener("online", retry);
-    // Re-bound when the subject pin moves, so `retry` always compares against the pin standing NOW.
-    // Everything else `offerSuggestion` touches it reads through a ref or writes through a setter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subjectLatitude, subjectLongitude]);
 
-  /**
-   * THE REVIEW FLAG, and the one thing it must never do is fix anything.
-   *
-   * On an edit form with a stored coordinate, ask the geocoder where that coordinate actually is and
-   * compare the answer with what the record says about itself — the stated state if it has one, and
-   * otherwise the free-text place box, which on the fifteen legacy records is the only place the
-   * real location exists. Where they disagree, say so, and stop.
-   *
-   * WHY IT ONLY RUNS ON EDITS. On a NEW record a disagreement is the expected, correct state of
-   * affairs: a researcher at a desk in Kharagpur documenting a Bagru artisan SHOULD have West Bengal
-   * coordinates and a Rajasthan address, and flagging that would be flagging the feature. What is
-   * worth surfacing is the fifteen records where nobody was ever asked the question, and the place
-   * to surface it is the form the researcher who was there can correct.
-   *
-   * NO WRITE, NO BACKFILL, NO MIGRATION. This changes not one stored value. It shows a sentence.
-   */
   useEffect(() => {
     if (!isEditForm || !maptilerKey) return;
     const lat = asText(initial?.latitude);
@@ -1375,17 +613,12 @@ export function LocationFields({
       .then(([found, payload]) => {
         if (controller.signal.aborted || !found.state) return;
         const claimed = initial?.state || readPlaceText(stated, payload).state;
-        // A state on both sides that disagrees is proof. No state on the stated side is only a
-        // question, and it is asked rather than asserted — unless something the geocoder named
-        // appears in the researcher's own words, in which case the two agree well enough.
         const contradicted = claimed ? claimed !== found.state : !mentions(stated, found.names);
         if (contradicted) setReview({ found, stated });
       })
       .catch(() => {
-        // Offline. The flag is a review aid, not a gate; it can wait for a connection.
       });
     return () => controller.abort();
-    // Runs once per mounted edit form, against the values the record arrived with.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1399,10 +632,6 @@ export function LocationFields({
     captureMarker.current?.remove();
     captureMarker.current = null;
 
-    // Purple is the action colour and the stated address is the thing the researcher acts on; the
-    // device fix is slate, because it is a fact about the recording rather than a claim about the
-    // subject. Seeing the two on one canvas, sometimes 1,500 km apart, is the clearest statement of
-    // the difference this card can make.
     if (subjectLatitude && subjectLongitude) {
       subjectMarker.current = new maplibre.Marker({ color: "#6b21a8" })
         .setLngLat([Number(subjectLongitude), Number(subjectLatitude)])
@@ -1423,23 +652,6 @@ export function LocationFields({
     if (focus) map.flyTo({ center: focus, zoom, essential: true });
   }
 
-  /**
-   * The researcher has pointed at the subject's place. This is a STATEMENT, so it goes in the stated
-   * group's own columns and touches nothing the device wrote.
-   *
-   * IT NOW ALSO FILLS IN THE STATE, DISTRICT AND PINCODE, overwriting whatever was there. That is the
-   * one path where overwriting is unambiguously right: the pin is a direct assertion about where the
-   * subject is, made by a person, on a map, deliberately. Asking them to then confirm the state and
-   * district implied by their own pin is a second question about the same answer, and a second
-   * question about the same answer gets clicked through rather than read.
-   *
-   * The write is announced and undoable — see `autofill` — because an automatic write nobody can see
-   * is how a Bagru pincode ended up on a Dehradun record. Announced and reversible is a different
-   * thing from silent.
-   *
-   * A hand-placed pin carries no accuracy, so the coarse-fix guard does not apply: the researcher
-   * pointed at the place, and a pointer has no error radius to disqualify it.
-   */
   function placeSubjectPin(lat: string, lng: string) {
     setSubjectLatitude(lat);
     setSubjectLongitude(lng);
@@ -1447,12 +659,6 @@ export function LocationFields({
     onDirty?.();
   }
 
-  /**
-   * The researcher has said where the recording happened, because the device could not. Ends the
-   * hunt — nothing the satellites say afterwards outranks it — and clears the two values that
-   * described the device's own reading, since a hand-placed point measured nothing and happened at
-   * no particular instant.
-   */
   function placeCapturePin(lat: string, lng: string) {
     stopWatching();
     setCaptureStatus("idle");
@@ -1465,23 +671,11 @@ export function LocationFields({
     onDirty?.();
   }
 
-  /**
-   * Take the camera to a searched place. Note what it does NOT do, and compare it with the two
-   * functions immediately above: no `setSubjectLatitude`, no `offerSuggestion`, no `onDirty`.
-   *
-   * Not raising the dirty flag is the same judgement `acceptFix` makes and for a stronger reason.
-   * Nothing has been edited — the designer has looked at a different part of India. A form that
-   * announced unsaved work because somebody searched for a village would train researchers to click
-   * through the leave-guard, which has to still mean something an hour later when there IS an
-   * interview in the form.
-   */
   const flyToSearchedPlace = useCallback((hit: PlaceHit) => {
-    // Still downloading on a slow link: nothing to move, and nothing lost — no value was in play.
     const map = mapInstance.current;
     if (map) flyToPlace(map, hit);
   }, []);
 
-  /** Bias the search to where this map is looking, read at request time — never held in state. */
   const mapProximity = useCallback(() => {
     const centre = mapInstance.current?.getCenter();
     return centre ? { lon: centre.lng, lat: centre.lat } : null;
@@ -1494,8 +688,6 @@ export function LocationFields({
       mapTarget === "subject" && subjectLatitude && subjectLongitude
         ? [Number(subjectLongitude), Number(subjectLatitude)]
         : [Number(longitude) || 78.9629, Number(latitude) || 22.5937];
-    // Closing the panel (or unmounting the form) before the download lands must not leave a map
-    // attached to a container React has already taken back.
     let cancelled = false;
     let map: maplibregl.Map | null = null;
 
@@ -1528,7 +720,6 @@ export function LocationFields({
       });
 
     return () => {
-      // Destroy the instance when the panel closes/unmounts so reopening re-initialises cleanly.
       cancelled = true;
       subjectMarker.current?.remove();
       subjectMarker.current = null;
@@ -1537,26 +728,14 @@ export function LocationFields({
       map?.remove();
       if (map && mapInstance.current === map) mapInstance.current = null;
     };
-    // Recreate only when the target changes; the coordinates are read at open time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapTarget]);
 
-  // Keep whichever markers exist in step with the boxes, without rebuilding the map.
   useEffect(() => {
     syncMarkers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [latitude, longitude, subjectLatitude, subjectLongitude]);
 
-  /**
-   * Put a fix in the provenance boxes, AND NOWHERE ELSE. This function is the one the finding is
-   * about: its ancestor reached into the address fields, and the state, district and village above
-   * are now beyond anything it can touch.
-   *
-   * Every field the device answered is REPLACED, including the ones it answered with nothing: an
-   * altitude the last fix had and this one does not must not be left standing under this one's
-   * coordinates. A value that arrived by itself and then failed to move is the most convincing kind
-   * of wrong.
-   */
   function acceptFix(position: GeolocationPosition) {
     const lat = position.coords.latitude.toFixed(7);
     const lng = position.coords.longitude.toFixed(7);
@@ -1570,34 +749,14 @@ export function LocationFields({
     setCapturedMetres(metres);
     setCaptureStatus("captured");
     offerSuggestion(lat, lng, metres);
-    // Deliberately NOT raising the form's dirty flag. The automatic capture is the only writer here
-    // that no human asked for, and a blank new form that announces unsaved work before anybody has
-    // typed a character trains researchers to click through the leave-guard — which is the dialog
-    // that has to still mean something an hour later when there IS an interview in the form. The
-    // button and the map pin raise it at their own call sites.
   }
 
-  /** The browser's refusal, sorted into the three things the researcher can actually do about it. */
   function classifyError(error: GeolocationPositionError): CaptureStatus {
     if (error.code === error.PERMISSION_DENIED) return "denied";
     if (error.code === error.TIMEOUT) return "timeout";
     return "unavailable";
   }
 
-  /**
-   * Ask the device where it is, the moment the form opens, and keep asking until the answer is good.
-   *
-   * WHY A WATCH RATHER THAN `getCurrentPosition`. One shot forces a choice between two bad options:
-   * a short timeout that files the Wi-Fi estimate as the answer, or a long one that leaves the card
-   * empty and silent for the thirty to sixty seconds a cold GPS start really takes under a workshop
-   * roof. A watch has neither problem — the first callback (usually inside a second) fills the boxes
-   * so nothing is ever lost, and each later one REPLACES it as the satellites lock. Nothing blocks:
-   * the rest of the form was interactive before this function was called and stays that way.
-   *
-   * Only a strictly better radius is accepted, so the network estimate cannot land on top of the
-   * satellite fix that has already superseded it — `watchPosition` does not promise monotone
-   * improvement, and on a phone switching between towers it genuinely does get worse again.
-   */
   function startAutoCapture() {
     if (!navigator.geolocation) {
       setCaptureStatus("unsupported");
@@ -1613,21 +772,16 @@ export function LocationFields({
         const metres = position.coords.accuracy;
         const better = bestMetres.current === null || metres < bestMetres.current;
         if (better) acceptFix(position);
-        // Stop on a real satellite lock, or when the budget is spent and this is the best there was.
         if (metres <= GOOD_ENOUGH_FIX_METRES || Date.now() >= deadline) stopWatching();
       },
       (error) => {
         stopWatching();
-        // A refusal that arrives after a fix already landed changes nothing about the fix; the
-        // coordinates stand and the card keeps reporting them.
         if (bestMetres.current !== null) return;
         setCaptureStatus(classifyError(error));
       },
       { enableHighAccuracy: true, maximumAge: 0, timeout: AUTO_CAPTURE_BUDGET_MS }
     );
 
-    // The watch's own `timeout` only fires when NOTHING arrives; a stream of coarse updates keeps it
-    // alive indefinitely, which is the case the budget is actually for.
     window.setTimeout(() => {
       if (watchId.current === null) return;
       stopWatching();
@@ -1635,7 +789,6 @@ export function LocationFields({
     }, AUTO_CAPTURE_BUDGET_MS);
   }
 
-  /** "Use current GPS": one shot, because somebody is standing there waiting for it. */
   function capturePreciseLocation() {
     stopWatching();
     if (!navigator.geolocation) {
@@ -1661,29 +814,18 @@ export function LocationFields({
   }
 
   useEffect(() => {
-    // Edit forms (initial provided, even as null) never auto-capture: the stored values must not be
-    // silently overwritten by the editor's current device position, and an edit is as likely to be
-    // happening at a desk a week later as in the workshop. Capture is button-only there.
     if (isEditForm) return;
     startAutoCapture();
     return stopWatching;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // The elapsed counter. Only runs while something is actually being waited for.
   useEffect(() => {
     if (captureStatus !== "locating") return;
     const tick = window.setInterval(() => setCaptureSeconds((value) => value + 1), 1000);
     return () => window.clearInterval(tick);
   }, [captureStatus]);
 
-  /**
-   * The coordinate rule, told to the browser, so the save stops at this card with a sentence worth
-   * reading instead of failing somewhere out of sight — the same mechanism the pincode uses.
-   *
-   * Set on BOTH coordinate boxes: either one alone is not a location, and the browser then scrolls
-   * to and focuses whichever is empty.
-   */
   useEffect(() => {
     const problem = !coordinateRequired || hasCoordinate
       ? ""
@@ -1694,23 +836,6 @@ export function LocationFields({
     longitudeRef.current?.setCustomValidity(problem);
   }, [coordinateRequired, mandatory, hasCoordinate]);
 
-  /**
-   * Open the provenance panel when the researcher has to do something in it, and only then.
-   *
-   * Collapsed is right when the capture worked, because there is nothing to decide and a reader who
-   * mistakes it for the address is the failure this card is preventing. Collapsed is wrong when the
-   * device has already refused: the coordinate is still required, the way out is inside the panel,
-   * and a form that hides the control it is blocking on reads as broken.
-   *
-   * The condition is fussier than "no coordinate yet" for a reason found in the browser: a new form
-   * has no coordinate for the second or two before the first fix lands, so the looser rule flung the
-   * panel open on every single page load and then left it open, which is the opposite of what the
-   * split is for. So it waits for the device to have actually finished saying no — or for the two
-   * cases where nothing is coming at all: an edit form, which never auto-captures, and a stated
-   * address typed onto a record that has no coordinate to hang it from.
-   *
-   * It opens the panel; it does not hold it open. A researcher who deals with it can fold it away.
-   */
   const captureRefused =
     captureStatus === "denied" ||
     captureStatus === "unavailable" ||
@@ -1720,37 +845,15 @@ export function LocationFields({
   useEffect(() => {
     if (!coordinateRequired || hasCoordinate) return;
     if (captureRefused || isEditForm || hasStatedAddress) setProvenanceOpen(true);
-    // isEditForm is fixed for the lifetime of the component.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coordinateRequired, hasCoordinate, captureRefused, hasStatedAddress]);
 
-  /** A human touching either box owns the coordinate, so the satellite watch stops overwriting it. */
   function editCoordinate(setter: (next: string) => void, next: string) {
     stopWatching();
     if (captureStatus === "locating") setCaptureStatus("idle");
     setter(next);
   }
 
-  /**
-   * The researcher said yes to a suggestion the automatic write did not cover.
-   *
-   * It is no longer the only path by which a geocoder's answer reaches a field — see
-   * `applyGeocodedAddress` — but it is still the only path by which one OVERWRITES an answer somebody
-   * typed. That asymmetry is deliberate: a pin drop may overwrite because the pin IS the statement,
-   * and a passive GPS fix may not, so what the fix would have said is offered here instead.
-   *
-   * THE WHOLE ADDRESS, INCLUDING THE PARTS THAT ARE EMPTY. "Use this place's address" means this
-   * place's address, so a point with no postal code clears the pincode box rather than leaving the
-   * last point's six digits standing under this point's state — which is the original bug wearing
-   * its last available disguise. It reached this function while the accept path only wrote the
-   * pincode `if (suggestion.pincode)`, which is character for character the `if (code)` that put a
-   * Bagru PIN on a Dehradun record. It is not a rare shape either: 95% of sampled rural points in
-   * these states carry no postal code, so "no answer" is the usual answer.
-   *
-   * A typed pincode is lost when this is pressed, and that is the right trade. The button is an
-   * explicit request for a different place's address; a value from the place before it is not worth
-   * more than the one the researcher just asked for, and the box is one keystroke from being right.
-   */
   function acceptSuggestion() {
     if (!suggestion) return;
     setStateName(suggestion.state);
@@ -1759,8 +862,6 @@ export function LocationFields({
     setPincodeProblemShown(false);
     setSuggestion(null);
     setAddressProblemShown(false);
-    // Any "we filled this in for you" notice standing here described an earlier write, which this has
-    // just superseded. Leaving it up would offer an Undo that restores values from two edits ago.
     setAutofill(null);
     onDirty?.();
   }
@@ -1781,15 +882,6 @@ export function LocationFields({
 
   const mapPanel = maptilerKey ? (
     <div className="grid gap-2">
-      {/*
-        SEARCHING MOVES THE MAP AND SETS NOTHING. It is the same rule as everywhere else in this
-        card: the geocoder may offer a value, a person accepts it. A designer documenting a cluster
-        in rural Odisha would otherwise pan and pinch across the whole country to reach a village
-        they could name in eight keystrokes — but the coordinate that lands in the record is still
-        the one they click, and the state and district still arrive through `offerSuggestion` below,
-        which puts the geocoder's spelling through the API's closed lists before anyone can accept
-        it. Nothing about that path changes because the camera got there faster.
-      */}
       <PlaceSearchBox getProximity={mapProximity} onChoose={flyToSearchedPlace} label="Search for a place to move the map" />
       <div ref={mapRef} className="h-80 overflow-hidden rounded-md border border-line-200" />
     </div>
@@ -1801,10 +893,6 @@ export function LocationFields({
 
   return (
     <div className="grid gap-3">
-      {/*
-        GROUP ONE — the researcher's statement about the subject. White card, purple accent, first
-        on the page and required, because it is the answer the dataset is actually built from.
-      */}
       <section
         aria-labelledby={headingId}
         className="grid gap-3 rounded-lg border border-line-200 bg-card p-4 shadow-sm"
@@ -1822,25 +910,11 @@ export function LocationFields({
           ) : null}
         </div>
 
-        {/*
-          WHAT THE RESEARCHER'S OWN PIN JUST WROTE, and how to undo it. Only a pin reaches this notice;
-          a fix the device produced by itself is offered below and writes nothing. Even so the write is
-          announced, because a form that fills itself in silently is the bug the suggestion flow was
-          built to fix — a Bagru pincode saved onto a Dehradun record, because 95% of rural points
-          return no postal code and the stale value survived. So the write names the fields it touched
-          and offers exactly one button that restores what was there.
-        */}
-        {/* Hidden once every box it wrote has been claimed by a human. `autofill` itself survives that
-            (it is what keeps a passive GPS fix standing down), but a notice naming nothing and
-            offering an Undo that would restore nothing is noise over the researcher's own answer. */}
         {autofill && autofill.applied.length ? (
           <div className="grid gap-2 rounded-md border border-purple-200 bg-purple-50 px-3 py-2.5 text-sm text-purple-950">
             <p className="flex items-start gap-2">
               <Radar className="mt-0.5 h-4 w-4 shrink-0 text-purple-700 dark:text-purple-300" aria-hidden />
               <span>
-                {/* One wording, because there is now one writer. A second wording here — "filled in
-                    from this device's location" — is what a passive GPS write looked like from the
-                    outside, and reading it would tell the next editor that such a write is intended. */}
                 Filled in from the place you pointed at:{" "}
                 <strong className="font-semibold">{FIELD_NAMES(autofill.applied)}</strong>. Check it, and
                 correct anything that is wrong.
@@ -1859,12 +933,6 @@ export function LocationFields({
         ) : null}
 
         {review && (!stateName || stateName === (initial?.state ?? "")) ? (
-          /*
-           * The fifteen records, shown to the one person who can settle them. It states both
-           * readings and asks; it does not choose, it does not pre-fill the dropdowns below, and it
-           * writes nothing. Hidden the moment the researcher answers, because at that point they
-           * have acted on it and repeating it would just be noise over their own answer.
-           */
           <CardNotice tone="warn" icon={<ScanSearch className="h-4 w-4" aria-hidden />}>
             <strong className="font-semibold">Needs review.</strong> The coordinates are in{" "}
             <strong className="font-semibold">
@@ -1875,12 +943,6 @@ export function LocationFields({
         ) : null}
 
         {suggestion ? (
-          /*
-           * THE GEOCODER SUGGESTS, THE RESEARCHER DECIDES. On site this is one tap and the address
-           * is right; at a desk in Kharagpur it is one tap the other way and the address stays
-           * empty for the person who knows it. Neither outcome is available if the form has already
-           * decided, which is what the previous version did and why fifteen records say Kharagpur.
-           */
           <div
             data-location-suggestion
             className="grid gap-2 rounded-md border border-purple-200 bg-purple-50 px-3 py-2.5 text-sm text-purple-950"
@@ -1900,12 +962,6 @@ export function LocationFields({
               <button type="button" className="field-button" onClick={acceptSuggestion}>
                 Yes, use this
               </button>
-              {/*
-                Literal colours, not `field-button-secondary`. That class is `bg-card` over
-                `text-ink-900`, and both invert with the theme while the chip they sit on does not —
-                so in dark mode a themed button lands as a near-black pill on a pale lavender card.
-                Same reasoning as CardNotice: a fixed light chip needs fixed dark ink.
-              */}
               <button
                 type="button"
                 className="inline-flex min-h-10 items-center justify-center rounded-md border border-purple-300 bg-white px-4 py-2 text-sm font-medium text-purple-800 transition hover:bg-purple-100"
@@ -1921,15 +977,6 @@ export function LocationFields({
           <Field label="State" required={stateRequired}>
             <Select
               name="state"
-              /*
-               * `searchable` BY PROVENANCE, NOT BY COUNT. These options are server reference data
-               * (`GET /reference/address`, with the 36 bundled names standing in offline), and the
-               * rule on `SearchableSelectProps.searchable` is that a list assembled out of rows says
-               * so rather than letting `SEARCH_THRESHOLD` decide for the deployment it was measured
-               * on. The state list happens never to fall under eight, so nothing about this screen
-               * changes today — it is here so the two boxes in this pair are governed by the same
-               * sentence, and so nobody reads the district's prop as the special case.
-               */
               searchable
               value={stateName}
               required={stateRequired}
@@ -1937,18 +984,10 @@ export function LocationFields({
               onChange={(event) => {
                 setStateName(event.target.value);
                 setPrefillNote(null);
-                // A district only means anything inside its own state, so changing the state
-                // invalidates the answer below it. Cleared rather than kept: a Rajasthan district
-                // left standing under Uttarakhand is the staleness bug wearing a different hat, and
-                // the server would reject it anyway with a message about the wrong state.
                 setDistrict("");
                 setAddressProblemShown(false);
-                // Both boxes are now the researcher's, so neither may be named by the auto-fill notice
-                // or restored by its Undo. The district goes too because this handler just cleared it.
                 claimField("state", event.target.value);
                 claimField("district", "");
-                // The themed Dropdown is a button, so it fires no native input event for the form's
-                // onInput to catch: the surrounding form's dirty flag has to be raised by hand.
                 onDirty?.();
               }}
             >
@@ -1964,17 +1003,6 @@ export function LocationFields({
           <Field label="District" required={districtRequired}>
             <Select
               name="district"
-              /*
-               * ── `searchable` HERE IS A FIX, NOT A FLOURISH ───────────────────────────────────
-               * `districtOptions` is per-state reference data — 795 names across the country — and
-               * PER STATE it straddles the threshold of eight in both directions: Goa has 2 and
-               * Sikkim 6, Uttar Pradesh has 75. Left to the count, the same required field on the
-               * same form grew a filter box for one state and lost it for the next, which is
-               * verbatim the defect `ProcessForm` names one file over: "the SAME control on the SAME
-               * screen would grow a filter box for the artisan with nine products and lose it for
-               * the next one". A reader cannot learn a control that changes shape with the answer
-               * above it.
-               */
               searchable
               value={district}
               required={districtRequired}
@@ -2001,86 +1029,17 @@ export function LocationFields({
                 No districts are listed for {stateName}. You can save without one.
               </p>
             ) : null}
-            {/*
-              §3.5's CACHED-AND-STALE SENTENCE, FOR THE ONE LIST ON THIS CARD THAT CANNOT BE BUNDLED.
-
-              The 36 states are compiled in (`OFFLINE_STATES`) and are therefore always answerable
-              and always current; the 795 districts are neither, and until `loadAddressReferenceRead`
-              kept a copy the honest thing to say about them offline was the paragraph below, which
-              begins "The district list has not loaded". A browser that HAS been given them now
-              answers the box — and owes the reader the date, because a district list is revised
-              several times a year and a name that is missing from a copy taken in March proves
-              nothing at all about a district created in July. Only when the box has something to
-              offer: with no options the paragraph below is still the right sentence.
-            */}
             {stateName && addressCachedAt && districtOptions.length > 0 ? (
               <p className="text-xs text-ink-500">
                 {cachedListLine(districtOptions.length, "districts", formatDate(addressCachedAt))}
               </p>
             ) : null}
             {stateName && !reference && districtOptions.length === 0 ? (
-              // An empty dropdown with nothing said about it reads as a broken form, and a
-              // researcher who thinks the form is broken stops filling it in. The 795 district names
-              // are the one part of this card that genuinely needs the network — say so, say the
-              // record saves anyway, and let them get on with the interview.
               <p className="text-xs text-ink-500">
                 Districts need a connection. The state is enough to save.
               </p>
             ) : null}
           </Field>
-          {/*
-            THE ONE BOX IN THIS CARD THAT TAKES A MICROPHONE — added 2026-08-28 under the owner's
-            *"all the record pages should have dictation options available, wherever applicable"*.
-
-            A village name is a free proper noun, often in a script the designer's keyboard makes
-            hard work of, typed while standing in the place it names. Everything else in this card is
-            excluded by rule and each exclusion is a fact rather than a preference: `state` and
-            `district` are closed lists, `pincode` is six digits, and the four coordinate boxes are
-            decimal degrees — a recogniser writes "at" for a symbol, spells digits out and punctuates
-            what it hears, so a microphone on any of them reliably produces a value the field then
-            refuses.
-
-            NOT TITLE-CASED, deliberately: `village` is not in the API's `TITLE_CASE_FIELDS`, so a
-            hint promising a normalisation the server does not perform would be worse than none.
-
-            `explainWhenUnavailable={false}` — every form that mounts this card renders
-            `DictationUnavailableNotice` once, and a grey paragraph repeated per row is a paragraph
-            nobody reads.
-
-            ── NO WRAPPER AT ALL, AND THE WRAPPER IS WHAT THE OWNER WAS LOOKING AT ────────────────
-
-            This box sat inside `<FieldBlock label="Village or place">` until 2026-08-30 and the
-            comment here defended the choice with §12.3 — "the control contains a button, and a
-            `<label>` around a button folds its name into the box's own". Both halves of that were
-            true and the conclusion was still wrong, because `DictatedTextInput` ALREADY solved it:
-            it is not a `Field`, it writes its own `<label className="field-label" htmlFor={boxId}>`
-            for exactly that reason, and its own header says so. So the wrapper drew a SECOND visible
-            `field-label` with the identical words directly above the control's, and the profile page
-            rendered
-
-                Village or place
-                Village or place
-                [                    ]
-
-            which is what the owner reported as a duplicated village/place field. There is one
-            column, one input and one `name="village"` behind it — the repetition was two labels over
-            one box, not two boxes and not two columns, so nothing is orphaned by removing it.
-            A screen reader had it worse than a sighted reader: the group name and the input name
-            were the same string, so the box announced itself as "Village or place, Village or place,
-            edit".
-
-            `FieldBlock` REMAINS THE RIGHT WRAPPER FOR A THEMED DROPDOWN elsewhere in the app — one
-            is a `<button>`, whose name has to arrive through `role="group"` + `aria-labelledby`
-            because a `<label>` cannot name a button. It is wrong HERE because this control is a real
-            `<input>` that carries its own `htmlFor` label; the `FieldLabelProvider` the wrapper
-            installed was dead weight on top of that, since `DictatedTextInput` never reads it. Do
-            not put it back: the box ends up better labelled without it, not worse. (Removing it also
-            took this file's last `FieldBlock` with it, which is why the import is gone.)
-
-            This is a SHARED control — the same double label rendered on the artisan, product, tool,
-            workshop, media and questionnaire forms and on the designer profile, so this one deletion
-            closes it on all seven surfaces at once.
-          */}
           <DictatedTextInput
             name="village"
             label="Village or place"
@@ -2116,21 +1075,12 @@ export function LocationFields({
         </div>
 
         {zoneProblem ? (
-          // Surfaced, never enforced. The zone digit can prove the pair wrong but never prove it
-          // right, so this names the contradiction and leaves the researcher — who was standing
-          // there — to say which half of it is the mistake.
           <CardNotice tone="warn" icon={<TriangleAlert className="h-4 w-4" aria-hidden />}>
             {zoneProblem}
           </CardNotice>
         ) : null}
 
         {coarseFixMetres !== null ? (
-          /*
-           * The coarse fix, named, and the reason no suggestion appeared. The coordinates ARE kept:
-           * dropping them would leave the record with no location at all over a radius nobody would
-           * otherwise have noticed, and a rough position beats none. What must not happen is a
-           * district arriving from a 2.5 km circle with a one-tap Yes beside it.
-           */
           <CardNotice tone="warn" icon={<TriangleAlert className="h-4 w-4" aria-hidden />}>
             Location is only accurate to {accuracyLabel(coarseFixMetres)}, so choose the district yourself.
           </CardNotice>
@@ -2185,21 +1135,6 @@ export function LocationFields({
         </div>
       </section>
 
-      {/*
-        GROUP TWO — provenance. Collapsed, and second, because the one thing it must never be
-        mistaken for is the answer above.
-
-        It carries the SAME card treatment as every other section in these forms — solid line-200
-        border, white surface, small purple-tinted shadow, the shape MediaCaptureField and the
-        stated-address group above both use. It was a dashed, tinted panel, which read as a
-        placeholder or a drop zone rather than as a card: nothing else in the app has a dashed
-        border, so "different" landed as "unfinished" instead of "secondary".
-
-        The hierarchy is carried by order and by disclosure — stated address first and open, this
-        one second and folded — rather than by a decoration. Both cards are the plain card, because
-        every other section in these forms is too, and a form whose sections all look alike is one
-        the eye can scan.
-      */}
       <section className="rounded-lg border border-line-200 bg-card shadow-sm">
         <details
           open={provenanceOpen}
@@ -2210,12 +1145,6 @@ export function LocationFields({
               <LocateFixed className="h-4 w-4 shrink-0" aria-hidden />
               <span className="font-medium text-ink-700">Captured at</span>
               <span className="text-ink-500">— where this device was, recorded automatically</span>
-              {/*
-                The announcement, and it has to live HERE rather than only in the notices inside.
-                When the capture works the panel stays folded, so this line is the whole of what a
-                researcher sees of a field that filled itself in — and a live region inside a closed
-                <details> is display:none, which is a live region a screen reader never reads.
-              */}
               <span aria-live="polite" className="font-mono text-xs text-ink-500">
                 {captureSummary}
               </span>
@@ -2227,10 +1156,6 @@ export function LocationFields({
               Where the device was. Not used as {subjectLabel}&apos;s location.
             </p>
 
-            {/*
-              Announced rather than merely rendered: the whole hazard of a field that fills itself in
-              is that nobody notices it did.
-            */}
             <div aria-live="polite" className="grid gap-2 empty:hidden">
               {captureStatus === "locating" ? (
                 <CardNotice
@@ -2293,12 +1218,6 @@ export function LocationFields({
 
             <input type="hidden" name="capturedAt" value={capturedAt} />
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {/*
-                Raw inputs rather than `TextInput`, for the same reason the pincode above is one:
-                these two need a ref so `setCustomValidity` can carry the requirement, and the
-                browser's own constraint validation is what actually stops the submit and scrolls
-                the researcher here.
-              */}
               <Field label="Latitude" required={coordinateRequired}>
                 <input
                   ref={latitudeRef}
@@ -2357,18 +1276,11 @@ export function LocationFields({
             </div>
 
             {!mandatory && !hasCoordinate && !hasStatedAddress ? (
-              /*
-               * The legacy row. This record predates the requirement, so it saves without a
-               * coordinate — but a researcher who IS at the place should be told they can close the
-               * gap while they are here, and one who is at a desk should be told not to.
-               */
               <CardNotice tone="info">
                 Optional for this older record. Only use GPS if you&apos;re at the place now.
               </CardNotice>
             ) : null}
             {!mandatory && !hasCoordinate && hasStatedAddress ? (
-              // Not a rule anybody chose — see ADDRESS_NEEDS_COORDINATE_MESSAGE. Said here, in the
-              // panel that can satisfy it, as well as in the browser's own bubble on the coordinate.
               <CardNotice tone="warn" icon={<TriangleAlert className="h-4 w-4" aria-hidden />}>
                 {ADDRESS_NEEDS_COORDINATE_MESSAGE}
               </CardNotice>

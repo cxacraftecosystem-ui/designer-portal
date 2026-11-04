@@ -17,10 +17,6 @@ import {
   type DigestPreference
 } from "@/lib/weeklyDigest";
 
-/**
- * The Monday summary's switch. Drawn only for reviewers and officials (`eligible`), and drawn
- * whether or not mail is on — the summary also lands in the in-app list, so the switch always works.
- */
 export function WeeklyDigestCard() {
   const [state, setState] = useState<DigestPreference | null>(null);
   const [saving, setSaving] = useState(false);

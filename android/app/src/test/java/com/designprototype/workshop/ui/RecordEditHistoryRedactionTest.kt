@@ -15,48 +15,12 @@ import java.io.File
 import java.time.ZoneId
 import java.util.Locale
 
-/**
- * THE ONE THING ON THIS SCREEN THAT MUST NEVER REGRESS: an identity column's ledger row does not
- * print the identity.
- *
- * ── WHY THIS FILE, AND WHY IT IS NOT A UI TEST ────────────────────────────────────────────────
- *
- * `RecordEditHistory` renders the append-only `RecordRevision` ledger, in which five columns —
- * `aadhaarNumber`, `pehchanCardNumber`, `phone`, `email`, `address` — are logged by the server
- * WITHOUT their value (`access.REVISION_REDACTED_FIELDS`). Getting that wrong does not raise, log
- * or fail a build. It prints twelve digits of somebody's Aadhaar in a panel an admin opened to see
- * who edited what, and the only person who would ever notice is the one it belongs to.
- *
- * Nothing here composes anything, and it does not need to: every decision that could leak was
- * lifted out of the composable into pure functions precisely so it could be asserted. What this
- * file pins is the classification and the resulting text. The INK the classification selects — the
- * red/strikethrough for a value, the muted italic for a placeholder — is reading-only, and is
- * stated as such rather than claimed as covered.
- *
- * ── THE FOUR PROPERTIES ───────────────────────────────────────────────────────────────────────
- *
- *   1. Every pair the server can write for a redacted column is recognised, on every one of the
- *      five columns, and survives to the screen in the server's own words.
- *   2. The CLOSED SET is the test — not the flag beside it, not one half of the pair, and not the
- *      wording appearing under some other column. This is `records._mask_identity_node`'s own rule
- *      ("THE PAIR IS CHECKED AGAINST THE CLOSED SET RATHER THAN THE FLAG BELIEVED") ported.
- *   3. Under the two columns the read path masks by key name, no digit of an unmasked value can
- *      reach the screen even if one arrives — because this .apk outlives the server it was built
- *      against.
- *   4. The Kotlin copies of the server's field set and the server's five wordings still match the
- *      Python, and the caption still matches the web's. Three transcriptions of one decision, kept
- *      honest by reading the originals rather than by remembering them.
- */
 class RecordEditHistoryRedactionTest {
 
     private fun str(value: String?) = value?.let { JsonPrimitive(it) } ?: JsonNull
 
     private fun row(field: String, old: String?, new: String?) =
         recordRevisionChangeRow(field, RevisionChange(old = str(old), new = str(new)))
-
-    // ---------------------------------------------------------------------------------------------
-    // 1. Every server placeholder, on every redacted column.
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     fun everyServerPlaceholderPairIsRecognisedOnEveryRedactedColumn() {
@@ -68,8 +32,6 @@ class RecordEditHistoryRedactionTest {
                         "transitions and must be classified as a placeholder, not as a value",
                     r.redacted
                 )
-                // The server's words reach the screen untouched. Re-wording them here would put a
-                // sixth vocabulary in front of a reader who may also be looking at the web panel.
                 assertEquals(old, r.old)
                 assertEquals(new, r.new)
             }
@@ -78,9 +40,6 @@ class RecordEditHistoryRedactionTest {
 
     @Test
     fun noPlaceholderPairSaysTheSameThingOnBothSides() {
-        // access._redacted_change's docstring: four distinct wordings exist so that "a consumer that
-        // decides whether to draw a row by diffing the two still sees a change on every one of
-        // them, which a shared '(redacted)' placeholder on both sides would have hidden."
         for ((old, new) in RecordRevisionRedaction.PLACEHOLDER_PAIRS) {
             assertFalse("a placeholder pair that reads the same twice hides the edit", old == new)
         }
@@ -91,15 +50,8 @@ class RecordEditHistoryRedactionTest {
         )
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // 2. The closed set is the test.
-    // ---------------------------------------------------------------------------------------------
-
     @Test
     fun halfOfAPlaceholderPairIsNotAPlaceholder() {
-        // "(value recorded)" arriving beside a real number is NOT one of the server's transitions.
-        // Matching on `old` alone would dress this row as a redaction and quietly hide the number
-        // in `new` behind a claim that nothing was recorded.
         val r = row("phone", RecordRevisionRedaction.HAD_VALUE, "9876543210")
         assertFalse(r.redacted)
         assertEquals("9876543210", r.new)
@@ -107,16 +59,12 @@ class RecordEditHistoryRedactionTest {
 
     @Test
     fun aReversedPairIsNotAPlaceholder() {
-        // "(cleared)" -> "(value recorded)" is not a transition access._redacted_change can write.
         val r = row("email", RecordRevisionRedaction.CLEARED, RecordRevisionRedaction.HAD_VALUE)
         assertFalse(r.redacted)
     }
 
     @Test
     fun theSameWordingUnderAnOrdinaryColumnIsStillAValue() {
-        // `notes` is deliberately NOT in REVISION_REDACTED_FIELDS — the backend argument is that the
-        // old text is the only way to see what a malicious edit quietly removed. A note that happens
-        // to read "(value recorded)" is a note, and must be shown as one.
         val r = row("notes", RecordRevisionRedaction.HAD_VALUE, RecordRevisionRedaction.CLEARED)
         assertFalse(
             "the field name gates the vocabulary; without that gate a real note is presented as a non-value",
@@ -125,10 +73,6 @@ class RecordEditHistoryRedactionTest {
         assertEquals(RecordRevisionRedaction.HAD_VALUE, r.old)
         assertEquals(RecordRevisionRedaction.CLEARED, r.new)
     }
-
-    // ---------------------------------------------------------------------------------------------
-    // 3. No digit of an unmasked identity value reaches the screen.
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     fun anUnmaskedAadhaarNeverReachesTheScreen() {
@@ -159,10 +103,6 @@ class RecordEditHistoryRedactionTest {
 
     @Test
     fun aBlankToNullChurnUnderAnIdentityColumnSaysNothingWasRetracted() {
-        // deps.is_empty_value treats "" and "   " as empty, and values_match(None, "") is False, so
-        // a payload sending `aadhaarNumber: ""` at an already-NULL column produces a real ledger
-        // row. It must NOT read "(cleared)": that asserts a retraction on a column that held
-        // nothing, on the one screen an admin reads to find out what was done to a record.
         val r = row("aadhaarNumber", "   ", "")
         assertTrue(r.redacted)
         assertEquals(RecordRevisionRedaction.EMPTY, r.old)
@@ -171,10 +111,6 @@ class RecordEditHistoryRedactionTest {
 
     @Test
     fun aContainerUnderAnIdentityColumnIsNotPrintedEither() {
-        // records._mask_identity_node replaces any unrecognised container under these keys with a
-        // flat mask before encoding, so this shape cannot arrive from a current server. If one does
-        // — an older deployment, a stale body — the object's KEYS are as disclosing as its leaves,
-        // and `JsonObject.toString()` would print both.
         val blob: JsonObject = buildJsonObject {
             put("note", JsonPrimitive("123456789012"))
         }
@@ -188,14 +124,6 @@ class RecordEditHistoryRedactionTest {
 
     @Test
     fun theOtherThreeColumnsKeepWhatTheServerChoseToSend() {
-        // DELIBERATE, AND THE ASYMMETRY IS THE SERVER'S, NOT THIS SCREEN'S. records._IDENTITY_KEYS
-        // masks `aadhaarNumber` and `pehchanCardNumber` by key name on the way out; `phone`, `email`
-        // and `address` are redacted on the WRITE path only, so a row written before
-        // access.REVISION_REDACTED_FIELDS existed still arrives holding the retracted value and the
-        // web panel shows it. Suppressing it here would remove nothing from the database while
-        // making a handset and a laptop disagree about the same record — and widening the redaction
-        // set is an owner's call on the server, which access.REVISION_REDACTED_FIELDS records as
-        // re-raised. If that call is ever made, this assertion is the one that should fail first.
         val r = row("phone", "9876543210", null)
         assertFalse(r.redacted)
         assertEquals("9876543210", r.old)
@@ -206,17 +134,11 @@ class RecordEditHistoryRedactionTest {
 
     private fun assertNoDigitOf(secret: String, r: RecordRevisionChangeRow) {
         assertFalse("the row still carries \"$secret\": ${r.text()}", r.text().contains(secret))
-        // Not just the whole string — any run of four or more of its characters would be a partial
-        // disclosure of the same kind the backend refuses to make from a historical ledger row.
         for (start in 0..(secret.length - 4)) {
             val chunk = secret.substring(start, start + 4)
             assertFalse("the row leaks \"$chunk\" of \"$secret\": ${r.text()}", r.text().contains(chunk))
         }
     }
-
-    // ---------------------------------------------------------------------------------------------
-    // 4. Three transcriptions of one decision, kept honest against the originals.
-    // ---------------------------------------------------------------------------------------------
 
     @Test
     fun theFieldSetStillMatchesTheBackend() {
@@ -274,9 +196,6 @@ class RecordEditHistoryRedactionTest {
 
     @Test
     fun theCaptionStillMatchesTheWebWordForWord() {
-        // The caption is the parity gap routes/artisans.py logged against this client, in those
-        // words: the handset "is not yet at parity on the CAPTION naming this exception". A caption
-        // that drifts from the web's is two different promises about the same ledger.
         val panel = repoFile("frontend/components/CollabPanel.tsx")
         val m = Regex("""<p className="text-xs text-ink-muted">([\s\S]*?)</p>""").find(panel)
         assertTrue("CollabPanel's edit-history caption paragraph moved; re-read it", m != null)
@@ -289,7 +208,6 @@ class RecordEditHistoryRedactionTest {
             web,
             RECORD_EDIT_HISTORY_CAPTION
         )
-        // And, independently of the web, it must actually name what it promises to name.
         for (name in listOf("Aadhaar", "Pehchan card", "phone", "email", "address")) {
             assertTrue("the caption stopped naming $name", RECORD_EDIT_HISTORY_CAPTION.contains(name))
         }
@@ -299,16 +217,8 @@ class RecordEditHistoryRedactionTest {
         )
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Wording, ordering and the empty state — the three things the web panel is matched on.
-    // ---------------------------------------------------------------------------------------------
-
     @Test
     fun changeRowsKeepTheOrderTheServerSentThem() {
-        // data_access.list_revisions orders revisions createdAt ASC and the caption's claim about
-        // "the FIRST before" depends on it; within one revision, `changes` decodes to a
-        // LinkedHashMap and both clients walk it in wire order. An alphabetical sort here would make
-        // two people reading the same edit on two devices see different rows in different places.
         val changes = linkedMapOf(
             "phone" to RevisionChange(old = str("(value recorded)"), new = str("(cleared)")),
             "localName" to RevisionChange(old = str("Kutchi"), new = str("Kachchhi")),
@@ -334,19 +244,12 @@ class RecordEditHistoryRedactionTest {
         val locale = Locale.UK
         val named = revision(editor = "Asha Devi", at = "2026-08-24T09:30:00+00:00")
         val line = recordRevisionEditorLine(named, zone, locale)
-        // Asserted in pieces rather than as one literal: the AM/PM marker's case is CLDR data and
-        // has changed between JDKs in this repository before (see DwWorkshopCodesTest), and a test
-        // that breaks on a toolchain upgrade teaches the next reader to delete it.
         assertTrue(line, line.startsWith("Asha Devi · 24 Aug 2026, "))
         assertTrue("09:30 UTC is 15:00 in Kolkata: $line", line.contains("03:00"))
 
-        // A deleted account leaves the join empty; the web prints "Unknown" rather than nothing,
-        // because "somebody edited this and we cannot say who" is itself the finding.
         val anonymous = revision(editor = null, at = "2026-08-24T09:30:00+00:00")
         assertTrue(recordRevisionEditorLine(anonymous, zone, locale).startsWith("Unknown · "))
 
-        // An unparseable stamp is still evidence of when something happened; it is shown raw rather
-        // than blanked, which is `readableStamp`'s own rule.
         val odd = revision(editor = "Asha Devi", at = "whenever")
         assertEquals("Asha Devi · whenever", recordRevisionEditorLine(odd, zone, locale))
     }
@@ -362,14 +265,6 @@ class RecordEditHistoryRedactionTest {
         createdAt = at
     )
 
-    // ---------------------------------------------------------------------------------------------
-
-    /**
-     * Gradle runs unit tests with the module directory (`android/app`) as the working directory —
-     * the same assumption `DwBulletListFieldTest` makes when it reads `src/main/assets`. Two levels
-     * up is the monorepo root, where the Python and the TypeScript this file pins itself against
-     * live.
-     */
     private fun repoFile(path: String): String {
         val file = File("../../$path")
         assertTrue(

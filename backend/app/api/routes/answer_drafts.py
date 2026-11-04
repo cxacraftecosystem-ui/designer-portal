@@ -1,23 +1,3 @@
-"""Routes for AI-drafted interview answers (C28). See ``services/answer_drafts`` for the rules.
-
-The designer portal's twin of the documentation portal's module of the same name: the service
-(``services/answer_drafts.py``) is byte-identical in both; these routes differ only where the two
-schemas do (here a section is global and a question names it by ``sectionId``; the edit gate is this
-portal's, including the workshop-post-holder refusal).
-
-``/questionnaire/interviews/{id}/drafts`` — list, draft one section, accept one section, dismiss one
-section. All answer 404 while ``AI_ANSWER_DRAFTS_ENABLED`` is off. Drafting, accepting and READING
-the drafts need the standing to edit the interview: a pending draft is unfinished work for the
-people who may accept it. Anyone else, inside the interview read scope, is told there is nothing to
-show; outside it, the interview does not exist. Accepting is one transaction, and every question it
-writes must belong to the section it names.
-
-Drafting SENDS the transcript to an AI provider, so it asks the one consent store first
-(``services/dictation_consent``): a draft from a recording asks ``transcription_verdict`` for that
-recording, a draft from pasted text asks ``interview_verdict`` (the interview's workshop and its
-participants' own answers). A refusal answers 409 with the reason and sends nothing.
-"""
-
 from datetime import UTC, datetime
 from typing import Any
 
@@ -49,9 +29,6 @@ def _enabled_or_404() -> Any:
 
 
 async def may_edit_interview(interview: Any, user: Any) -> bool:
-    """Admin, the author, a professor+ above the author, or an EDIT grantee — the privileged half of
-    ``access.guard_record_edit``. Drafting writes answers in bulk, so a contributor's fill-only
-    standing is not enough."""
     owner_id = get_value(interview, "createdById")
     if is_content_admin(user) or (owner_id is not None and get_value(user, "id") == owner_id):
         return True
@@ -75,7 +52,6 @@ async def _readable_interview(interview_id: str, user: Any) -> Any:
 
 async def _editable_interview(interview_id: str, user: Any) -> Any:
     interview = await require_live_record(db.questionnaireinterview, interview_id)
-    # The workshop's inspector and directors may not change a sitting filed under it (2026-10-09).
     await assert_may_write_a_record_filed_under(get_value(interview, "designWorkshopId"), user)
     if not await may_edit_interview(interview, user):
         raise HTTPException(
@@ -96,9 +72,7 @@ class DraftIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sectionId: str = Field(min_length=1, max_length=64)
-    #: A recording attached to this interview whose transcript is the source...
     mediaId: str | None = Field(default=None, max_length=64)
-    #: ...or the transcript text itself.
     transcript: str | None = Field(default=None, max_length=ad.TRANSCRIPT_MAX_CHARS)
 
 
@@ -106,7 +80,6 @@ class AcceptedAnswer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     questionId: str = Field(min_length=1, max_length=64)
-    #: What the person kept: the draft as written, their edit of it, or empty to leave it unanswered.
     answerText: str = Field(default="", max_length=ad.ANSWER_MAX_CHARS * 2)
 
 
@@ -175,7 +148,6 @@ async def draft_section(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="There's no transcript to draft from yet.",
         )
-    # A refusal answers 409 with its sentence; a consent store that cannot be read answers 503.
     if media is not None:
         await require_send(dictation_consent.transcription_verdict(
             media, send=dictation_consent.DRAFTING, resolve_from_stages=True
@@ -236,10 +208,6 @@ async def draft_section(
 async def accept_section(
     interview_id: str, payload: AcceptIn, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """Write the section's kept answers, each labelled machine-suggested (edited or not).
-
-    One transaction: a failure part-way leaves no answer written and every draft still pending.
-    """
     _enabled_or_404()
     await _editable_interview(interview_id, current_user)
     section = await _section_or_404(payload.sectionId)
@@ -266,7 +234,6 @@ async def accept_section(
             tx, interview_id, section.id, payload.answers, user_id, now
         )
         if accepted or edited:
-            # An answer is part of the interview's version (``questionnaire.upsert_responses``).
             await tx.questionnaireinterview.update(where={"id": interview_id}, data={"updatedAt": now})
     return {"accepted": accepted, "edited": edited, "skipped": skipped}
 
@@ -284,13 +251,12 @@ async def _accept_in(
     for answer in answers:
         draft = drafts.get(answer.questionId)
         if draft is None:
-            continue  # not a pending draft of this section: nothing to accept
+            continue
         text = answer.answerText.strip()
         existing = await tx.questionnaireresponse.find_unique(
             where={"interviewId_questionId": {"interviewId": interview_id, "questionId": answer.questionId}}
         )
         if not text or (existing is not None and (existing.answerText or "").strip()):
-            # Left empty by the person, or answered by a person since the draft: the draft goes.
             await tx.questionnaireanswerdraft.update(
                 where={"id": draft.id},
                 data={"status": ad.STATUS_DISMISSED, "decidedById": user_id, "decidedAt": now},

@@ -1,29 +1,6 @@
-/**
- * SAVING A FILE THE PERSON IS STILL UPLOADING — from the copy this browser already holds.
- *
- * Every surface that shows a file on its way to the server (the capture tiles, the questionnaire's
- * recorded clips, a stage's on-this-device files, the offline outbox, a dictation being sent) offers
- * a Download button that reads THESE bytes, not the server's. So a designer can keep their own
- * recording the moment it exists, whatever the connection is doing, and the upload is never asked
- * to wait: nothing here touches a transfer, a queue entry or a staged object.
- *
- * `downloadLocalMedia` is the name the documentation portal's twin of this module uses as well, so
- * the two can be lifted into shared code without a rename. The pure halves —
- * {@link extensionForMime} and {@link localMediaFileName} — are exported for
- * `e2e/local-media-download-unit.spec.ts`; there is no React renderer in devDependencies, so the
- * naming rules are tested here rather than through a button.
- */
-
 import { saveBlobToDisk } from "@/lib/fileDownload";
 import { recordingFilename } from "@/lib/naming";
 
-/**
- * The extension a saved file should carry for a mime type, or null when there is no sensible one.
- *
- * Parameters are dropped first: MediaRecorder reports `audio/webm;codecs=opus`, and the codec is not
- * part of the container's name. Matched exactly, never by substring, so `application/vnd.foo-pdf`
- * does not become a `.pdf`.
- */
 const EXTENSION_BY_MIME: Record<string, string> = {
   "audio/webm": "webm",
   "audio/ogg": "ogg",
@@ -76,7 +53,6 @@ export function extensionForMime(mimeType: string | null | undefined): string | 
   return EXTENSION_BY_MIME[base] ?? null;
 }
 
-/** What an unnamed file is called, by kind: a recording is a voice note, anything else by its type. */
 function whatForMime(mimeType: string | null | undefined): string {
   const base = baseMimeType(mimeType);
   if (base.startsWith("audio/")) return "Recording";
@@ -89,28 +65,16 @@ function pad(value: number): string {
   return String(value).padStart(2, "0");
 }
 
-/** `2026-10-16-143005`, in the device's own clock — the moment a person would say they recorded it. */
 export function fileDateStamp(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}-${pad(date.getHours())}${pad(
     date.getMinutes()
   )}${pad(date.getSeconds())}`;
 }
 
-/** Characters no common file system accepts in a name, and control characters. */
 const UNSAFE_NAME = /[\\/:*?"<>|\u0000-\u001f]+/g;
 
-/** Names a browser or a recorder gives a file nobody named. Treated as absent. */
 const PLACEHOLDER_NAMES = new Set(["blob", "untitled"]);
 
-/**
- * The name a downloaded local file is saved under.
- *
- * - The file's own name when it has one, made safe for a file system, with the mime type's
- *   extension added only when the name carries none.
- * - Otherwise `voice-note-<date>.<ext>` for a recording (`video-`, `photo-` or `file-` for the
- *   rest), dated from `capturedAt` when the caller knows it and from now when it does not.
- * - `.bin` only when neither the name nor the mime type says anything about the bytes.
- */
 export function localMediaFileName({
   name,
   mimeType,
@@ -131,21 +95,12 @@ export function localMediaFileName({
     return `${cleaned}.${extension}`;
   }
   const when = capturedAt instanceof Date ? capturedAt : typeof capturedAt === "number" ? new Date(capturedAt) : now;
-  // NAMING 2.1: <Portal>_2026-10-16_1430_Recording.webm, dated and timed in IST.
   return recordingFilename(null, extension ?? "bin", {
     capturedAt: Number.isFinite(when.getTime()) ? when : now,
     what: whatForMime(mimeType)
   });
 }
 
-/**
- * Save a file this browser holds — an in-memory `File`/`Blob`, or one read back out of IndexedDB —
- * to the person's device. Returns the name it was saved under.
- *
- * The object URL is built from the blob and revoked on the next task by `saveBlobToDisk` (never in
- * the click's own tick, which Safari answers by saving nothing). Reading a Blob does not consume it,
- * so the upload that holds the same object carries on untouched.
- */
 export function downloadLocalMedia(
   source: Blob,
   options: { name?: string | null; mimeType?: string | null; capturedAt?: number | Date | null } = {}
@@ -159,13 +114,6 @@ export function downloadLocalMedia(
   return fileName;
 }
 
-/**
- * Save a file that has finished uploading, from the URL the server handed back for it.
- *
- * Fetched into a blob first so the browser honours the filename (a cross-origin `download`
- * attribute is ignored); when the store will not answer a `fetch` — a bucket without CORS for this
- * origin — the URL is opened instead, which still lets the person save it.
- */
 export async function downloadMediaUrl(url: string, name?: string | null, mimeType?: string | null): Promise<void> {
   const fileName = localMediaFileName({ name, mimeType });
   try {

@@ -13,37 +13,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The artisan's questionnaire panel, on both clients, and the one line in each that printed a
- * document instead of the words in it.
- *
- * ── WHAT WENT WRONG ───────────────────────────────────────────────────────────────────────────
- *
- * `QuestionnaireResponse.answerText` is a `String?` that has always held prose and, since the web's
- * interview answer box became a rich text box on 2026-08-31, sometimes holds the JSON encoding of a
- * document instead. `ArtisanQuestionnairePanel` in `FieldComponents.kt` printed the column straight,
- * so an answer somebody formatted arrived on this panel as the literal characters
- * `{"blocks":[{"kind":"PARAGRAPH",…}]}`. Not a crash and not a 500 — just the braces, in the place a
- * researcher reads an artisan's answer back, and with nothing anywhere reporting a problem because a
- * JSON-shaped string is not empty and so passes every emptiness check above it. That is the failure
- * `report_builder.format_value` records at its own RICH_TEXT branch, one surface further on.
- *
- * ── AND WHY THE WEB HALF IS ASSERTED HERE TOO ─────────────────────────────────────────────────
- *
- * This was NOT a parity gap: the same panel on the web printed `answer.answerText` just as raw, so
- * both clients were wrong in the same way and would have been fixed one at a time. The two are
- * pinned together so the next reader meets one rule and not two, exactly as `DashboardTileParityTest`
- * reads the web's `DashboardCard.tsx` for its half of a shared decision.
- *
- * ── WHY NOTHING HERE COMPOSES ─────────────────────────────────────────────────────────────────
- *
- * `ArtisanQuestionnairePanel` is a Composable and this is a desktop JVM test, so the defect is
- * decided the two ways it can be without a device: the flattener is EXECUTED, and the call that
- * reaches it is read out of the source. What none of this proves is that a phone paints the card.
- */
 class ArtisanAnswerPanelTest {
 
-    /** An answer a researcher could actually produce in that box: a bolded term, then a bullet. */
     private val formatted = RichDoc(
         blocks = listOf(
             RichBlock(
@@ -69,9 +40,6 @@ class ArtisanAnswerPanelTest {
 
     @Test
     fun `neither spelling of the envelope reaches the panel`() {
-        // Both quotings, because the two ways a document reaches a reader print differently: the
-        // stored column is JSON (double quotes) and a value that fell through to a Python `str()` is
-        // a repr (single quotes). A test pinning one would pass while the other shipped.
         val shown = questionnaireAnswerPlain(stored)
         assertFalse(shown, shown.contains("{\"blocks\""))
         assertFalse(shown, shown.contains("{'blocks'"))
@@ -81,13 +49,10 @@ class ArtisanAnswerPanelTest {
 
     @Test
     fun `an answer written before any of this renders exactly as it did`() {
-        // Identity, not "close enough". Every answer in the column today is prose, and a flattener
-        // that re-wrapped them would show up as a silent diff on every panel and every export.
         val typed = "Twelve looms, two of them idle."
         assertEquals(typed, questionnaireAnswerPlain(typed))
         assertEquals("", questionnaireAnswerPlain(null))
         assertEquals("", questionnaireAnswerPlain("   "))
-        // Braces a researcher typed are a researcher's typing, not a document.
         assertEquals("{he charges 400 per metre}", questionnaireAnswerPlain("{he charges 400 per metre}"))
     }
 
@@ -127,15 +92,6 @@ class ArtisanAnswerPanelTest {
     }
 }
 
-/**
- * A file of this repository, found by walking up from wherever the test runner started.
- *
- * The working directory of a Gradle test worker is not something to depend on, and a test that
- * skipped when it could not find its subject would prove nothing on the day somebody moves it.
- * Missing is a failure, loudly. Same helper and same reasoning as `DashboardTileParityTest` — and
- * the `..`-prefixed candidate is what lets it reach out of `android/` and into `frontend/`, which is
- * what the last test above needs.
- */
 private fun repoFile(vararg relative: String): File {
     var dir: File? = File(".").absoluteFile
     while (dir != null) {

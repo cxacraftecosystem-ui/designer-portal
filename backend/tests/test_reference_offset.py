@@ -1,11 +1,3 @@
-"""``offset`` pages a reference list, so a picker can hold a register longer than one page.
-
-The handset's craft picker showed 50 of 459 crafts with "Partly loaded": the references endpoint
-answered one page (default 50, ceiling 200) and had no way to ask for the next. ``offset`` is that
-way. Driven through the REAL ``reference_options`` over a fake client, like
-``test_process_product_cascade.py``.
-"""
-
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -77,7 +69,6 @@ async def test_the_first_page_is_the_call_it_always_was(monkeypatch):
     page = await _page(0)
     assert page["truncated"] is True
     assert len(page["options"]) == 3
-    # No `skip` keyword at all on the first page, so a client that never pages is unchanged.
     assert calls == [{"take": 4, "skip": 0}]
 
 

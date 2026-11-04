@@ -6,11 +6,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * H3 (audit 21 Oct 2026): instant transcription in the interview form must name the interview's own
- * artisans, so the server can refuse a send for an artisan who said no but is filed under another
- * workshop.
- */
 class InterviewDictationSubjectsTest {
 
     @Test

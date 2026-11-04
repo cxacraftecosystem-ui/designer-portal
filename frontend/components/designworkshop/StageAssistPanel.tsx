@@ -1,14 +1,5 @@
 "use client";
 
-/**
- * Suggestions for this stage, one tap each — the server's `stage_assist`, drawn.
- *
- * Owner decisions of 2026-10-17 (A14, A16, B10, C6, C7, C10): the stage already knows these answers,
- * so it offers them. Nothing is written without the tap, only blank boxes are filled (a "Use ₹X"
- * over a contradicting subtotal is the one exception, and it says what it replaces), and every value
- * stays editable afterwards. Hidden when there is nothing to offer.
- */
-
 import { Lightbulb } from "lucide-react";
 
 import { ActionGroup } from "@/components/ui/ActionGroup";

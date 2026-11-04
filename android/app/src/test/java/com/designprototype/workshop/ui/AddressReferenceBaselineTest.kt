@@ -11,13 +11,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * A fresh install that goes offline before it ever connects must still be able to save an artisan.
- *
- * The 0.0.19 emulator smoke caught the opposite: states came from the compiled-in list, districts
- * from nowhere, and `artisanLocationRequirementError` refused every new record. The APK now ships
- * the server's whole address reference as a floor, and these hold the floor to that job.
- */
 class AddressReferenceBaselineTest {
 
     private fun asset(): File {

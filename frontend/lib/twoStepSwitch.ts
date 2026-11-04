@@ -1,29 +1,14 @@
-/**
- * What the "Two-step verification" switch shows, decided in one pure place so the web card
- * (components/settings/TwoStepVerificationCard.tsx) and its unit spec (e2e/two-step-switch-unit.spec.ts)
- * cannot disagree — and Android's `TwoStepSwitch` (ui/TwoStepVerification.kt) is the same table.
- *
- * THE RULE THE OWNER REPORTED BROKEN (2026-10-17): the switch reads ON only when the SERVER says it is
- * on — `/enable` accepted a code. Starting setup, scanning nothing, and coming back later must read Off.
- * So `checked` is `status.enabled` and nothing else; a setup in progress is `busy` with the words
- * "Setting up…", never a checked switch; and a setup the server still holds as pending from an earlier
- * visit is offered as "start again", not shown as on.
- */
-
 import type { TwoFactorStatus } from "@/lib/twoFactor";
 
-/** Which part of the conversation the card is in. */
 export type TwoStepPhase = "idle" | "setup" | "codes" | "disable" | "regenerate";
 
 export type TwoStepSwitchView = {
   checked: boolean;
   busy: boolean;
   busyLabel: string | null;
-  /** The plain-words line under the switch. */
   statusLine: string;
 };
 
-/** "17 Oct 2026" — day, short month, year, in every locale, so the line reads the same everywhere. */
 export function formatOnSince(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const date = new Date(iso);
@@ -31,7 +16,6 @@ export function formatOnSince(iso: string | null | undefined): string | null {
   return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-/** "8 recovery codes left", "1 recovery code left", "No recovery codes left". */
 export function recoveryCodesLeft(count: number): string {
   if (count <= 0) return "No recovery codes left";
   return `${count} recovery ${count === 1 ? "code" : "codes"} left`;
@@ -63,17 +47,8 @@ function onLine(status: TwoFactorStatus | null): string {
   return [since ? `On since ${since}` : "On", recoveryCodesLeft(status.recovery_codes_remaining)].join(" · ");
 }
 
-/** Hidden this long, a setup is abandoned rather than paused for a look at the authenticator app. */
 export const SETUP_AWAY_LIMIT_MS = 5 * 60 * 1000;
 
-/**
- * Leaving setup without a confirmed code DISCARDS it (`POST /auth/two-factor/setup/cancel`): Cancel,
- * switching it back off, navigating away, closing or reloading the tab, and coming back to a tab that
- * was hidden for longer than `SETUP_AWAY_LIMIT_MS`. A SHORT hide does not: on a phone the person leaves
- * for their authenticator app in the middle of setup, and cancelling then would throw away the key they
- * are about to read a code from. Android's `TwoStepSwitch.leavingDiscards` is the same rule, and the
- * server's 15-minute limit covers the case where they never come back at all.
- */
 export function leavingSetupDiscards(
   event: "cancel" | "switch-off" | "unmount" | "pagehide" | "hidden",
   awayMs = 0

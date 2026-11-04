@@ -9,7 +9,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** M5 and M6 (audit 21 Oct 2026): a per-answer save on the Android answer screen. */
 class QuestionnaireAnswerSaveTest {
 
     @Test
@@ -36,7 +35,6 @@ class QuestionnaireAnswerSaveTest {
         val outcome = answerSaveOutcome(
             result = result,
             sent = listOf("q1", "q2", "q3"),
-            // q9 belongs to somebody else and is not in the narrowed reply: it must survive.
             baseline = mapOf("q9" to ("theirs" to "")),
             locked = setOf("q9"),
             previousProblems = mapOf("q1" to "old problem"),

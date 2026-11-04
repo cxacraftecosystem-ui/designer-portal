@@ -1,17 +1,3 @@
-"""Every outside send asks the one consent store, and a withdrawn consent stops each of them.
-
-The rule (``app/transcription/ledger.py``'s ``decide``, the same function documentation-portal's gate
-calls) over this portal's subjects (``services/dictation_consent.py``):
-
-* the recording's own row is read FIRST, and a refusal there always refuses, workshop or not;
-* the subjects are every workshop that names the file plus every artisan of it (the artisan's own
-  row, the record both portals read and write);
-* consent is assumed by default (owner decision, 19 Oct 2026): a subject with no answer counts as
-  agreeing, any recorded refusal stops the send, and a later grant allows it again.
-
-No database and no provider: ``dictation_consent.db`` is ``consent_store_fakes.LedgerDb``.
-"""
-
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -40,11 +26,8 @@ def ledger_db(monkeypatch) -> LedgerDb:
 
 
 def _dictation(**extra: Any) -> dict[str, Any]:
-    """A designer's own recording: no workshop tag, no interview."""
     return {"id": "m1", "linkedRecordType": None, "linkedRecordId": None, **extra}
 
-
-# ── the recording's own row ───────────────────────────────────────────────────────────────────
 
 
 async def test_a_recording_with_no_workshop_and_no_row_is_sent_as_before(ledger_db):
@@ -74,8 +57,6 @@ async def test_a_granted_recording_row_alone_lets_it_go(ledger_db):
     assert verdict.decision is SendDecision.GRANTED and verdict.may_send
 
 
-# ── the artisan's own row ─────────────────────────────────────────────────────────────────────
-
 
 async def test_a_withdrawn_artisan_consent_stops_a_recording_of_them(ledger_db):
     ledger_db.media_artisans["m1"] = ["a1"]
@@ -97,9 +78,6 @@ async def test_an_artisan_refusal_stops_a_granted_workshops_recording(ledger_db)
 
 
 async def test_an_unanswered_artisan_is_sent_and_their_refusal_stops_it(ledger_db):
-    """No workshop, no recording row: A granted, B never answered. Consent is assumed by default, so
-    it is sent (the answer documentation-portal gives over the same ARTISAN rows); B's refusal stops
-    it and B's later grant lets it go again."""
     ledger_db.media_artisans["m1"] = ["a1", "a2"]
     ledger_db.rows["ARTISAN"]["a1"] = "GRANTED"
     verdict = await transcription_verdict(_dictation(artisanId="a1"), resolve_from_stages=True)
@@ -112,7 +90,6 @@ async def test_an_unanswered_artisan_is_sent_and_their_refusal_stops_it(ledger_d
 
 
 async def test_artisans_who_never_answered_are_sent_unless_someone_refused(ledger_db):
-    """D31, resolved by the owner (19 Oct 2026): clips naming artisans who never answered are sent."""
     ledger_db.media_artisans["m1"] = ["a1", "a2"]
     assert (await transcription_verdict(_dictation(artisanId="a1"))).may_send
     ledger_db.rows["ARTISAN"]["a1"] = "REFUSED"
@@ -130,8 +107,6 @@ async def test_an_interviews_pasted_words_are_sent_until_a_participant_refuses(l
 
 
 async def test_a_workshop_with_no_answer_is_sent_unless_a_linked_artisan_refused(ledger_db):
-    """D30, resolved by the owner (19 Oct 2026): unanswered counts as yes, for the workshop and for
-    its artisans alike; any one refusal still stops it."""
     ledger_db.workshops["ws-1"] = workshop("ws-1", "NOT_RECORDED")
     ledger_db.workshop_artisans["ws-1"] = ["a1", "a2"]
     ledger_db.rows["ARTISAN"]["a1"] = "GRANTED"
@@ -152,8 +127,6 @@ async def test_a_refused_workshop_stops_every_send_and_a_later_grant_allows_agai
 
 
 async def test_a_granted_workshop_with_unanswered_artisans_is_sent_and_not_over_a_refusal(ledger_db):
-    """No answer counts as agreeing; one artisan's refusal still stops it, and the stage-save note
-    (``send=MEDIA``) carries that refusal's sentence."""
     ledger_db.workshops["ws-1"] = workshop("ws-1", "GRANTED")
     ledger_db.rows["WORKSHOP"]["ws-1"] = "GRANTED"
     ledger_db.workshop_artisans["ws-1"] = ["a1", "a2"]
@@ -171,8 +144,6 @@ async def test_the_insights_and_drafting_sends_ask_the_same_rule(ledger_db):
         verdict = await transcription_verdict(_dictation(), send=send, resolve_from_stages=True)
         assert not verdict.may_send and send.destination in verdict.refusal
 
-
-# ── answer drafting: POST /questionnaire/interviews/{id}/drafts ──────────────────────────────
 
 
 @pytest.fixture
@@ -216,7 +187,7 @@ def drafting(monkeypatch, ledger_db):
 
     async def fake_draft(questions, transcript, settings, *, user_id):
         asked.append(transcript)
-        return {1: "Since my grandfather"}, "anthropic", "claude-sonnet-5"
+        return {1: "Since my grandfather"}, "anthropic", "claude-sonnet-5-5"
 
     monkeypatch.setattr(routes, "db", fake)
     monkeypatch.setattr(routes, "get_settings", lambda: SimpleNamespace(ai_answer_drafts_enabled=True))
@@ -263,8 +234,6 @@ async def test_a_refusal_for_the_recording_stops_its_draft(drafting):
     assert drafting.asked == []
 
 
-# ── the artisan's own record: written here, read by both portals ──────────────────────────────
-
 
 async def test_the_artisan_consent_route_appends_an_artisan_row_and_reads_it_back(monkeypatch, ledger_db):
     from app.api.routes import artisans as routes
@@ -284,7 +253,6 @@ async def test_the_artisan_consent_route_appends_an_artisan_row_and_reads_it_bac
     assert out["state"] == "REFUSED"
     (args,) = ledger_db.appended
     assert args[1:5] == ("ARTISAN", "a1", "EXTERNAL_PROCESSING", "REFUSED")
-    # And the row it wrote is what the gate reads next.
     ledger_db.media_artisans["m1"] = ["a1"]
     assert not (await transcription_verdict(_dictation(artisanId="a1"))).may_send
 
@@ -314,12 +282,8 @@ async def test_a_stranger_cannot_record_an_artisans_consent(monkeypatch, ledger_
     assert ledger_db.appended == []
 
 
-# ── an artisan linked to the workshop reaches its stage clips ─────────────────────────────────
-
 
 async def test_a_linked_artisans_refusal_stops_a_stage_clip_that_names_no_artisan(ledger_db):
-    """A stage clip (``artisanAudio``) carries no ``artisanId``; the workshop's linked artisans
-    (``DesignWorkshop.artisansLinked``) are its artisans, so their refusal reaches it."""
     ledger_db.workshops["ws-1"] = workshop("ws-1", "GRANTED")
     ledger_db.rows["WORKSHOP"]["ws-1"] = "GRANTED"
     ledger_db.workshop_artisans["ws-1"] = ["a1"]
@@ -340,13 +304,9 @@ async def test_a_linked_artisans_refusal_stops_a_draft_from_pasted_text(ledger_d
     assert not (await dictation_consent.interview_verdict(interview)).may_send
 
 
-# ── the dictation route and the five AI verbs ─────────────────────────────────────────────────
-
 
 @pytest.fixture
 def verbs(monkeypatch, ledger_db):
-    """The design-workshop routes with the workshop GRANTED, every provider a tripwire, and the
-    stored file and layer the verbs work on held by the ledger fake."""
     from app.api.routes import design_workshops as routes
 
     ledger_db.workshops["ws-1"] = workshop("ws-1", "GRANTED")
@@ -444,7 +404,6 @@ async def test_an_artisan_refusal_stops_every_text_verb_and_dictation(verbs):
 
 
 async def test_a_withdrawn_recording_consent_stops_a_verb_over_a_layer_made_from_it(verbs):
-    """A proofread or translation of a layer two rungs above a recording asks about that recording."""
     routes = verbs.routes
     verbs.ledger.rows["RECORDING"]["m1"] = "REFUSED"
     proofread = routes.proofread_ai_layer(
@@ -462,7 +421,6 @@ async def test_a_withdrawn_recording_consent_stops_a_verb_over_a_layer_made_from
 
 
 async def test_a_workshop_refusal_still_reads_as_it_always_has(verbs):
-    """The workshop's own refusal keeps its pinned sentence (``gate_refusal``)."""
     routes = verbs.routes
     verbs.ledger.rows["WORKSHOP"]["ws-1"] = "REFUSED"
     refusal = await _refused(
@@ -473,8 +431,6 @@ async def test_a_workshop_refusal_still_reads_as_it_always_has(verbs):
     )
     assert refusal.detail == dictation_consent.gate_refusal(dictation_consent.DictationConsent.REFUSED)
 
-
-# ── a consent store that cannot be read: a plain 503, never a 500 ─────────────────────────────
 
 
 async def test_an_unreadable_consent_store_answers_503_with_a_sentence(verbs, drafting, monkeypatch):

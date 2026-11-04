@@ -43,13 +43,6 @@ import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import java.util.zip.GZIPInputStream
 
-/**
- * The designer-portal Android FORMS LIBRARY, end to end against a fake server that keeps the real
- * routes' shapes (UNIFY §1.1 rows A1–A16, D3; §4.2 Android "Forms"; §4.3 offline).
- *
- * Every flow here runs the app's own repository, outbox and file stores — only the network is fake —
- * so a route renamed, a key dropped or a temporary id left unresolved fails here.
- */
 class QuestionnaireFormsLibraryTest {
     @get:Rule
     val folder = TemporaryFolder()
@@ -59,15 +52,14 @@ class QuestionnaireFormsLibraryTest {
     private val other = UserDto(id = "u-other", email = "o@example.org", name = "Omar", role = "DESIGNER")
     private val admin = UserDto(id = "u-admin", email = "m@example.org", name = "Meera", role = "ADMIN")
 
-    // ── The fake server ──────────────────────────────────────────────────────────────────────────
     private val sent = ArrayList<String>()
     private val bodies = HashMap<String, String>()
     private val keys = HashMap<String, String?>()
     private var title = ""
     private var kind: String? = null
     private var deleted = false
-    private val sections = ArrayList<Pair<String, String>>() // id, title
-    private val questions = ArrayList<Triple<String, String, String>>() // id, sectionId, prompt
+    private val sections = ArrayList<Pair<String, String>>()
+    private val questions = ArrayList<Triple<String, String, String>>()
 
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false; isLenient = true; coerceInputValues = true }
 
@@ -198,8 +190,6 @@ class QuestionnaireFormsLibraryTest {
         "file", "Survey.xlsx", "PK".toRequestBody("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".toMediaType()),
     )
 
-    // ── A1–A4: the workbook ──────────────────────────────────────────────────────────────────────
-
     @QFeature("A1")
     @Test
     fun `the pro-forma downloads under the name the server gave it`() = runBlocking {
@@ -238,12 +228,9 @@ class QuestionnaireFormsLibraryTest {
         assertEquals(1, result.report.retired)
         assertEquals(2, result.report.versionAfter)
         assertEquals(listOf("POST /api/questionnaires/q_1/upload"), sent)
-        // The re-upload is the author's or a content admin's, as every edit (owner, 22 Oct 2026).
         assertTrue(FormMenuItem.REUPLOAD in formMenuItems(mayEdit = true, mayDelete = true, deleted = false, onPhoneOnly = false))
         assertFalse(FormMenuItem.REUPLOAD in formMenuItems(mayEdit = false, mayDelete = false, deleted = false, onPhoneOnly = false))
     }
-
-    // ── A6, A15, D3: authoring, online and offline ───────────────────────────────────────────────
 
     @QFeature("A6")
     @Test
@@ -273,7 +260,6 @@ class QuestionnaireFormsLibraryTest {
         repository.authorQuestionnaireOrQueue(context, QFormOp(op = QFormOp.ADD_SECTION, questionnaireId = form.id, tempId = sectionTemp, title = "Tools"), "s")
         repository.authorQuestionnaireOrQueue(context, QFormOp(op = QFormOp.ADD_QUESTION, questionnaireId = form.id, sectionId = sectionTemp, tempId = newTempId(), prompt = "Which tools?", isRequired = true), "q")
         assertTrue("nothing left the phone", sent.isEmpty())
-        // The library shows it under Mine, on this phone, before it has uploaded.
         val pending = repository.pendingQuestionnaires(context)
         assertEquals(listOf(form.id), pending.map { it.id })
 
@@ -302,8 +288,6 @@ class QuestionnaireFormsLibraryTest {
         assertFalse(mayDeleteQuestionnaire(other, mine.ownerId))
     }
 
-    // ── A5: reuse ─────────────────────────────────────────────────────────────────────────────────
-
     @QFeature("A5")
     @Test
     fun `Reuse is offered on every live form, to any designer`() {
@@ -312,8 +296,6 @@ class QuestionnaireFormsLibraryTest {
         assertTrue(reuseCanSendNow("q_1", null, emptyMap(), pendingForSource = 0, online = true))
         assertFalse(reuseCanSendNow("q_1", null, emptyMap(), pendingForSource = 1, online = true))
     }
-
-    // ── A8: kinds ─────────────────────────────────────────────────────────────────────────────────
 
     @QFeature("A8")
     @Test
@@ -332,8 +314,6 @@ class QuestionnaireFormsLibraryTest {
     private fun sectionsJsonForBundle() =
         """"sections":[{"id":"s_1","code":"A","title":"Stalls","sortOrder":0,"isActive":true,"questions":[{"id":"x_1","prompt":"What sells?","sortOrder":0,"isActive":true}]}]"""
 
-    // ── A9: bindings, read-only ───────────────────────────────────────────────────────────────────
-
     @QFeature("A9")
     @Test
     fun `a form's workshops are listed primary first, from the server's bindings`() = runBlocking {
@@ -341,13 +321,10 @@ class QuestionnaireFormsLibraryTest {
         assertNotNull(bindings)
         val lines = bindingLines(bindings!!.bindings, "dw_9") { id -> mapOf("dw_9" to "Bagru", "dw_2" to "Sanganer")[id] }
         assertEquals(listOf("Bagru · Primary", "Sanganer"), lines.map(::bindingLabel))
-        // An older server with no bindings route: the form's own workshop is its one binding.
         val fallback = bindingLines(null, "dw_9") { null }
         assertEquals(listOf("dw_9 · Primary"), fallback.map(::bindingLabel))
         assertTrue(bindingLines(null, null) { null }.isEmpty())
     }
-
-    // ── A10: the handoff bundle, both extensions, idempotent ─────────────────────────────────────
 
     @QFeature("A10")
     @Test
@@ -369,30 +346,25 @@ class QuestionnaireFormsLibraryTest {
         assertEquals("0123abcd", read.bundleId)
         assertEquals(questionnaireHandoffCode(bundle), questionnaireHandoffCode(read.bundle))
 
-        // A newer major version is refused, never half-read.
         val future = gzip("""{"v":3,"bundleId":"x","form":{"title":"F"},"sections":[],"questions":[]}""")
         assertEquals(QuestionnaireBundleRefusal.NEWER_VERSION, (readQuestionnaireBundle(future) as QuestionnaireBundleRead.Refused).reason)
 
-        // Both extensions and both portals' types are recognised on the way in.
         assertTrue(hasQuestionnaireBundleExtension("Survey_Handoff.frwq"))
         assertTrue(hasQuestionnaireBundleExtension("x.DPWQ"))
         assertTrue(isQuestionnaireBundleDelivery("android.intent.action.SEND", QUESTIONNAIRE_BUNDLE_MIME_FR, null))
         assertTrue(isQuestionnaireBundleDelivery("android.intent.action.VIEW", "application/octet-stream", "FieldRepository_Questionnaire_2026-10-22_Survey_Handoff.frwq"))
 
-        // Receiving the same file twice is one row (import is idempotent on the bundle id).
         val first = QuestionnaireBundleInbox.put(context, "a.frwq", bytes, read.bundle, read.bundleId)
         val again = QuestionnaireBundleInbox.put(context, "a (1).frwq", bytes, read.bundle, read.bundleId)
         assertEquals(first.id, again.id)
         assertEquals(1, QuestionnaireBundleInbox.all(context).size)
         assertEquals("WORKSHOP_INTERVIEW", first.kind)
 
-        // Adopting it sends its kind and a stable Idempotency-Key.
         ConnectivityObserver.answerForTests = true
         repository().adoptReceivedQuestionnaire(context, first)
         assertTrue(bodies.getValue("POST /api/questionnaires").contains("\"kind\":\"WORKSHOP_INTERVIEW\""))
         assertEquals(adoptionIdempotencyKey(first.id, "q"), keys["POST /api/questionnaires"])
 
-        // The file is named by the naming helper.
         assertEquals(
             "DesignWorkshop_Questionnaire_2026-10-22_Cluster-Survey_Handoff.dpwq",
             questionnaireHandoffFilename("Cluster survey", "2026-10-22"),
@@ -404,8 +376,6 @@ class QuestionnaireFormsLibraryTest {
         java.util.zip.GZIPOutputStream(out).use { it.write(text.toByteArray()) }
         return out.toByteArray()
     }
-
-    // ── A13: soft delete and restore ──────────────────────────────────────────────────────────────
 
     @QFeature("A13")
     @Test
@@ -430,8 +400,6 @@ class QuestionnaireFormsLibraryTest {
         assertFalse(FormsTab.DELETED in formsTabs(mayListDeleted = false))
     }
 
-    // ── A16: the owner-stamped cache ─────────────────────────────────────────────────────────────
-
     @QFeature("A16")
     @Test
     fun `a form read online opens offline for the same account and never for another`() = runBlocking {
@@ -441,7 +409,6 @@ class QuestionnaireFormsLibraryTest {
         val live = repository(author).customQuestionnaireCached(context, "q_1")
         assertFalse(live.fromCache)
 
-        // No signal: the next read throws at the network and the phone's copy answers, for its owner.
         val offlineApi = Retrofit.Builder()
             .baseUrl("http://localhost:8000/api/")
             .callFactory(object : Call.Factory {
@@ -464,8 +431,6 @@ class QuestionnaireFormsLibraryTest {
         assertFalse(formCacheReadableBy("u-author", "u-other"))
         assertFalse("an unowned copy is never served", formCacheReadableBy("", "u-author"))
     }
-
-    // ── The library's tabs ────────────────────────────────────────────────────────────────────────
 
     @Test
     fun `each form sits in exactly one tab`() {

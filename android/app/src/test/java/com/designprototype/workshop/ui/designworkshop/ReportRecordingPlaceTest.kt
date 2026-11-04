@@ -20,37 +20,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * "Where were you when this stage was filled in?" — asked twenty-two times a workshop, and read.
- *
- * ── THE TWO DEFECTS THESE PIN, WHICH ARE ONE DEFECT ───────────────────────────────────────────────
- *
- * `DwRecordingPlaceCard` writes its answer into the stage singleton under `_recordingPlace`. The
- * underscore is the sync protocol's marker for "this never goes on the wire" — `WorkshopSync.wireData`
- * strips every such key by design, because the server has no column for it and would report a red
- * "the server did not recognise 1 field" on every stage of every sync. So the value lives on the
- * handset and only on the handset, and the local draft is what the on-device report is generated from.
- *
- * (1) IT NEVER PRINTED. `renderEntity` walks `entity.liveFields`, so an underscore key is unreachable
- *     by construction on the only path that prints a singleton's answers. A repo-wide grep for the key
- *     found the constant, the card, one write in `StageScreen` and no reader anywhere — while the
- *     card's own KDoc asserted the opposite in as many words ("the provenance prints even though it
- *     never leaves the phone"). A fortnight of capture effort, consumed by nothing.
- *
- * (2) ITS PRESENCE ALONE MADE A STAGE LOOK ANSWERED. `renderStageSection` tested
- *     `singletonValues.isEmpty()` to decide whether to omit the section. A stage a designer opened,
- *     answered the location card on, and left, therefore printed a numbered stage heading with
- *     "Not recorded." underneath it — and a line in the contents page. This is the same wrong question
- *     `ReportSource.holdsWork` was fixed for (there it kept the SERVER's copy of a whole stage out of
- *     the document); this is the second place it was being asked, and the fix is the same one.
- *
- * The assertions are about the SENTENCE and about whether the SECTION exists, never about block
- * counts or ordering — a test that pinned the document's shape would fail on the next legitimate
- * template change and be deleted.
- */
 class ReportRecordingPlaceTest {
-
-    // ── the registry and the draft, cut to the one shape that matters ────────────────────────────
 
     private fun schemaOf(vararg stages: StageDto) =
         SchemaResponse(version = "test", stages = stages.toList())
@@ -67,7 +37,6 @@ class ReportRecordingPlaceTest {
         ),
     )
 
-    /** Exactly what `dwLocationToValue` writes: the coordinate first, then the named address. */
     private fun place(
         village: String? = "Barpali",
         district: String? = "Bargarh",
@@ -115,8 +84,6 @@ class ReportRecordingPlaceTest {
     private fun headings(document: ReportDocument): List<String> =
         document.blocks.filterIsInstance<HeadingBlock>().map { runText(it.runs) }
 
-    // ── (1) it prints ────────────────────────────────────────────────────────────────────────────
-
     @Test
     fun `the place a stage was recorded in prints under that stage's heading`() {
         val document = build(
@@ -133,16 +100,10 @@ class ReportRecordingPlaceTest {
             "the recording place reached no part of the document:\n$printed",
             printed.contains("Recorded at Barpali, Bargarh, Odisha"),
         )
-        // THE COORDINATE AS WELL AS THE NAMES. The names are what a reviewer reads; the coordinate is
-        // the half an auditor can check, and a provenance line carrying only the first is a claim
-        // nobody can verify. Five decimals, Locale.ROOT — a phone set to a comma-decimal locale must
-        // not print "21,18540" into a pair that is itself comma-separated.
         assertTrue(
             "the coordinate is missing, so the line cannot be audited:\n$printed",
             printed.contains("(21.18540, 83.58750)"),
         )
-        // The line is the place and nothing else: a document handed to an officer does not narrate
-        // which copy carries what (2026-10-10).
         assertTrue(
             "the provenance line must end at the coordinate:\n$printed",
             printed.contains("Recorded at Barpali, Bargarh, Odisha (21.18540, 83.58750)."),
@@ -151,8 +112,6 @@ class ReportRecordingPlaceTest {
 
     @Test
     fun `a place with no named address still prints its coordinate`() {
-        // The card accepts a raw reading — a courtyard the state/district lists do not name. Printing
-        // nothing for it would lose the one form of provenance that needs no lookup to be true.
         val document = build(
             draftOf(
                 mapOf(
@@ -180,14 +139,8 @@ class ReportRecordingPlaceTest {
         )
     }
 
-    // ── (2) it is not mistaken for an answer ─────────────────────────────────────────────────────
-
     @Test
     fun `a stage holding only a recording place is omitted from the document entirely`() {
-        // The defect: `singletonValues.isEmpty()` was false for a map holding one underscore key, so
-        // the section survived `omitIfEmpty` — all six templates set it true — and printed a numbered
-        // stage heading over "Not recorded.", plus a contents-page line, for a stage with nothing in
-        // it. Multiply by the twenty-two stages the card is offered on.
         val document = build(draftOf(mapOf(DW_RECORDING_PLACE_KEY to place())))
 
         assertFalse(
@@ -202,20 +155,6 @@ class ReportRecordingPlaceTest {
 
     @Test
     fun `the provenance line does not suppress the empty-section note`() {
-        /*
-          THE SECTION IS DRAWN AND HAS NOTHING TO SAY, which is reachable without contriving anything:
-          `retiredOnTheServer` is a value this draft holds under a key the registry no longer declares
-          — an ordinary consequence of a phone holding a stage captured before a field was retired.
-          `answered` is non-empty, so the section survives `omitIfEmpty`; `renderEntity` walks
-          `entity.liveFields` and finds nothing to print, so `wrote` stays false and the section's
-          "Not recorded." note fires.
-
-          The invariant under test is that the provenance line has NOT set `wrote`. "Not recorded." is
-          a statement about the designer's answers to the pro-forma, and a note about where somebody
-          was standing is not one of them — counting it would silently delete that note from every
-          section a designer happened to record a place on, which is the direction of failure this
-          whole file keeps closing.
-        */
         val document = build(
             draftOf(
                 mapOf(

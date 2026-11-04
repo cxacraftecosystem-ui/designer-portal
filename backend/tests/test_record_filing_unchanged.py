@@ -1,14 +1,3 @@
-"""Saving a record filed under a design workshop the editor is not on (2026-10-19).
-
-Both clients send ``designWorkshopId`` on every save. The PATCH used to re-check that unchanged id
-with the workshop loader, so anybody who may edit the artisan but is not on its workshop — an admin,
-a professor, the designer who filed it and was later removed — was answered 404 "Record not found"
-for an artisan that was on their screen. An unchanged id is not a filing and is no longer asked
-about, except for one question: a soft-deleted workshop still answers 409. A real move to a
-workshop the caller is not on is still refused, still 404 (the offline queues' "pick another" cue),
-now in words.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -33,7 +22,6 @@ def _account(role: str) -> SimpleNamespace:
 
 @pytest.fixture
 def loader(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """The destination loader answering from ``state["refuse"]``: {workshop id: HTTPException}."""
     state: dict[str, Any] = {"asked": [], "refuse": {}, "deleted": set(), "looked_up": []}
 
     async def _load(workshop_id, _user, **_kwargs):
@@ -83,7 +71,6 @@ def test_the_unchanged_id_is_compared_after_trimming(loader):
 
 
 def test_resending_the_id_of_a_deleted_workshop_is_still_a_409(loader):
-    """The loader used to answer this; the unchanged-id path asks it itself, in the same words."""
     loader["deleted"].add("w-gone")
     refusal = _patch({"designWorkshopId": "w-gone"}, _account("ADMIN"), "w-gone")
     assert refusal is not None and refusal.status_code == 409
@@ -94,8 +81,6 @@ def test_resending_the_id_of_a_deleted_workshop_is_still_a_409(loader):
 def test_moving_a_record_to_a_workshop_the_caller_is_not_on_says_so(loader):
     loader["refuse"]["w-hidden"] = NOT_FOUND
     refusal = _patch({"designWorkshopId": "w-hidden"}, _account("DESIGNER"), "w-mine")
-    # 404, not 403: both offline queues read a 404 on a replayed save as a missing linked record and
-    # offer to pick another workshop. A 403 would park the queued record behind a useless retry.
     assert refusal is not None and refusal.status_code == 404
     assert refusal.detail == filing.NOT_ON_WORKSHOP
     assert "not found" not in refusal.detail.lower()
@@ -103,7 +88,6 @@ def test_moving_a_record_to_a_workshop_the_caller_is_not_on_says_so(loader):
 
 
 def test_a_missing_workshop_and_a_hidden_one_get_the_same_answer(loader):
-    """Nothing to enumerate: the loader's two 404s come out as one 404 with one sentence."""
     loader["refuse"]["w-hidden"] = NOT_FOUND
     loader["refuse"]["w-none"] = HTTPException(status_code=404, detail="Record not found")
     hidden = _patch({"designWorkshopId": "w-hidden"}, _account("DESIGNER"), None)

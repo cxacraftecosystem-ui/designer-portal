@@ -1,23 +1,5 @@
 "use client";
 
-/**
- * A stored media id, drawn as the image it points at.
- *
- * The profile stores a photograph and a signature as MEDIA IDS, never URLs — a pre-signed URL in a
- * database column is a link that expires, so a report generated three months later prints a broken
- * frame and nothing in the stored row says why. Resolving the id is therefore a fetch, and this is
- * the one place both the editor and the read-only view do it.
- *
- * TWO FAILURES ARE NORMAL HERE AND NEITHER MAY RENDER AS A BROKEN IMAGE.
- *
- * * The lookup can fail — the media row was deleted out from under the profile, or the caller is
- *   not entitled to read it. The id is left standing in the profile either way: dropping it would
- *   silently rewrite somebody's record on a page they only opened to look at.
- * * `MediaFile.url` is gated server-side at the encoder, so a row can arrive complete with its
- *   filename and type and NO url at all. That is an entitlement answer, not an error, and the two
- *   are worded differently below because they need different actions from whoever is reading.
- */
-
 import { useEffect, useState } from "react";
 import { ImageOff } from "lucide-react";
 
@@ -29,7 +11,6 @@ type Resolution = { state: "loading" } | { state: "missing" } | { state: "ready"
 export function StoredMediaImage({
   mediaId,
   alt,
-  /** Tailwind sizing for the frame. Kept at the call site: a signature is wider than a portrait. */
   className = "h-28 w-28"
 }: {
   mediaId: string;

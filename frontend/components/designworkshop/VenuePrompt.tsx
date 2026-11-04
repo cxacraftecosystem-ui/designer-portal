@@ -1,12 +1,5 @@
 "use client";
 
-/**
- * Stage 1's venue prompt after a save with no venue location (C12) — the web twin of Android's
- * `DwVenuePrompt`: the same heading, the same line, and the same "From a photo" action, which reads
- * the position a photograph carries (`lib/photoPosition`, as `StageGeoField` does) and applies it on
- * a tap. "Add the location" takes the designer to the box itself.
- */
-
 import { useRef, useState } from "react";
 import { ImageIcon, MapPin } from "lucide-react";
 

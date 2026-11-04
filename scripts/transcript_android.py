@@ -59,16 +59,26 @@ def _kotlin_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False).replace("$", "\\$")
 
 
+KOTLIN_KEYWORDS = frozenset(
+    "as break class continue do else false for fun if in interface is null object package return "
+    "super this throw true try typealias typeof val var when while".split()
+)
+
+
+def _param(name: str) -> str:
+    return f"`{name}`" if name in KOTLIN_KEYWORDS else name
+
+
 def strings_text(root: Path, portal: str) -> str:
     table = json.loads((root / "shared/strings/transcript.json").read_text(encoding="utf-8"))["strings"]
     lines = [f"// {HEADER}", f"package {PKG[portal]}.transcript.data", "", "@Suppress(\"ConstPropertyName\", \"FunctionName\")", "object TranscriptStrings {"]
     for key, value in table.items():
         names = list(dict.fromkeys(re.findall(r"\{(\w+)\}", value)))
         if names:
-            params = ", ".join(f"{n}: Any" for n in names)
+            params = ", ".join(f"{_param(n)}: Any" for n in names)
             body = _kotlin_string(value)
             for n in names:
-                body += f".replace(\"{{{n}}}\", {n}.toString())"
+                body += f".replace(\"{{{n}}}\", {_param(n)}.toString())"
             lines.append(f"    fun {key}({params}): String = {body}")
         else:
             lines.append(f"    const val {key} = {_kotlin_string(value)}")

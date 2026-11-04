@@ -1,63 +1,3 @@
-"""The walkthrough card's "What the screen asks for" block exists TWICE, and this is the join.
-
-══════════════════════════════════════════════════════════════════════════════════════════════
-WHY THERE ARE TWO COPIES AT ALL
-══════════════════════════════════════════════════════════════════════════════════════════════
-
-The owner's report on 2026-08-31 was that the handset walkthrough *"has same number of cards, but
-not exactly the same content, the name of the fields in bubble are missing from there"*. They were
-right: the two decks already matched card for card, in one order, under one set of ids — and the
-web's card carried a third panel section the handset's did not, the one listing *"the real form
-labels, in screen order, with (required) marked"* (`GuideStep.fields` in
-`frontend/components/guide/steps.ts`).
-
-`WalkthroughJourney.kt` had REFUSED to grow that block, in writing, and the refusal was not lazy.
-Its argument was that *"enumerating twenty-three Android forms from this file would be copy written
-from copy, which is the failure both walkthrough files exist to prevent"* — and about the
-implementation it was aimed at (transcribe the Android forms by hand into a Kotlin literal and hope)
-that is simply correct.
-
-What it did not settle is the version that actually shipped: the handset carries the WEB'S register,
-verbatim, in `WALKTHROUGH_FIELDS`, and does not re-derive anything from its own forms. There is one
-list of labels in this product and it lives in `steps.ts`. This file is what makes the second COPY of
-it safe — the objection was to an *unguarded* duplicate, and the answer is the guard rather than the
-omission.
-
-══════════════════════════════════════════════════════════════════════════════════════════════
-WHY A PYTHON TEST OVER TWO FILES IT DOES NOT OWN
-══════════════════════════════════════════════════════════════════════════════════════════════
-
-The same shape, for the same reason, as the two parity tests already in this directory:
-
-* `tests/test_role_ladder_parity.py` holds twenty-three hand-kept copies of the role ladder — across
-  `lib/types.ts`, six frontend e2e tuples, seven Kotlin literals, Android tests and README.md — to
-  the one `ROLE_RANK` in `deps.py`.
-* `tests/test_terms_clause_parity.py` holds the nine terms clauses across `frontend/app/terms/
-  page.tsx` and `android/.../ui/TermsScreen.kt`.
-
-Neither client's own suite can see the other client, and the backend suite is the only gate that
-runs with both trees on disk. `WalkthroughStepsTest.kt` already reaches sideways into `steps.ts` to
-hold the step IDS and their ORDER — but it runs in the Android job, whose `pull_request` filter is
-the `android` tree, so it is the wrong place for the half of the register a frontend-only change is
-most likely to move.
-
-It parses SOURCE TEXT rather than importing anything, so it cannot be defeated by either build. That
-makes it brittle to a *refactor* of either declaration, which is the intended trade: a rewrite of how
-either list is written down should make somebody read this file, and the failure names exactly what
-to do.
-
-══════════════════════════════════════════════════════════════════════════════════════════════
-WHAT THIS DOES *NOT* CHECK, DELIBERATELY
-══════════════════════════════════════════════════════════════════════════════════════════════
-
-Whether a string is *true*. Seven of the web's cards carry section descriptions rather than form
-labels — `design-workshop-codes` and `design-workshop-readiness` render no labelled field at all,
-`design-workshop-stages` is built from a registry the server publishes, and
-`design-workshop-inspection` reads a workshop it did not author — and `steps.ts` names all four and
-says why. This file does not care what a string MEANS. It cares that there is one register and that
-both clients are reading it.
-"""
-
 from __future__ import annotations
 
 import pathlib
@@ -93,58 +33,16 @@ ANDROID_JOURNEY = (
     / "WalkthroughJourney.kt"
 )
 
-# The declaration each side is read from. Named once, quoted in every failure message, so a rename
-# reports itself instead of quietly parsing to nothing.
 WEB_ANCHOR = "export const GUIDE_STEPS"
 ANDROID_ANCHOR = "private val WALKTHROUGH_FIELDS"
 
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-# THE SECOND DECK, 2026-09-15
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-#
-# `/guide` carries three decks now and the handset carries two of them — the designer's, and the
-# inspector's. The web keeps each deck's steps in its own file and the handset keeps each deck's
-# field register in its own table, so each join below stays an EQUALITY against the file that
-# actually owns those strings. Merging either side into one table would turn both joins into
-# containments, which stop noticing a dropped key, which is the whole failure this file exists for.
-#
-# ── THE DIRECTORATE DECK HAS NO ANDROID HALF AND IS NOT JOINED HERE ────────────────────────────
-#
-# Four of its five screens do not exist on the handset in any form — the greps are written out over
-# `WalkthroughDeck` in `WalkthroughSteps.kt`, and `DIRECTORATE_TRACK.recapLead` says the same thing
-# from the web's side. A join for it would be a join against nothing, asserted green forever.
-#
-# ── AND THE INSPECTOR DECK, WITH ITS REGISTER OF OMISSIONS ─────────────────────────────────────
-#
-# The handset teaches all four of the web's inspector cards since the feedback box landed on
-# `InspectionDetailScreen`, so `walkthroughInspectorOmissions` is `emptySet()`. It stays the one
-# register of any card the handset leaves out, and this file reads it rather than hard-coding ids,
-# so the two cannot drift.
-# `WalkthroughDecksTest.kt` holds the same register to the web's own list from the Android side.
 WEB_INSPECTOR_ANCHOR = "export const INSPECTOR_STEPS"
 ANDROID_INSPECTOR_ANCHOR = "private val WALKTHROUGH_INSPECTOR_FIELDS"
 ANDROID_OMISSIONS_ANCHOR = "internal val walkthroughInspectorOmissions"
 
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# Two small scanners, because a regex cannot do this safely
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-#
-# Both files put PROSE around the code being read — `steps.ts` runs to twelve hundred lines of which
-# most are comments, and the Kotlin table has a fifty-line KDoc over it discussing the very strings
-# below. A regex over the raw text would happily match a bracket inside a paragraph, and
-# `DashboardTileParityTest` records what that costs: getting the nesting rule wrong "does not fail
-# loudly: it silently hands the parser a slab of prose or a slab of code".
-
 
 def _strip_ts_comments(source: str) -> str:
-    """`//` and `/* … */` removed, string literals left alone.
-
-    Character by character rather than by regex, because both comment forms appear INSIDE the
-    strings this file compares (`"Or “Start an empty one” — Title, …"` has no comment in it, but the
-    watch bullets around it quote paths like `app/(protected)/workshops/page.tsx`) and a regex that
-    does not know where a string starts will cut one in half.
-    """
     out: list[str] = []
     i, n = 0, len(source)
     while i < n:
@@ -180,12 +78,6 @@ def _strip_ts_comments(source: str) -> str:
 
 
 def _balanced(source: str, start: int, opener: str, closer: str) -> str:
-    """The text from ``source[start]`` (an opener) to its matching closer, inclusive.
-
-    Skips over string literals, so a bracket or a parenthesis inside a label — "Location (GPS fix or
-    map pin)" is one — cannot close the block early. That entry is why this is a scanner and not
-    ``.index("]")``.
-    """
     assert source[start] == opener
     depth, i, n = 0, start, len(source)
     while i < n:
@@ -210,14 +102,6 @@ def _balanced(source: str, start: int, opener: str, closer: str) -> str:
 
 
 def _literals(block: str) -> list[str]:
-    r"""Every double-quoted run in ``block``, in order, unescaped.
-
-    The escapes that actually occur are ``\"`` and nothing else — checked, not assumed, and the
-    assertion in `test_neither_declaration_uses_an_escape_this_parser_invents` is what will say so if
-    that ever stops being true. Anything else has its backslash dropped, which is right for ``\'``
-    and wrong for ``\n``; a real newline inside one of these labels would be a chip with a line break
-    in it, so the test above refuses it rather than this function guessing.
-    """
     out: list[str] = []
     i, n = 0, len(block)
     while i < n:
@@ -240,29 +124,12 @@ def _literals(block: str) -> list[str]:
     return out
 
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# The two registers
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-
 
 def web_fields() -> list[tuple[str, list[str]]]:
-    """``[(id, fields)]`` in the order `GUIDE_STEPS` declares them.
-
-    A list of pairs and not a dict, because ORDER is half of what is being compared: this table read
-    top to bottom is the journey read top to bottom, and `WalkthroughStepsTest` already holds the two
-    clients to one sequence for the reason it gives — "the order is the actual lesson: a stage's
-    reference pickers are empty if the records were never made".
-    """
     return _web_fields_from(WEB_STEPS, WEB_ANCHOR)
 
 
 def _web_fields_from(path: pathlib.Path, anchor: str) -> list[tuple[str, list[str]]]:
-    """``[(id, fields)]`` in the order the deck at *anchor* in *path* declares them.
-
-    A list of pairs and not a dict, because ORDER is half of what is being compared: this table read
-    top to bottom is the deck read top to bottom, and both client suites already hold the two
-    walkthroughs to one sequence for the reason they give — "the order is the actual lesson".
-    """
     source = _strip_ts_comments(path.read_text(encoding="utf-8"))
     at = source.find(anchor)
     assert at >= 0, f"{anchor} is no longer declared in {path.name}"
@@ -284,12 +151,6 @@ def _web_fields_from(path: pathlib.Path, anchor: str) -> list[tuple[str, list[st
 
 
 def _android_fields_from(path: pathlib.Path, anchor: str) -> list[tuple[str, list[str]]]:
-    """``[(id, fields)]`` in the order the Kotlin table at *anchor* declares them.
-
-    The table is ``"<id>" to listOf("…", "…")``. The id is itself a quoted string, so the entries are
-    read out of the ``listOf(…)`` block alone rather than out of the whole pair — otherwise every
-    step would carry its own id as its first chip.
-    """
     source = path.read_text(encoding="utf-8")
     at = source.find(anchor)
     assert at >= 0, (
@@ -308,24 +169,14 @@ def _android_fields_from(path: pathlib.Path, anchor: str) -> list[tuple[str, lis
 
 
 def web_inspector_fields() -> list[tuple[str, list[str]]]:
-    """The web's INSPECTOR deck. See the block over ``WEB_INSPECTOR_ANCHOR``."""
     return _web_fields_from(WEB_INSPECTOR_STEPS, WEB_INSPECTOR_ANCHOR)
 
 
 def android_inspector_fields() -> list[tuple[str, list[str]]]:
-    """The handset's copy of it."""
     return _android_fields_from(ANDROID_JOURNEY, ANDROID_INSPECTOR_ANCHOR)
 
 
 def android_inspector_omissions() -> set[str]:
-    """The web inspector cards the handset deliberately does not teach, read off the Kotlin.
-
-    READ AND NEVER RESTATED. Writing ``{"inspection-feedback"}`` into this file would be a THIRD copy
-    of a decision that already lives in two places, and the one copy nobody would think to prune on
-    the day the handset grows a feedback box — which is the exact shape of the defect
-    `WalkthroughStepsTest` was rewritten to remove when its hand-copied array of nineteen web ids
-    rotted against a web that taught twenty-two.
-    """
     source = ANDROID_STEPS.read_text(encoding="utf-8")
     at = source.find(ANDROID_OMISSIONS_ANCHOR)
     assert at >= 0, (
@@ -333,8 +184,6 @@ def android_inspector_omissions() -> set[str]:
         "register of which web inspector cards this handset leaves out; if it has moved, this file "
         "moves with it."
     )
-    # AN EXPLICITLY EMPTY REGISTER IS A REAL ANSWER: the handset teaches every web inspector card.
-    # Read off the declaration's own line, so a `setOf(` further down the file is never mistaken for it.
     declaration = source[at : source.index("\n", at)]
     if "emptySet()" in declaration:
         return set()
@@ -344,55 +193,22 @@ def android_inspector_omissions() -> set[str]:
     )
     opener = source.index("setOf(", at) + len("setOf(") - 1
     block = _balanced(source, opener, "(", ")")
-    # LINE COMMENTS OFF FIRST. `_literals` reads every quoted run it is handed, and the Kotlin side
-    # of this file is NOT comment-stripped — so a commented-out entry read back as a registered
-    # omission, and this assertion went green over a register that no longer said anything. That is
-    # the edit somebody makes while a capability is half-landed, which is the one moment the register
-    # is load-bearing.
     kept = [line for line in block.split("\n") if not line.lstrip().startswith("//")]
     return set(_literals("\n".join(kept)))
 
 
 def every_declared_field_list() -> list[tuple[str, list[str]]]:
-    """Every ``(id, fields)`` pair on either client, across every deck both of them carry.
-
-    The two sweeps that use this ask questions that are about a STRING rather than about a deck — an
-    escape this parser would silently mangle, a blank entry that draws an empty chip — so restricting
-    either to the designer's deck would have left the inspector's three cards unguarded against
-    exactly the defects the designer's twenty-three are guarded against.
-    """
     return (
         web_fields() + android_fields() + web_inspector_fields() + android_inspector_fields()
     )
 
 
 def android_fields() -> list[tuple[str, list[str]]]:
-    """``[(id, fields)]`` in the order ``WALKTHROUGH_FIELDS`` declares them.
-
-    The table is ``"<id>" to listOf("…", "…")``. The id is itself a quoted string, so the entries are
-    read out of the ``listOf(…)`` block alone rather than out of the whole pair — otherwise every
-    step would carry its own id as its first chip.
-    """
     return _android_fields_from(ANDROID_JOURNEY, ANDROID_ANCHOR)
 
 
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# The tests
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-
 
 def test_both_declarations_still_parse_to_something():
-    """Green below means agreement, and not that both parsers came back empty.
-
-    THE FAILURE A PARITY TEST IS MOST PRONE TO: `steps.ts` is reformatted or the Kotlin table is
-    renamed, both parsers return nothing, ``[] == []`` passes, and the guard reports agreement about
-    a comparison it never made. `WalkthroughStepsTest` opens with the same guard and says what it
-    costs — the failure would be read as "the wiring is fine" when the parser is the broken thing.
-
-    The floors are floors and not the current counts, deliberately. Pinning the exact number would
-    put a THIRD copy of the register in this file and would fail on the day the web legitimately
-    adds a step, which is the one event this suite exists to welcome.
-    """
     web = web_fields()
     android = android_fields()
     assert len(web) >= 10, f"only {len(web)} steps parsed out of {WEB_STEPS.name}"
@@ -406,10 +222,6 @@ def test_both_declarations_still_parse_to_something():
         f"contents in {ANDROID_JOURNEY.name}: {[i for i, f in android if not f]}"
     )
 
-    # The second deck, with its own floor. THREE and not ten: this deck is four cards on the web and
-    # three on the handset by a decision with a register, so a floor of ten would be a floor nothing
-    # could ever clear. It is still a floor and not the current count, for the reason above — pinning
-    # the exact number would put a third copy of the register in this file.
     web_inspector = web_inspector_fields()
     android_inspector = android_inspector_fields()
     assert len(web_inspector) >= 3, (
@@ -426,9 +238,6 @@ def test_both_declarations_still_parse_to_something():
         "a handset inspector entry parsed to an EMPTY listOf(): "
         f"{[i for i, f in android_inspector if not f]}"
     )
-    # AND THE OMISSION REGISTER WAS READ. Since the feedback box landed it is `emptySet()` — the
-    # handset teaches all four cards — and that is read as an explicit empty set; a `setOf(…)` that
-    # parsed to nothing would be a commented-out entry, which is not the same claim.
     source = ANDROID_STEPS.read_text(encoding="utf-8")
     at = source.find(ANDROID_OMISSIONS_ANCHOR)
     declaration = source[at : source.index("\n", at)]
@@ -439,13 +248,6 @@ def test_both_declarations_still_parse_to_something():
 
 
 def test_neither_declaration_uses_an_escape_this_parser_invents():
-    r"""Only ``\"`` appears in either file today, and a label may not contain a newline or a tab.
-
-    `_literals` drops the backslash off anything it does not recognise, which is right for ``\'`` and
-    would be a silent lie for ``—``. Rather than teach it every escape in two languages, this
-    pins the narrow fact that makes the simple version correct — and a chip whose text carries a line
-    break is a layout defect on both clients anyway.
-    """
     for step_id, fields in every_declared_field_list():
         for field in fields:
             assert "\n" not in field and "\t" not in field, (
@@ -459,17 +261,6 @@ def test_neither_declaration_uses_an_escape_this_parser_invents():
 
 
 def test_the_handset_carries_a_field_list_for_every_step_the_web_teaches():
-    """A step the web teaches and the handset does not name is the owner's report, back again.
-
-    Equality and not containment, and the two directions fail for different reasons:
-
-    * A web step MISSING here is the defect of 2026-08-31 — the handset's card silently loses the
-      block, because a step with no key renders no heading at all.
-    * An id here that the web does NOT teach is the failure `WalkthroughJourney.kt`'s overruled
-      paragraph was written to prevent: a field list invented on this side, with nothing to hold it
-      to anything. `offline` is the one subject this handset teaches alone, it has no screen of its
-      own (its `destination` is null), and it correctly has no entry.
-    """
     web = [step_id for step_id, _ in web_fields()]
     android = [step_id for step_id, _ in android_fields()]
     assert android == web, (
@@ -483,18 +274,6 @@ def test_the_handset_carries_a_field_list_for_every_step_the_web_teaches():
 
 
 def test_the_handset_carries_the_inspector_cards_it_says_it_carries():
-    """The second deck's join, and the omission is part of it rather than a hole in it.
-
-    Three ways this goes wrong, and they are genuinely different reports:
-
-    * A web inspector card missing here AND absent from the register is a subject that went untaught
-      without anybody deciding — the same defect as the designer deck's, which is how the entire
-      design-workshop arc went missing from the handset for months.
-    * An id here the web does not teach is a second register with nothing holding it to the first.
-    * An id in the REGISTER that the handset now teaches after all is the stale half: the day
-      somebody adds the feedback box and writes the card, the register has to lose that line, and
-      nothing but this assertion would say so.
-    """
     web = [step_id for step_id, _ in web_inspector_fields()]
     android = [step_id for step_id, _ in android_inspector_fields()]
     omitted = android_inspector_omissions()
@@ -513,15 +292,6 @@ def test_the_handset_carries_the_inspector_cards_it_says_it_carries():
 
 
 def test_every_inspector_field_matches_the_web_word_for_word_and_in_screen_order():
-    """The same comparison as the designer deck's, for the deck the web keeps in another file.
-
-    NOT restricted to labels that would make sense on a handset. Three of the four web inspector
-    cards carry SECTION DESCRIPTIONS rather than form labels, and `inspectorSteps.ts` says why: an
-    inspection read draws the values of a workshop it did not author, so it has no form and no labels
-    of its own. The handset copies them unchanged anyway, on the rule the designer table already
-    lives under — there is one register and it is the web's, which is what makes the copy safe rather
-    than the paraphrase that would read better.
-    """
     web = dict(web_inspector_fields())
     android = dict(android_inspector_fields())
     drifted = {
@@ -539,18 +309,6 @@ def test_every_inspector_field_matches_the_web_word_for_word_and_in_screen_order
 
 
 def test_every_field_matches_the_web_word_for_word_and_in_screen_order():
-    """The whole point of the file.
-
-    NOT whitespace-normalised, unlike `test_terms_clause_parity.py`. That file has to normalise
-    because the two copies of the terms are paragraphs wrapped to two different editors' columns.
-    These are LABELS — one line each, one literal each, no wrapping on either side — so every
-    character is compared, punctuation included. "Do's" against "Do’s" is one screen calling a box
-    two names, and this is the only gate in either build that would notice.
-
-    The ORDER is compared too, because `GuideStep.fields` is documented as screen order and a guide
-    that lists a form's boxes in the wrong sequence is a guide somebody reads with the form open
-    beside it.
-    """
     web = dict(web_fields())
     android = dict(android_fields())
     drifted = {
@@ -568,13 +326,6 @@ def test_every_field_matches_the_web_word_for_word_and_in_screen_order():
 
 
 def _report(step_id: str, web: list[str], android: list[str]) -> str:
-    """The failing step, and the first line that actually differs.
-
-    Printing both lists whole is what a `assertEqual` on two thirty-element lists already does badly:
-    the `tool` card carries thirty labels and the reader has to diff them by eye. Naming the index
-    and the two strings is the difference between a test that reports a drift and one that reports
-    the existence of a drift.
-    """
     lines = [f"  “{step_id}”: web has {len(web)} fields, handset has {len(android)}"]
     for index in range(max(len(web), len(android))):
         here = web[index] if index < len(web) else "<missing>"
@@ -588,12 +339,6 @@ def _report(step_id: str, web: list[str], android: list[str]) -> str:
 
 
 def test_no_field_is_blank_on_either_client():
-    """A blank entry is a chip with nothing in it, and it survives every other assertion here.
-
-    It would survive them because an empty string on both sides compares equal — which is exactly how
-    the "heading over an empty block" family of defects gets through. `WalkthroughFacetsTest` guards
-    the same shape for the caution bullets, one client over.
-    """
     for step_id, fields in every_declared_field_list():
         assert all(field.strip() for field in fields), (
             f"“{step_id}” declares a blank field, which draws an empty chip: {fields!r}"
@@ -604,70 +349,10 @@ def test_no_field_is_blank_on_either_client():
         )
 
 
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-# THE THIRD COPY: docs/WALKTHROUGH.md
-# ══════════════════════════════════════════════════════════════════════════════════════════════
-#
-# `steps.ts` says of the printed guide that it "carries the same lists in prose", and until
-# 2026-08-31 nothing checked that sentence. Two of the three copies were guarded — everything above
-# holds the handset to the web — and the PROSE one, the version that gets printed and carried into a
-# village with no signal, was held by nothing at all.
-#
-# It had drifted on SEVEN of its EIGHT record steps. Among what the audit that added this section
-# found by reading the form components:
-#
-#   * `workshop` was missing "Kind of workshop", which is REQUIRED and is the FIRST control on the
-#     form — and is the box that marks a workshop as a Design & Prototype one. A researcher working
-#     from the printed list would create an ordinary workshop and then find it absent from the
-#     picker that starts the entire fortnight arc, with nothing on either screen explaining why.
-#   * `questionnaire` listed a "Date" field that the form does not have and deliberately does not
-#     have: the server derives the interview date from when the interview was captured, and
-#     `app/(protected)/questionnaire/page.tsx` says so in a comment where the box used to be. A
-#     guide naming a field that was removed on purpose sends the reader looking for it.
-#   * Six of the eight had never gained "Design & prototype workshop", the link field that is what
-#     puts a record in front of a stage's reference pickers.
-#
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# WHY THIS IS A ONE-DIRECTIONAL CHECK, AND WHY THAT IS THE POINT RATHER THAN A WEAKNESS
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-#
-# Every field in the register must be NAMED in the prose. The prose may name MORE. That asymmetry is
-# deliberate, and the same audit is the reason for it: THE REGISTER IS ITSELF INCOMPLETE, and on the
-# artisan step the prose is the more accurate of the two. `ArtisanForm.tsx` renders an Aadhaar
-# number, an Artisan Pehchan Card pair, Date of birth, Practising since and Experience; `steps.ts`
-# names none of those five, so neither does the handset — while `docs/WALKTHROUGH.md` has named the
-# Aadhaar and Pehchan boxes all along, with four watch-out bullets about the deduplication key.
-#
-# A two-directional check would therefore report the printed guide as wrong FOR BEING RIGHT, and the
-# quickest way to make it green would be to delete true sentences about the one field that stops the
-# archive filling with duplicate artisans. So this holds the prose to the register as a FLOOR and
-# never as a ceiling. The register's own gaps are recorded in the printed guide's maintenance
-# section and belong to whoever owns `steps.ts`; they are not this file's to close, and this file
-# must not pretend they are closed by making the check symmetric.
-#
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# WHAT PROSE IS STILL ALLOWED TO DO
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-#
-# Summarise — in the four places named in `PROSE_PARAPHRASES` and nowhere else. "The form asks for
-# the title, the craft and the dates" is not the same kind of claim as a list that must match a form
-# field for field, and a document somebody reads on a bus is allowed to make the first kind. But
-# every such licence is written down here, and `test_no_licensed_paraphrase_is_dead` asserts that
-# the wording each one licences is still in the document and still needed. A paraphrase table nobody
-# checked would be this lane's own subject reappearing one level down: a third register that looks
-# authoritative and is held to nothing.
-
 WALKTHROUGH_DOC = _ROOT / "docs" / "WALKTHROUGH.md"
 
 PROSE_MARKER = "**What the screen asks for:**"
 
-# The heading of each numbered record step, to the `GUIDE_STEPS` id it describes.
-#
-# Only the eight steps that carry a field line are here, and the omissions are deliberate rather than
-# a backlog: steps 9 (Review) and 10 (View Data) are browse screens with no form, step 11 (Scan a
-# code) resolves a code rather than asking for anything, and the workshop arc's Steps A–K describe
-# screens built from the registry the server publishes — `design-workshop-stages` cannot have a
-# hand-kept label list on either side, which is the whole reason that registry exists.
 PROSE_STEPS = {
     "Workshop": "workshop",
     "Craft": "craft",
@@ -679,28 +364,6 @@ PROSE_STEPS = {
     "Miscellaneous Media": "media",
 }
 
-# `(step id, register entry) -> the wording in the printed guide that stands for it`.
-#
-# FOUR ENTRIES, AND EACH IS A SENTENCE DOING A JOB A CHIP CANNOT. These are not spelling variants; a
-# variant belongs in `_loose` below, which already absorbs markdown emphasis and punctuation. These
-# are the places where the guide deliberately says something a label list cannot:
-#
-#   * The artisan step's location line names the TWO THINGS that control collects — the device fix
-#     and the stated address — because confusing them corrupted the live dataset once, and the guide
-#     carries a table about it. "Location (GPS fix or map pin)" is the chip; the sentence is the
-#     lesson, and flattening it back to the chip would delete the correction.
-#   * The four "Per step:" / "Per question:" chips are the web card's way of rendering a REPEATING
-#     block as flat text. Prose has a grammar for that — "then per step: …" — and reads better for
-#     it in the one rendering that has whole sentences available to it.
-#
-# ⚠ THE PROCESS ROWS WERE RE-KEYED ON 2026-08-31 AND THE RE-KEYING IS THE INTERESTING PART. They read
-# `Per step: additional context notes (optional)` and `Per step: attached media` — and the audit that
-# owns `steps.ts` found that NEITHER LABEL IS ON THE FORM. `ProcessForm` draws a "Record additional
-# information" checkbox, and only once it is ticked does a notes control appear headed "Additional
-# context for this step"; the media card under them is titled "Attach media". So this table was
-# licensing prose against two chips that were themselves wrong, which is the failure one level down
-# that the header above warns about: a paraphrase row makes a claim look CONSIDERED. A licence is
-# only ever a licence to say a true thing differently.
 PROSE_PARAPHRASES = {
     ("artisan", "Location (GPS fix or map pin)"): "Location (device fix **and** stated address)",
     ("process", "Per step: Record additional information"): (
@@ -717,39 +380,14 @@ PROSE_PARAPHRASES = {
 
 
 def _collapse(text: str) -> str:
-    """Every run of whitespace to one space.
-
-    The document is hard-wrapped at about column 100, so a field the guide names is routinely split
-    across two lines — "additional context notes / (optional)" is one. Comparing without this would
-    report a drift for a line break the author never chose: the wrap column is an editor setting,
-    not a claim about the product.
-    """
     return " ".join(text.split())
 
 
 def _loose(text: str) -> str:
-    """Lowercased, with every run of non-alphanumerics collapsed to one space.
-
-    The prose is MARKDOWN and the register is plain text: the guide writes "**Craft** *(required)*"
-    for the register's "Craft (required)", and that emphasis is typography rather than a different
-    claim about the form. Dropping punctuation also lets a straight apostrophe match a typographic
-    one — which `test_every_field_matches_the_web_word_for_word_and_in_screen_order` deliberately
-    refuses to tolerate BETWEEN THE TWO CLIENTS, where "Do's" against "Do’s" really is one screen
-    calling one box two names. There is no such defect to catch between a form label and an English
-    sentence about it, and enforcing it here would only teach people to paste chips into paragraphs.
-    """
     return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
 
 def prose_fields() -> dict[str, str]:
-    """``{guide step id: the "What the screen asks for" sentence, whitespace-collapsed}``.
-
-    Attached to the numbered HEADING above each sentence rather than to its position in the file, so
-    that inserting a section does not shift every list quietly onto the next step. That failure would
-    not be loud in a useful way: the tool's thirty labels compared against the questionnaire's
-    sentence would report a drift, the workshop's list against the craft's would report several more,
-    and the reader would be sent to six wrong places at once.
-    """
     raw = WALKTHROUGH_DOC.read_text(encoding="utf-8")
     out: dict[str, str] = {}
     heading: str | None = None
@@ -776,13 +414,6 @@ def prose_fields() -> dict[str, str]:
 
 
 def test_the_printed_guide_still_carries_a_field_line_for_every_record_step():
-    """Green below means the sentences were found and compared, not that the parser returned {}.
-
-    The same guard, for the same reason, as `test_both_declarations_still_parse_to_something` above:
-    reword the marker or the heading format and every assertion under this one starts iterating an
-    empty dict and passing. The document is prose and gets reformatted — that is precisely why it
-    needed a guard, and it is also the thing most likely to break the guard's own reader.
-    """
     found = prose_fields()
     assert set(found) == set(PROSE_STEPS.values()), (
         f"{WALKTHROUGH_DOC.name} carries “{PROSE_MARKER}” lists for {sorted(found)}, and this file "
@@ -798,16 +429,6 @@ def test_the_printed_guide_still_carries_a_field_line_for_every_record_step():
 
 
 def test_every_register_field_is_named_in_the_printed_guide():
-    """The join this section exists for: the register is a FLOOR under the prose.
-
-    A field that is on the form, in the web's card and in the handset's card, and that the printed
-    guide does not name, is a box the researcher in the field has not been told to fill in. That is
-    not a cosmetic gap — "Kind of workshop" went unnamed here for months, and it is the control that
-    decides whether the whole design-workshop arc can see the record at all.
-
-    Read the header above before making this symmetric. The prose naming MORE than the register is
-    the register being wrong, and on the artisan step it currently is.
-    """
     register = dict(web_fields())
     prose = prose_fields()
     missing: list[str] = []
@@ -841,18 +462,6 @@ def test_every_register_field_is_named_in_the_printed_guide():
 
 
 def test_no_licensed_paraphrase_is_dead():
-    """A licence for a field that no longer exists, or no longer needs one, is the drift again.
-
-    Both halves fail for a reason worth naming:
-
-    * A key naming a step or a field the register does not declare means this table is quoting a
-      register that has moved. It would keep passing — an unused key is never consulted — while
-      reading as a considered decision about a field nobody has been offered since.
-    * A licence whose field the prose now names PLAINLY is a special case still switched on. The next
-      person to widen this check reads the table as the list of places the document is allowed to be
-      loose, and every stale row makes that list a worse description of the document than it is.
-      Delete it: the plain naming is better than the licence.
-    """
     register = dict(web_fields())
     prose = prose_fields()
     for (step_id, field), licensed in PROSE_PARAPHRASES.items():

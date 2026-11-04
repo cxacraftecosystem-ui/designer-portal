@@ -9,68 +9,14 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The handset's reading of the five AI verb routes, asserted against bytes the SERVER produced.
- *
- * ── WHY THIS FILE EXISTS ──────────────────────────────────────────────────────────────────────────
- *
- * Encoding a DTO and decoding it again would pass on the day the DTO named every key wrong, because a
- * self-consistent DTO is self-consistent. The only assertion with any power is one that starts from
- * the server's own output, and this client has shipped the opposite mistake twice: `DwReferenceStore`
- * listened on a key the endpoint does not send and read a 50-record payload as an empty list, and the
- * identity-OCR DTO declared three keys that endpoint has never sent, so a perfect read of an identity
- * card was reported to the designer as unreadable. Both times `ignoreUnknownKeys` plus all-defaulted
- * properties turned the mistake into silence.
- *
- * **HERE THE SAME MISTAKE WOULD READ AS "THE MODEL PRODUCED NOTHING"** — an empty panel after a run
- * that spent real provider credit and moved the daily meter, which is the one failure a designer will
- * respond to by pressing the button again.
- *
- * ── AND THE OTHER DIRECTION, WHICH IS WORSE HERE THAN ANYWHERE ELSE IN THIS CLIENT ────────────────
- *
- * The request bodies are `APIModel`, which is `extra="forbid"`. A key this client invents is not
- * ignored up there — it is a 422 on every press, for every designer, until an app update ships. So the
- * encoded key SETS are pinned, not merely the values.
- *
- * ── WHAT [LIVE_VERB_201] AND [LIVE_CUE_PAYLOAD] ARE, EXACTLY ──────────────────────────────────────
- *
- * The verbatim stdout of `ai_layers.layer_payload(row, include_text=True)` composed with
- * `ai_verb_cap.allowance_payload(...)` in the shape `design_workshops._finish_verb` returns, and of
- * `subtitles.cues_payload(cues, language="Hindi")`, both EXECUTED on 2026-08-19 through the backend's
- * own venv:
- *
- *     backend/.venv/Scripts/python.exe -c "… print(json.dumps(…, indent=2))"
- *
- * So every key name, every nesting and every null below came out of the server's serialiser rather
- * than out of anybody's memory of it. **They are NOT captures of a live HTTP 201 over the wire** —
- * Docker is down in this working copy and there is no Postgres to run a route against — and that
- * difference is stated rather than glossed. `_finish_verb` composes exactly these three parts and adds
- * nothing else to them, which is checkable by reading it; the rows were hand-built rather than
- * selected, so the VALUES are invented and the SHAPE is the server's.
- */
 class DwAiVerbWireTest {
 
-    /**
-     * The decoder these assertions run through, built to mirror `ApiClient.json` flag for flag —
-     * `ignoreUnknownKeys`, `explicitNulls = false`, `isLenient`, `coerceInputValues`.
-     *
-     * A SECOND `Json` BESIDE THE PRODUCTION ONE IS A REAL HAZARD and is worth naming rather than
-     * leaving as convenience: a flag added there and not here would make this file pass while the
-     * handset failed. Two of the four are what the assertions below actually turn on — unknown keys
-     * must not throw, so a server that gains a key does not blank the panel, and nulls must not be
-     * emitted, so a body stays inside `extra="forbid"` — and both are asserted directly rather than
-     * assumed from the flag being set.
-     */
     private val json = Json {
         ignoreUnknownKeys = true
         explicitNulls = false
         isLenient = true
         coerceInputValues = true
     }
-
-    // ---------------------------------------------------------------------------------------
-    // What the server sends back
-    // ---------------------------------------------------------------------------------------
 
     private val LIVE_VERB_201 = """
         {
@@ -85,7 +31,7 @@ class DwAiVerbWireTest {
               "text": "The dabu block is cut from teak."
             },
             "provider": "openai",
-            "modelId": "gpt-4o-mini",
+            "modelId": "gpt-6-luna",
             "modelVersion": null,
             "language": "English",
             "sourceLanguage": null,
@@ -124,11 +70,9 @@ class DwAiVerbWireTest {
         assertEquals("lyr_01", layer.id)
         assertEquals("dw_77", layer.designWorkshopId)
         assertEquals("PROOFREAD", layer.kind)
-        // The tier is the fact the plan says a reviewer opens this screen for — a cloud-diarized
-        // interview and a device-guessed one must never look alike on a page.
         assertEquals("TIER_3", layer.tier)
         assertEquals("openai", layer.provider)
-        assertEquals("gpt-4o-mini", layer.modelId)
+        assertEquals("gpt-6-luna", layer.modelId)
         assertEquals("English", layer.language)
         assertEquals("usr_meera", layer.createdById)
         assertEquals("The dabu block is cut from teak.", layer.text)
@@ -136,11 +80,6 @@ class DwAiVerbWireTest {
         assertEquals("The dabu block is cut from teak.", layer.preview)
     }
 
-    /**
-     * RULE 3 ON THE WIRE. A fresh layer is a suggestion and nothing else, and the two flags say so in
-     * a field rather than in documentation — the client that just asked for this has words on screen
-     * and is one tap from putting them in a report.
-     */
     @Test
     fun `a fresh layer is never already accepted, and says acceptance is required`() {
         val result = json.decodeFromString(DwAiVerbResultDto.serializer(), LIVE_VERB_201)
@@ -151,13 +90,6 @@ class DwAiVerbWireTest {
         assertNull(result.layer.acceptedById)
     }
 
-    /**
-     * THE EVIDENCE TRAVELS WITH THE LAYER for a supplied-text source, and the id is NULL there.
-     *
-     * `layer_payload` writes `stored.id or None` for exactly this case, with the note that an empty
-     * string is "the shape a client renders as a link to nothing". This side had better not have typed
-     * it non-nullable, because there is no row to open and the words exist only on this layer.
-     */
     @Test
     fun `a supplied-text source carries the words and names no row`() {
         val source = json.decodeFromString(DwAiVerbResultDto.serializer(), LIVE_VERB_201).layer.source
@@ -172,17 +104,10 @@ class DwAiVerbWireTest {
         assertEquals(25, result.aiVerbsLimit)
         assertEquals(22, result.aiVerbsUsed)
         assertEquals(3, result.aiVerbsRemaining)
-        // `aiVerbDay` and not `aiVerbsDay`. It is the key the whole freshness rule turns on, so a
-        // mis-spelling here would silently mean the mirror is never written at all.
         assertEquals("2026-08-19", result.aiVerbDay)
         assertEquals(mapOf("PROOFREAD" to 12, "CAPTION" to 10), result.aiVerbsByVerb)
     }
 
-    /**
-     * A SERVER THAT GAINS A KEY MUST NOT BLANK THE PANEL. `ignoreUnknownKeys` is what makes that true,
-     * and it is asserted rather than assumed because it is the flag that turned this client's two
-     * previous wire defects into silence — it is doing real work here, in the direction it helps.
-     */
     @Test
     fun `a key this build has never heard of does not fail the decode`() {
         val withNewKey = LIVE_VERB_201.replaceFirst(
@@ -194,16 +119,6 @@ class DwAiVerbWireTest {
         assertEquals(3, result.aiVerbsRemaining)
     }
 
-    /**
-     * THE WITHHELD SHAPE, WHICH IS FOUR NULLS AND NOT ONE.
-     *
-     * A layer standing on a recording this account may not read comes back with no text, no preview,
-     * no character count and no payload — and with its provenance intact, because none of that is the
-     * recording's content. `textChars` is NULL rather than 0, deliberately: 0 would say "there is
-     * nothing to read", which is a different fact from "you may not read it" and the only one of the
-     * two that is false. A client that rendered `textChars ?: 0` would print "0 characters" over a
-     * forty-minute interview.
-     */
     @Test
     fun `a withheld layer keeps its provenance and loses its content`() {
         val withheld = """
@@ -225,23 +140,12 @@ class DwAiVerbWireTest {
         assertNull(layer.preview)
         assertNull(layer.payload)
         assertNull(layer.text)
-        // The provenance is the point of withholding rather than omitting the row.
         assertEquals("elevenlabs", layer.provider)
         assertEquals("scribe_v2", layer.modelId)
         assertEquals("TIER_3", layer.tier)
-        // `multi` is a real answer and not a placeholder: these interviews code-switch mid-sentence.
         assertEquals("multi", layer.language)
     }
 
-    /**
-     * A KIND OR A TIER THIS BUILD HAS NEVER HEARD OF STILL DECODES, which is why both are `String` and
-     * not enums.
-     *
-     * A handset updates when it next sees wifi and the API updates when somebody deploys it, so a
-     * server running ahead of a client is an ordinary state on this fleet rather than a mistake. An
-     * enum-typed `kind` would throw on the whole list, taking out the twenty-four transcripts a
-     * designer came to look at because a twenty-fifth row was written by a newer build.
-     */
     @Test
     fun `a layer kind from a newer server decodes instead of failing the list`() {
         val future = """{"id":"lyr_x","kind":"SUMMARY_OF_SUMMARIES","tier":"TIER_4"}"""
@@ -250,22 +154,9 @@ class DwAiVerbWireTest {
         assertEquals("TIER_4", layer.tier)
     }
 
-    // ---------------------------------------------------------------------------------------
-    // What this client sends
-    // ---------------------------------------------------------------------------------------
-
     private fun keysOf(encoded: String): Set<String> =
         (json.parseToJsonElement(encoded) as JsonObject).keys
 
-    /**
-     * **EXACTLY ONE SOURCE, AND THE OTHER KEY IS ABSENT RATHER THAN NULL.**
-     *
-     * `_require_exactly_one_source` reads `(body.text or "").strip()`, so an explicit `"text": null`
-     * beside a `sourceLayerId` would in fact pass — but it would also be a key this client sends for
-     * no reason into a body whose model forbids extras the moment anything else is added beside it.
-     * `explicitNulls = false` is what keeps it off the wire, and this is the assertion that would
-     * notice the flag being dropped.
-     */
     @Test
     fun `a proofread over a passage sends text and never a layer id`() {
         val body = dwProofreadBody(DwVerbSource.Passage("teh block"), language = "English")
@@ -280,16 +171,6 @@ class DwAiVerbWireTest {
         assertEquals(setOf("sourceLayerId"), keys)
     }
 
-    /**
-     * **THE EXPAND BODY HAS NO WAY TO NAME A LAYER, AND THAT IS THE POINT.**
-     *
-     * The key set is pinned rather than the absence being read off the class, because a pinned set
-     * fails on the day somebody ADDS one — which is the change this assertion exists to make visible.
-     * An expansion invents sentences; run over an artisan's transcript it would put invented words in
-     * a named person's mouth in a document a ministry officer reads, and no acceptance screen makes
-     * that safe because the person accepting is not the person being quoted. `AiExpandIn` has no such
-     * field "so a client cannot even ask", and this is the handset's copy of that guarantee.
-     */
     @Test
     fun `an expansion can be asked for over a note and over nothing else`() {
         val body = dwExpandBody("dabu, teak block, 3 dips", language = "English")
@@ -307,8 +188,6 @@ class DwAiVerbWireTest {
             keysOf(json.encodeToString(DwTranslateBody.serializer(), stated)),
         )
 
-        // Left out, the server records what the run detected — or UNRECORDED in that word. What it
-        // will not do is default it to English, and neither may this client by sending a blank.
         val unstated = dwTranslateBody(DwVerbSource.StoredLayer("lyr_09"), "English", "   ")
         assertEquals(
             setOf("sourceLayerId", "targetLanguage"),
@@ -323,8 +202,6 @@ class DwAiVerbWireTest {
             setOf("sourceMediaId", "language"),
             keysOf(json.encodeToString(DwMediaVerbBody.serializer(), caption)),
         )
-        // A cue list is in whatever language was spoken, and `AiMediaVerbIn` documents that subtitles
-        // ignore the field entirely — so it is not sent rather than sent and ignored.
         val subtitles = DwMediaVerbBody(sourceMediaId = "med_4")
         assertEquals(
             setOf("sourceMediaId"),
@@ -332,12 +209,6 @@ class DwAiVerbWireTest {
         )
     }
 
-    /**
-     * The path segment each verb posts to, so a caller cannot lower-case a token by hand and miss.
-     *
-     * Read off the five `@router.post` decorators. The pairing that is easy to get wrong is the last
-     * one: the VERB is `EXPAND` and the KIND it produces is `EXPANDED`, and the route is `/expand`.
-     */
     @Test
     fun `each verb posts to the segment its route declares`() {
         assertEquals("proofread", DwAiVerb.PROOFREAD.path)
@@ -345,14 +216,9 @@ class DwAiVerbWireTest {
         assertEquals("translate", DwAiVerb.TRANSLATE.path)
         assertEquals("caption", DwAiVerb.CAPTION.path)
         assertEquals("subtitles", DwAiVerb.SUBTITLES.path)
-        // `Verb.human`, so the sentence before the press and the server's after it use one name.
         assertEquals("expanding a note", DwAiVerb.EXPAND.human)
         assertEquals("describing a photograph", DwAiVerb.CAPTION.human)
     }
-
-    // ---------------------------------------------------------------------------------------
-    // The cue list
-    // ---------------------------------------------------------------------------------------
 
     private val LIVE_CUE_PAYLOAD = """
         {
@@ -393,12 +259,6 @@ class DwAiVerbWireTest {
         assertTrue(summary.cues[1].estimated)
     }
 
-    /**
-     * TOLERATES THE BARE LIST AS WELL AS THE WRAPPED OBJECT, exactly as `cues_of_payload` does: a
-     * payload written by an on-device runner may not have gone through `cues_payload`, and the tiers
-     * are allowed to differ in how they produce a thing and not in what it means. With no wrapper
-     * there is no stored count, so the count is the number of cues actually present.
-     */
     @Test
     fun `a bare cue array is still a cue list`() {
         val bare = """[{"start":0,"end":1.5,"text":"With gum and clay"}]"""
@@ -410,13 +270,6 @@ class DwAiVerbWireTest {
         assertFalse(summary.hasSpeakers)
     }
 
-    /**
-     * A CUE WITH NO USABLE TIME IS DROPPED AND NOT DEFAULTED TO ZERO.
-     *
-     * A cue at 00:00:00 that belongs at 41 minutes lands over the opening frame of a video somebody is
-     * showing to a ministry officer. The stored `count` still says what the server counted, which is
-     * the honest pair: two cues were written, one of them cannot be placed.
-     */
     @Test
     fun `a cue whose times will not parse is left out rather than placed at zero`() {
         val broken = """
@@ -430,10 +283,6 @@ class DwAiVerbWireTest {
         assertEquals(2, summary.count)
     }
 
-    /**
-     * A payload that is not a cue list at all is UNREADABLE rather than empty, so a screen can say
-     * "there is nothing to show here" instead of drawing a player with no track and no explanation.
-     */
     @Test
     fun `a payload that is not a cue list says so`() {
         val tags = """{"schema":"dw.tags/1","tags":["indigo","block"]}"""
@@ -445,7 +294,6 @@ class DwAiVerbWireTest {
         assertFalse(dwSubtitleCueSummary(null).readable)
     }
 
-    /** A wrapper naming a schema this build does not know is still read for the cues it holds. */
     @Test
     fun `a newer cue schema is still a cue list`() {
         val future = """{"schema":"dw.subtitles/2","count":1,"cues":[{"start":0,"end":1,"text":"x"}]}"""
@@ -457,19 +305,9 @@ class DwAiVerbWireTest {
         assertEquals("0:00", dwSubtitleTimecode(0.0))
         assertEquals("4:09", dwSubtitleTimecode(249.9))
         assertEquals("1:04:09", dwSubtitleTimecode(3849.48))
-        // A negative start cannot arise from `cue_of`, but a clock that reads before zero must not
-        // print a minus in front of a caption time.
         assertEquals("0:00", dwSubtitleTimecode(-3.0))
     }
 
-    // ---------------------------------------------------------------------------------------
-    // The decision routes
-    // ---------------------------------------------------------------------------------------
-
-    /**
-     * ACCEPT AND UNACCEPT ANSWER WITH THE LAYER AND THE WHOLE LOG, and both are read, because the audit
-     * being visible in the response is what stops a screen rendering acceptance as a checkbox.
-     */
     @Test
     fun `an acceptance comes back with the layer's new state and its history`() {
         val body = """
@@ -486,11 +324,6 @@ class DwAiVerbWireTest {
         assertEquals("usr_meera", result.decisions[0].actorId)
     }
 
-    /**
-     * The list's `accepted` count is what the report would print, which is not the same as counting
-     * the accepted rows on screen: a layer accepted and afterwards declined keeps its `acceptedAt` —
-     * deletion clears no acceptance — and is in `items` and out of this number.
-     */
     @Test
     fun `the layer list carries a count of what a report would actually print`() {
         val body = """
@@ -503,7 +336,6 @@ class DwAiVerbWireTest {
         assertEquals(1, list.accepted)
     }
 
-    /** `UNRECORDED` is a word the server writes and never a word a screen prints raw. */
     @Test
     fun `an unrecorded provider is recognised whatever its case`() {
         assertTrue(dwAiIsUnrecorded("UNRECORDED"))
@@ -512,14 +344,12 @@ class DwAiVerbWireTest {
         assertFalse(dwAiIsUnrecorded(null))
     }
 
-    /** Kept honest about the one thing this file cannot import: the server's own character bound. */
     @Test
     fun `the passage bound is the server's MAX_SOURCE_TEXT_CHARS`() {
         assertEquals(20_000, DW_VERB_MAX_TEXT_CHARS)
         assertEquals(40, DW_VERB_MAX_LANGUAGE_CHARS)
     }
 
-    /** Guards against a refactor that quietly stops the wrapper being consulted at all. */
     @Test
     fun `a wrapped payload's stored numbers win over anything recomputed here`() {
         val truncated = """{"schema":"dw.subtitles/1","count":142,"estimatedCues":11,

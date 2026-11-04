@@ -1,22 +1,8 @@
-/**
- * C27 — the artisan lookup in the Field Repository (documentation portal), behind a server flag.
- *
- * Nothing here draws anything until `GET /cross-portal/status` says the feature is on; while it is
- * off every other route answers 404 and the artisan form is exactly what it was. The Aadhaar number
- * never leaves this server for the other one: the API sends an HMAC of it. The Field Repository is
- * the source of truth for `identityFields`; the rest is a one-time suggestion the designer may edit.
- */
 import { apiFetch } from "@/lib/api";
 import type { Artisan } from "@/lib/types";
 
-/**
- * What a lookup shares, in words, as of this build. The live list comes from the server
- * (`/cross-portal/status` → `sharedFields`, built from the same list the answer is); this is the
- * fallback, held to the server's phrase by `backend/tests/test_cross_portal_identity.py`.
- */
 export const SHARED_FIELDS_FALLBACK = "name, local name, gender, date of birth, Pehchan card, phone number, address, place, craft and craft experience";
 
-/** The consent tick: every item the lookup shares, so the artisan never agrees to less. */
 export function consentLabel(sharedFields: string): string {
   return `The artisan agrees to share their ${sharedFields} between the two portals`;
 }
@@ -60,7 +46,6 @@ export type CrossPortalStatus = { enabled: boolean; sharedFields: string };
 
 let statusPromise: Promise<CrossPortalStatus> | null = null;
 
-/** Whether to draw the lookup at all, and what it shares. Asked once per page load; a failure reads as "off". */
 export function crossPortalStatus(): Promise<CrossPortalStatus> {
   if (!statusPromise) {
     statusPromise = apiFetch<{ enabled: boolean; sharedFields?: string }>("/cross-portal/status", {}, { redirectOn401: false })
@@ -101,7 +86,6 @@ export function getCrossPortalLink(artisanId: string): Promise<CrossPortalLink> 
 export function linkToFieldRepository(
   artisanId: string,
   expectedRemoteArtisanId?: string | null,
-  /** A Field Repository card the form was filled from: the server links from the card (matchedBy CARD). */
   cardInput?: string | null
 ): Promise<CrossPortalLink> {
   return apiFetch(`/cross-portal/artisans/${encodeURIComponent(artisanId)}/link`, {
@@ -114,11 +98,6 @@ export function linkToFieldRepository(
   });
 }
 
-/**
- * A Field Repository artisan card (scanned or typed), after the consent tick: the same prefill the
- * number lookup returns, or null when that portal does not share the artisan. A card whose artisan is
- * already here answers `existingArtisanId` instead, so the caller opens it rather than adding twice.
- */
 export async function lookupByCard(
   cardInput: string
 ): Promise<{ match: CrossPortalMatch | null; existingArtisanId?: string }> {
@@ -147,7 +126,6 @@ export function unlinkFromFieldRepository(artisanId: string): Promise<CrossPorta
   return apiFetch(`/cross-portal/artisans/${encodeURIComponent(artisanId)}/link`, { method: "DELETE" });
 }
 
-/** The form values a match fills, keyed by the artisan form's own field names. Pure. */
 export type ArtisanPrefill = {
   name?: string;
   localName?: string;
@@ -186,10 +164,6 @@ export function prefillFromMatch(match: CrossPortalMatch): ArtisanPrefill {
   return out;
 }
 
-/**
- * The values a refresh changed, as the form's prefill: the identity fields only (the Field
- * Repository is their source of truth), read off the artisan the server returned after writing.
- */
 export function prefillFromRefreshedArtisan(artisan: Artisan, changed: string[]): ArtisanPrefill {
   const a = artisan as Artisan & Record<string, unknown>;
   const out: ArtisanPrefill = {};
@@ -210,17 +184,12 @@ export function prefillFromRefreshedArtisan(artisan: Artisan, changed: string[])
   return out;
 }
 
-/**
- * The match's Pehchan pair, unless the match has no number and the designer typed one: then the
- * typed number stands (with the card marked held) rather than being wiped by the fill.
- */
 export function keepTypedPehchan(values: ArtisanPrefill, typed: string | null | undefined): ArtisanPrefill {
   const number = typed?.trim();
   if (values.pehchanCardNumber || !number) return values;
   return { ...values, pehchanCardAvailable: true, pehchanCardNumber: number };
 }
 
-/** "Meena Devi · Bandhani" — the one line that says who was found. */
 export function matchSummary(match: CrossPortalMatch): string {
   const parts = [match.fields?.name?.trim() || "Unnamed artisan"];
   if (match.craft?.name) parts.push(match.craft.name);

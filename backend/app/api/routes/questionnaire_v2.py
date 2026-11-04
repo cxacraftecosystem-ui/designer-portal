@@ -1,25 +1,3 @@
-"""Questionnaire v2 routes on designer-portal: the same contract as documentation-portal's module of
-this name (UNIFY_2026-10-21.md 4.1), over the shared package ``app/questionnaire``.
-
-Differences from documentation-portal, all of them this portal's own rules:
-
-* a session on a DESIGN workshop (``designWorkshopId``) is checked with the design workshop's
-  filing rule (``record_design_workshop.assert_may_file_under``) before it is created or moved;
-* the artisan consent routes are ``api/routes/artisans.py``'s (the same ledger rows); this module
-  adds only the artisan record;
-* the consent gate and the transcription enqueue are ``services/questionnaire_consent`` and
-  ``services/questionnaire_transcription`` (the package's ports).
-
-``/api/questionnaire/...`` (sessions, coverage, recordings, answers, inbox, corpus, config) and
-``/api/artisans/{id}/consent|record``. The media routes (presign, multipart, uploads, complete,
-download) live in ``routes/media.py`` and call ``app/questionnaire/recordings.py``.
-
-EVERY v2 ROUTE ANSWERS 404 WHILE ``QUESTIONNAIRE_V2`` IS FALSE, except ``GET /config`` (which says
-so) and the consent routes (consent gates outside sends whatever screens a client draws). Bodies are
-parsed here rather than by FastAPI so that every refusal has the contract's shape,
-``{"detail": {"code", "message", ...}}``, and a ``title`` gets ``TITLE_IS_GENERATED``.
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -61,8 +39,6 @@ def v2_enabled() -> bool:
 
 
 async def require_v2(_: Any = Depends(get_current_user)) -> None:
-    """404 while QUESTIONNAIRE_V2 is off, asked AFTER the caller is signed in, so a stranger is
-    refused (401) before being told whether the route exists (tests/test_anonymous_route_sweep.py)."""
     if not v2_enabled():
         fail("NOT_FOUND")
 
@@ -81,7 +57,6 @@ async def parse(request: Request, model: type[BaseModel], *, forbid_title: bool 
         fail("VALIDATION_FAILED", errors[0]["msg"] if errors else None, errors=errors)
 
 
-# ── config ─────────────────────────────────────────────────────────────────────────────────────
 @router.get("/config")
 async def questionnaire_config(_: Any = Depends(get_current_user)) -> dict[str, Any]:
     settings = get_settings()
@@ -94,12 +69,9 @@ async def questionnaire_config(_: Any = Depends(get_current_user)) -> dict[str, 
         "partSizeBytes": PART_SIZE,
         "snapshotPollSeconds": 60,
         "joinCodeLength": 6,
-        # The version NAME was reset to 0.0.1 (21 Oct 2026), so a name minimum can no longer be
-        # compared (audit C7): always null; clients compare their build number with the two below.
         "minAppVersionForCreate": None,
         "minAndroidVersionCodeForCreate": settings.questionnaire_min_android_version_code_for_create,
         "minWebVersionCodeForCreate": settings.questionnaire_min_web_version_code_for_create,
-        # UNIFY 4.1: which portal answers, and the create cutoff per platform in one object.
         "portal": "designer-portal",
         "minVersionCode": {
             "android": settings.questionnaire_min_android_version_code_for_create,
@@ -108,7 +80,6 @@ async def questionnaire_config(_: Any = Depends(get_current_user)) -> dict[str, 
     }
 
 
-# ── sessions ───────────────────────────────────────────────────────────────────────────────────
 V2 = [Depends(require_v2)]
 
 
@@ -134,10 +105,6 @@ async def sessions_list(
     request: Request, cursor: str | None = None, limit: int = Query(20, ge=1, le=100), deleted: bool = False,
     user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """The sessions list. Every filter of ``app/questionnaire/filters.py`` (form, section or question,
-    artisans, researchers, workshops, dates, kind, source, transcript, language, ``q``); a repeatable
-    one is given more than once or comma-separated. ``search`` is the older name of ``q``."""
-    # The Deleted list (soft-deleted sessions, owner decision 3) is the content admins'.
     if deleted and not authoring.may_list_deleted_sessions(user):
         fail("FORBIDDEN", "Only an admin can see deleted sessions.")
     return await sessions.list_sessions(
@@ -150,8 +117,6 @@ async def recordings_list(
     request: Request, sessionId: str | None = None, cursor: str | None = None, limit: int = Query(30, ge=1, le=100),
     user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Every live take matching the shared filters, newest first, each with its chips: the
-    recordings list and search (owner, 31 Oct 2026)."""
     return await filters.list_recordings(
         filters.parse(request.query_params), user, session_id=sessionId, cursor=cursor, limit=limit,
     )
@@ -162,8 +127,6 @@ async def filter_options(
     field: str | None = None, q: str | None = None, questionnaireId: list[str] = Query(default=[]),
     limit: int = Query(50, ge=1, le=200), _: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """What each filter can be set to (forms, sections, questions, artisans, researchers,
-    workshops, languages), most used first; ``field`` and ``q`` answer a searchable select."""
     ids = [v for value in questionnaireId for v in value.split(",") if v]
     return await filters.facets(field_name=field, q=q, questionnaire_ids=ids or None, limit=limit)
 
@@ -233,7 +196,6 @@ async def sessions_restore(session_id: str, user: Any = Depends(get_current_user
     return await sessions.restore_session(session_id, user)
 
 
-# ── guest respondents (owner decision 1; UNIFY U6, A17, A18) ───────────────────────────────────
 @router.post("/sessions/{session_id}/respondents", dependencies=V2)
 async def sessions_add_respondents(session_id: str, request: Request, user: Any = Depends(get_current_user)) -> dict[str, Any]:
     payload = await parse(request, S.RespondentsAdd)
@@ -260,7 +222,6 @@ async def respondents_register(respondent_id: str, request: Request, user: Any =
     return await respondents.register(respondent_id, payload.artisanId, user)
 
 
-# ── the start sheet's form, bindings and type defaults (UNIFY U5; owner amendment 2) ───────────
 @router.get("/form-for", dependencies=V2)
 async def form_for(
     workshopId: str | None = None, designWorkshopId: str | None = None, questionnaireId: str | None = None,
@@ -271,7 +232,6 @@ async def form_for(
 
 @router.get("/forms/{questionnaire_id}/structure", dependencies=V2)
 async def form_structure(questionnaire_id: str, includeRetired: bool = False, _: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """The form's sections and questions with their lineages, codes, required marks and help text."""
     return await structure.form_structure(questionnaire_id, include_retired=includeRetired)
 
 
@@ -333,10 +293,6 @@ async def sessions_merge(session_id: str, target_id: str, user: Any = Depends(ge
 
 @router.get("/sessions/{session_id}/insights", dependencies=V2)
 async def sessions_insights(session_id: str, user: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """The summaries of the session's live takes, one item per take that has a transcript (audit
-    M27): ``{"recordingId", "mediaId", "state", "stale", "canEdit", "canRegenerate", "error",
-    "insight"}``, the per-clip view of ``GET /api/media/{id}/insights`` without the translation
-    text. ``{"items": []}`` while the insights switch is off."""
     from app.api.routes.transcript_insights import may_edit
     from app.core.db import db
     from app.services import transcript_insights
@@ -364,15 +320,9 @@ async def sessions_insights(session_id: str, user: Any = Depends(get_current_use
     return {"items": items}
 
 
-# ── the report annexure (A12): the forms bound to a design workshop, grouped by kind ────────────
 @router.get("/annexure", dependencies=V2)
 async def annexure(designWorkshopId: str | None = None, workshopId: str | None = None, format: str | None = None,
                    user: Any = Depends(get_current_user)) -> Any:
-    """The annexure a design workshop's report prints, as data (one shape in both portals,
-    ``app/questionnaire/library.annexure``): every form bound to it or answered in its sessions,
-    grouped by kind, each with its questions and their current answers and one sitting per
-    respondent, live sessions only. ``format=txt`` downloads it as text. Anyone who may read the
-    workshop; a Field Repository ``workshopId`` has no annexure on this portal."""
     from fastapi.responses import PlainTextResponse
 
     from app.questionnaire import library
@@ -414,7 +364,6 @@ async def coverage_snapshot(
     return await coverage.snapshot(questionnaireId, workshopId, sinceSeq)
 
 
-# ── recordings ─────────────────────────────────────────────────────────────────────────────────
 @router.patch("/recordings/{recording_id}", dependencies=V2)
 async def recordings_patch(recording_id: str, request: Request, user: Any = Depends(get_current_user)) -> dict[str, Any]:
     payload = await parse(request, S.RecordingPatch)
@@ -440,27 +389,23 @@ async def recordings_decide(recording_id: str, request: Request, user: Any = Dep
 @router.get("/recordings/removed", dependencies=V2)
 async def recordings_removed(sessionId: str | None = None, artisanId: str | None = None,
                              user: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """Removed takes of one session or one artisan, newest first ("Show removed"; audit M12)."""
     return await recordings.removed_takes(user, session_id=sessionId, artisan_id=artisanId)
 
 
 @router.post("/recordings/{recording_id}/file", dependencies=V2)
 async def recordings_file(recording_id: str, request: Request, user: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """"File it" for a take waiting for a place (audit H14): targets, optionally subjects and session."""
     payload = await parse(request, S.FileRecordingRequest)
     return await recordings.file_recording(recording_id, payload, user)
 
 
 @router.post("/media/{media_id}/file", dependencies=V2)
 async def media_file(media_id: str, request: Request, user: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """"File it" for an inbox "To file" clip with no recording yet (audit H14)."""
     payload = await parse(request, S.FileMediaRequest)
     return await recordings.file_media(media_id, payload, user)
 
 
 @router.post("/media/{media_id}/not-needed", dependencies=V2)
 async def media_not_needed(media_id: str, user: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """"Not needed" on an inbox "To file" clip, kept on the server (audit M22, H14)."""
     return await recordings.not_needed(media_id, user)
 
 
@@ -477,7 +422,6 @@ async def recordings_proposals(recording_id: str, user: Any = Depends(get_curren
 
 @router.post("/recordings/{recording_id}/transcribe", status_code=status.HTTP_202_ACCEPTED, dependencies=V2)
 async def recordings_transcribe(recording_id: str, user: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """Take-level Retry. While paused: 202 ``{"status": "QUEUED", "paused": true}``, never an error."""
     return await recordings.transcribe(recording_id, user)
 
 
@@ -488,9 +432,6 @@ async def recordings_download(recording_id: str, user: Any = Depends(get_current
 
 
 async def assert_may_download_recording(recording_id: str, user: Any) -> None:
-    """The media-owner gate every other file download keeps (audit H3): the uploader, Professor and
-    above, a dataset downloader, or a holder of the uploader's data-access grant. Any signed-in user,
-    volunteers included, could download any recording."""
     from app.core.db import db
     from app.services.records import media_url_owners
 
@@ -500,13 +441,12 @@ async def assert_may_download_recording(recording_id: str, user: Any) -> None:
         recording_id,
     )
     if not rows:
-        return  # download_url answers the 404
+        return
     owners = await media_url_owners(user)
     if owners is not None and str(rows[0]["uploader"]) not in owners:
         fail("FORBIDDEN", "You need download access to this researcher's recordings. Request it from them.")
 
 
-# ── answers, inbox, corpus ─────────────────────────────────────────────────────────────────────
 @router.put("/answers", dependencies=V2)
 async def answers_put(request: Request, user: Any = Depends(get_current_user)) -> dict[str, Any]:
     payload = await parse(request, S.AnswersPut)
@@ -548,7 +488,6 @@ async def corpus_jsonl(
     questionnaireId: str, status_filter: str | None = Query("APPROVED", alias="status"),
     kind: str = Query("answers", pattern="^(answers|recordings|meta)$"), _: Any = Depends(require_dataset_downloader),
 ) -> Response:
-    # A whole-instrument dump: the dataset-download gate /export/*.csv keeps (audit H3).
     return await _corpus(questionnaireId, status_filter, kind, "jsonl")
 
 
@@ -560,7 +499,6 @@ async def corpus_csv(
     return await _corpus(questionnaireId, status_filter, kind, "csv")
 
 
-# ── artisans: the record (v2; the consent routes are api/routes/artisans.py's) ─────────────────
 @artisans_router.get("/{artisan_id}/record", dependencies=V2)
 async def artisan_record_get(artisan_id: str, questionnaireId: str | None = None, user: Any = Depends(get_current_user)) -> dict[str, Any]:
     return await record.artisan_record(artisan_id, user, questionnaire_id=questionnaireId)
@@ -572,8 +510,6 @@ async def artisan_record_csv(artisan_id: str, questionnaireId: str | None = None
     from app.services.access import owner_download_scope
     from app.services.naming import content_disposition
 
-    # The gate the legacy consolidated CSV keeps (audit H3): download access to the artisan's owner,
-    # and a subset grant has to name this artisan.
     artisan = await db.artisan.find_unique(where={"id": artisan_id})
     if not artisan:
         fail("NOT_FOUND", "No such artisan.")

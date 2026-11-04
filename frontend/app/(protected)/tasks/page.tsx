@@ -17,17 +17,6 @@ import { canAssignTasks } from "@/lib/permissions";
 import type { PageResult } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-/**
- * My tasks — the assignee's half of the assignment system.
- *
- * The scope arrives resolved (workshop title, artisan names, section codes), so this page never has
- * to look anything up: it renders what the work IS, how much of it the person has claimed, and what
- * the repository can independently see. Assigning work lives on the admin board at /settings/tasks —
- * one scope handed to several people at once — and the strip below points admins at it, because the
- * single-assignee form that used to sit here could not express artisan subsets or questionnaire
- * sections at all.
- */
-
 const PAGE_SIZE = 12;
 const STATUSES: TaskStatus[] = ["OPEN", "IN_PROGRESS", "DONE", "CANCELLED"];
 
@@ -43,11 +32,6 @@ export default function TasksPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  /**
-   * Exact per-status totals for the filter chips, for a server whose `GET /tasks` predates
-   * `statusCounts`: four tiny calls (`pageSize=1`, derivation off) rather than counting the current
-   * page, which only ever sees twelve rows.
-   */
   const loadCounts = useCallback(async () => {
     try {
       const entries = await Promise.all(
@@ -60,7 +44,6 @@ export default function TasksPage() {
       );
       setCounts(Object.fromEntries(entries));
     } catch {
-      // The chips fall back to unlabelled filters; the list itself is what matters.
       setCounts({});
     }
   }, []);
@@ -68,8 +51,6 @@ export default function TasksPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // `withStatusCounts` brings the chips' totals in the same answer (one GROUP BY on the server)
-      // instead of four more list requests; `loadCounts` above is only for a server that predates it.
       const data = await apiFetch<PageResult<FieldTask> & { statusCounts?: Partial<Record<TaskStatus, number>> }>(
         `/tasks${buildQuery({
           view: "assigned",
@@ -99,10 +80,6 @@ export default function TasksPage() {
     try {
       await apiFetch(`/tasks/${task.id}`, { method: "PATCH", body: JSON.stringify(body) });
       setError(null);
-      // The nav badge counts OPEN tasks, so starting or finishing one has just changed it. Correct
-      // it from here rather than waiting for the store's staleness window: the reader is looking at
-      // the row they moved and the pill is on the same screen, and a badge that still says 3 after
-      // the third card went to In progress is the notification contradicting the page it points at.
       await Promise.all([load(), refreshOpenTaskCount()]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to update the task");

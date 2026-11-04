@@ -1,18 +1,3 @@
-"""THE ONE-STEP ACCOUNT (owner, 2026-10-17): ``POST /api/users`` with ``passwordMode``.
-
-What is pinned here:
-
-* each way in — SET (the password sent), GENERATE (a temporary one answered ONCE), NONE (provider
-  only), NONE with an e-mailed link (sent only AFTER the commit, or a sentence when mail is off);
-* ALL OR NOTHING — the ``User``, its allow-list admission and its role's own list (the designer
-  empanelment) are one transaction: a failure in step 2 or 3 leaves no row at all;
-* the hierarchy — strictly below your own role, and only a master admin makes an admin;
-* a duplicate is a 409 naming the account that holds the address, with ``X-Existing-Account-Id``.
-
-Postgres is required; the module skips itself when ``DATABASE_URL`` is not a local database. Rows the
-app wrote are read back through ``client.portal`` (see ``tests/test_stage_sync.py``).
-"""
-
 import asyncio
 import functools
 import uuid
@@ -105,7 +90,6 @@ def _new_address(world: dict[str, Any], label: str) -> str:
 
 
 def _expect_a_server_fault(call: Any) -> None:
-    """The injected fault surfaces as the TestClient's re-raise or as the app's catch-all 500."""
     try:
         answer = call()
     except RuntimeError:
@@ -118,10 +102,6 @@ def _nothing_written(client: Any, email: str) -> None:
     assert _read(client, db.accessroster.find_first, where={"email": email}) is None
     assert _read(client, db.designerroster.find_first, where={"email": email}) is None
 
-
-# ==================================================================================================
-# Each way in
-# ==================================================================================================
 
 
 def test_set_a_password_now(world, client):
@@ -142,7 +122,6 @@ def test_set_a_password_now(world, client):
 
 
 def test_a_password_sent_without_a_mode_is_still_set(world, client):
-    """Every client that predates ``passwordMode`` sends only ``password``."""
     made = _create(
         client, world, "admin", email=_new_address(world, "legacy"), name="Legacy", role="RESEARCHER",
         password="a-password-they-get-2",
@@ -162,7 +141,6 @@ def test_make_a_temporary_password_for_a_designer(world, client):
     temporary = body["temporaryPassword"]
     assert len(temporary) == account_provisioning.GENERATED_PASSWORD_LENGTH
     assert set(temporary) <= set(account_provisioning.GENERATED_PASSWORD_ALPHABET)
-    # Generated means somebody else's: the change is required whatever the box said.
     assert body["mustChangePassword"] is True
     assert body["roleListsAdded"] == ["designerRoster"]
     empanelment = _read(client, db.designerroster.find_first, where={"email": email})
@@ -205,8 +183,6 @@ def test_provider_only_with_a_link_is_sent_after_the_commit(world, client, monke
     original = credential_links.issue_link
 
     async def watching(**kwargs: Any) -> Any:
-        # A SEPARATE connection's view: the module client is outside the create's transaction, so
-        # it sees the account only once that transaction has committed.
         seen["committed"] = await db.user.find_first(where={"email": email}) is not None
         return await original(**kwargs)
 
@@ -218,7 +194,7 @@ def test_provider_only_with_a_link_is_sent_after_the_commit(world, client, monke
     assert made.status_code == 201, made.text
     link = made.json()["passwordLink"]
     assert link["deliveredBy"] == "EMAIL" and link["purpose"] == "INVITE"
-    assert "link" not in link  # the credential went to their inbox, not to this screen
+    assert "link" not in link
     assert seen == {"committed": True}
     assert _read(client, db.emailmessage.find_many, where={"toAddress": email})
 
@@ -235,10 +211,6 @@ def test_a_mode_must_be_chosen_and_be_consistent(world, client):
         assert refused.status_code == 422, (body, refused.text)
     _nothing_written(client, email)
 
-
-# ==================================================================================================
-# All or nothing
-# ==================================================================================================
 
 
 def test_a_failure_admitting_the_address_writes_nothing(world, client, monkeypatch):
@@ -271,16 +243,11 @@ def test_a_failure_adding_the_role_list_writes_nothing(world, client, monkeypatc
     _nothing_written(client, email)
 
 
-# ==================================================================================================
-# Who may create whom
-# ==================================================================================================
-
 
 @pytest.mark.parametrize(
     ("actor", "role", "status", "detail"),
     [
         ("admin", "ADMIN", 403, account_provisioning.ONLY_MASTER_CREATES_ADMIN_DETAIL),
-        # ``assert_role``'s ceiling answers first for a role ABOVE the creator's own.
         ("ministry", "ADMIN", 403, "You can only give a role at or below your own"),
         ("ministry", "MINISTRY_ADMIN", 403, account_provisioning.CREATE_BELOW_YOUR_OWN_DETAIL),
         ("ministry", "REGIONAL_DIRECTOR", 201, None),
@@ -298,10 +265,6 @@ def test_strictly_below_and_only_master_makes_an_admin(world, client, actor, rol
     if status != 201:
         _nothing_written(client, email)
 
-
-# ==================================================================================================
-# A duplicate
-# ==================================================================================================
 
 
 def test_a_duplicate_names_the_existing_account(world, client):

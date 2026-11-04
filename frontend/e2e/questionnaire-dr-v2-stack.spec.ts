@@ -15,19 +15,6 @@ import {
   type QueueOptions
 } from "@/lib/questionnaire/queue";
 
-/**
- * DESIGNER-PORTAL'S SHARED QUESTIONNAIRE CLIENT AGAINST A REAL BACKEND AND A REAL BUCKET (stream U1).
- *
- * No fake API and no fake transport: the browser's own client (`questionnaireClient`, the object
- * `questionnaireApi` is) is pointed at designer-portal's FastAPI with QUESTIONNAIRE_V2 on, a migrated
- * Postgres and a MinIO bucket, and the browser's own byte transport PUTs a take to the URL the server
- * signs. The seed (`scripts/ci/seed_qv2_stack.py`) is a design workshop with a form in the shared
- * tables bound to it as its primary form, three artisans and four accounts.
- *
- * CI only: the `web-v2-stack` job starts the stack and sets QV2_STACK_API and QV2_STACK_SEED. It
- * refuses any host but loopback, because it writes.
- */
-
 const API = process.env.QV2_STACK_API ?? "";
 const SEED_PATH = process.env.QV2_STACK_SEED ?? "";
 const LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/.test(API);
@@ -122,7 +109,6 @@ test("@qf:B4 @qf:A11 @qf:B19 @qf:B21 @qf:A20 @qf:B20 the lock: a second research
     { respondentId: guest.id, questionLineageId: l, text: "Wooden blocks", origin: "TYPED", attribution: "GROUP_SHARED", sessionId: session.id, sourceRecordingId: null }
   ]);
   expect(saved.results.map((r) => r.status)).toEqual(["SAVED", "SAVED"]);
-  // B4: the second researcher joins by the session's code (online).
   const other = as("other");
   await other.join(session.joinCode!);
   const refused = await other.putAnswers([

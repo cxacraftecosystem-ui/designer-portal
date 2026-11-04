@@ -1,5 +1,3 @@
-"""The tolerant name comparison between the name UIDAI signed and the name on a record."""
-
 from __future__ import annotations
 
 import pytest

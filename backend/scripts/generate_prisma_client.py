@@ -102,8 +102,6 @@ def has_future_import(path: Path) -> bool:
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
                 continue
-            # The future import has to be the first statement to mean anything, so the first
-            # statement is the only line that can answer.
             return stripped == FUTURE_IMPORT.strip()
     return False
 
@@ -126,13 +124,8 @@ def add_future_import(path: Path) -> bool:
     return True
 
 
-#: The first line of the runtime ``types.py`` this script writes; how it recognises its own output.
 SHIM_MARKER = "# prisma.types runtime shim, written by backend/scripts/generate_prisma_client.py\n"
-#: Where the generated template's own runtime preamble starts. Everything from here to the first
-#: declaration is a handful of real aliases (``SortOrder``, ``HttpConfig``, ...) that ``client.py``
-#: imports by name, so the shim keeps them verbatim.
 TEMPLATE_MARKER = "# -- template types.py.jinja --"
-#: Names the generated ``client.py`` imports from ``.types`` at run time. The shim must define them.
 PREAMBLE_NAMES = ("SortMode", "SortOrder", "MetricsFormat", "DatasourceOverride", "HttpConfig")
 
 SHIM_TAIL = """

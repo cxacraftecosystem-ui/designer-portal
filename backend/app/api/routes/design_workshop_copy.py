@@ -1,14 +1,3 @@
-"""``GET /api/design-workshops/{workshop_id}/stages/{stage_key}/copy-sources`` — C9.
-
-What the designer may start this stage from: their own text from earlier workshops (copyable, the
-source marked), and other designers' text from the same cluster or craft as a read-only reference
-block. See ``services/workshop_copy.py``. The copy itself is an ordinary stage save naming the
-copied keys in ``copiedFrom``.
-
-The door is the stage-write door (``for_edit=True``): only somebody who may write this stage is
-offered text to put in it. Its own module so the busy ``design_workshops`` route file is untouched.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -53,12 +42,6 @@ async def confirm_copied_fields(
     payload: ConfirmCopiedIn,
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """ "Keep as is": the designer has checked copied text and it now counts as their answer.
-
-    Touches the singleton's ``fieldProvenance`` only — never ``data`` — so it is not a stage save,
-    moves no version and re-submits nothing. A field that is not (or no longer) marked copied is left
-    alone, so a repeat press is harmless. Answers the stamps now held for the stage's singleton.
-    """
     _require_designer(current_user)
     await load_workshop_or_404(workshop_id, current_user, for_edit=True)
     spec = next((s for s in stages() if s.key == stage_key), None)
@@ -81,10 +64,6 @@ async def confirm_copied_fields(
     if not wanted:
         return {"provenance": before, "confirmed": []}
     after = workshop_copy.mark_provenance(before, {}, wanted, current_user)
-    # THE SAME IN-FLIGHT GUARD AS ``save_stage``: confirming moves completeness, so it must not land
-    # on a report an approval froze between the read above and this write. The header write carries
-    # ``NOT FROZEN_WHERE`` and moves ``updatedAt`` (the approval's own compare-and-set), and the
-    # entry write is predicated on the version read, so a save that raced in is not overwritten.
     async with db.tx() as tx:
         open_header = await tx.designworkshop.update_many(
             where={"id": workshop_id, "NOT": design_workshop_approvals.FROZEN_WHERE},
@@ -108,5 +87,4 @@ async def confirm_copied_fields(
     return {"provenance": after, "confirmed": wanted}
 
 
-#: 409 when the stage was saved between this request's read and its write.
 CONFIRM_RACED = "This stage changed while the copied text was being kept. Reload it and try again."

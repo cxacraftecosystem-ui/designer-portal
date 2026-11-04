@@ -29,29 +29,16 @@ import com.designprototype.workshop.ui.Text
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
 
-/*
- * C9 (owner decision, 2026-10-17): start stages 2, 4, 5 and 7 from an earlier workshop — the
- * handset's twin of the web's `CopyFromEarlierPanel`. The designer's OWN earlier text is copied into
- * EMPTY boxes only and marked; other designers' text is shown read only and never put in a box; a
- * copied box counts toward completeness only once it is edited or kept ("Keep as is").
- *
- * The marks ride `StageDraft.copiedFrom` into the next push as `copiedFrom`; the server verifies
- * them against the source. Fetching the sources needs the network — the card says so offline.
- */
-
 @Composable
 internal fun DwCopyFromEarlierCard(
     repository: WorkshopRepository,
-    /** The SERVER id; null for a workshop only this device holds. */
     serverId: String?,
     stageKey: String,
     online: Boolean,
     enabled: Boolean,
     labels: Map<String, String>,
     pending: Set<String>,
-    /** Fill empty boxes from this source; answers how many were filled. */
     onCopy: (sourceWorkshopId: String, values: Map<String, JsonElement>) -> Int,
-    /** "Keep as is": drop local marks, and the server stamps that came back for the rest. */
     onKept: (local: Set<String>, stamps: Map<String, DwFieldStampDto>?) -> Unit,
     localMarks: Set<String>,
 ) {

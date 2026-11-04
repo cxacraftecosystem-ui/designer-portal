@@ -9,38 +9,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * THE FOLD HONOURED ONE OF THE TWO DELETION RECORDS, AND THE OTHER DELETION WAS UNDONE BY THE ONE
- * ACTION THE APP TELLS THE DESIGNER TO TAKE.
- *
- * ── THE DEFECT ───────────────────────────────────────────────────────────────────────────────────
- *
- * Deleting the LAST row of a collection is stated in [StageDraft.emptiedEntities], and
- * [dwFoldServerStage] declines to re-add those rows — that half was written, argued for at length in
- * the file's header, and pinned by `StageAuthorityEarnedByReadingTest`. Deleting ONE row out of three
- * is stated in [StageDraft.deletedRowKeys], the field added for exactly that case, written by
- * `StageScreen.onRowsChange`, counted by `statusOf` and read on the wire by [dwOwedDeletions] — and
- * `deletedRowKeys` appeared NOWHERE in the fold. So the one reader whose job is to decide which of
- * the server's rows come back never consulted it.
- *
- * The consequence is the worse of the two possible ones, because the record was destroyed in the same
- * breath as the deletion. The fold re-added the deleted row; the row was then in the draft, so the
- * next payload NAMED it and `replaceCollections` swept nothing; and `persistLocally`'s row filter
- * drops a key from `deletedRowKeys` whose row is back in the draft — so the instruction was gone too.
- * The designer's deletion was silently reversed and no evidence survived anywhere on the device.
- *
- * ── AND THE APP SENDS THEM DOWN IT ───────────────────────────────────────────────────────────────
- *
- * `statusOf` prints "Open the stage once with a connection and it goes up on the save straight after"
- * over exactly this stage, and following that instruction is what ran the fold. Same shape as
- * `DwEmptiedStageSurvivesTheOpenTest`, one field along.
- *
- * ── WHAT IS PINNED HERE ──────────────────────────────────────────────────────────────────────────
- *
- * That the fold declines the row, that it says so, that it carries the record forward, and — the half
- * that makes the other three worth anything — that the payload built from the folded draft is one
- * whose sweep actually removes the row on the server.
- */
 class DwFoldHonoursDeletedRowTest {
 
     private val spec = StageDto(
@@ -55,23 +23,17 @@ class DwFoldHonoursDeletedRowTest {
         ),
     )
 
-    /** A row as the server sends it: an entry id always, a client key when the phone minted one. */
     private fun serverRow(entryId: String, step: String, clientKey: String? = null) = buildJsonObject {
         put("_entryId", entryId)
         if (clientKey != null) put("_clientKey", clientKey)
         put("step", step)
     }
 
-    /** A row as the draft holds it once it has been seeded from the server. */
     private fun heldRow(entryId: String, step: String) = DraftRow(
         id = dwRowId("processStep", entryId),
         values = mapOf("_entryId" to JsonPrimitive(entryId), "step" to JsonPrimitive(step)),
     )
 
-    /**
-     * Three steps came from the web; the designer deleted the middle one in a courtyard and the PUT
-     * never landed. The draft holds two rows and the record of the third.
-     */
     private fun deletedTheMiddleStep() = StageDraft(
         stageId = spec.key,
         rows = listOf(heldRow("srv-1", "Warp the loom"), heldRow("srv-3", "Finish and press")),
@@ -79,7 +41,6 @@ class DwFoldHonoursDeletedRowTest {
         deletedRowKeys = listOf(dwRowId("processStep", "srv-2")),
     )
 
-    /** What the server still holds, because the deletion has not travelled. */
     private fun serverStillHasThree() = StageBucketDto(
         collections = mapOf(
             "processStep" to listOf(
@@ -90,13 +51,10 @@ class DwFoldHonoursDeletedRowTest {
         ),
     )
 
-    // ── The fold itself ──────────────────────────────────────────────────────────────────────────
-
     @Test
     fun `a row the designer deleted is not folded back in`() {
         val fold = dwFoldServerStage(spec, deletedTheMiddleStep(), serverStillHasThree(), spec.key)
 
-        // THE ASSERTION THE DEFECT FAILED: before the fix this list held three rows.
         assertEquals(2, fold.draft.rowsFor("processStep").size)
         assertNull(
             "the deleted step came back from the server and nothing declined it",
@@ -113,9 +71,6 @@ class DwFoldHonoursDeletedRowTest {
     fun `the record of the deletion survives the fold, because it is still owed`() {
         val fold = dwFoldServerStage(spec, deletedTheMiddleStep(), serverStillHasThree(), spec.key)
 
-        // Clearing it here would leave the row alive on the server for ever with nothing on any screen
-        // saying so. `recordStageSent` is the only place a deletion is cleared, and only for the keys
-        // an acknowledged payload carried.
         assertEquals(
             listOf(dwRowId("processStep", "srv-2")),
             fold.draft.deletedRowKeys,
@@ -139,8 +94,6 @@ class DwFoldHonoursDeletedRowTest {
         assertTrue("nothing was swept, so nothing may claim it was", fold.sweptRows.isEmpty())
     }
 
-    // ── The half that makes the other three worth anything ───────────────────────────────────────
-
     @Test
     fun `the payload built after the fold does not name the deleted row, so the sweep removes it`() {
         val fold = dwFoldServerStage(spec, deletedTheMiddleStep(), serverStillHasThree(), spec.key)
@@ -162,12 +115,8 @@ class DwFoldHonoursDeletedRowTest {
         )
     }
 
-    // ── The identities, and the ordinary case that must not regress ──────────────────────────────
-
     @Test
     fun `a row deleted while held under its client key is recognised however the server files it`() {
-        // The row was created on this phone, synced (so the server minted an `_entryId` for it) and
-        // then deleted. The draft's record is keyed by the CLIENT key; the server's copy carries both.
         val local = StageDraft(
             stageId = spec.key,
             rows = listOf(heldRow("srv-1", "Warp the loom")),

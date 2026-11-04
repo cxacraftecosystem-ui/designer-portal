@@ -6,18 +6,6 @@ import { Check, Compass, Microscope, PenTool, ShieldCheck } from "lucide-react";
 import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
 import { STAGE_COUNT_WORD } from "@/components/hero/workshopArc";
 
-/**
- * ⚠ THERE WAS NO DESIGNER CARD, on a section headed "Built for the whole team", on the marketing
- * page of a product whose second half is a design & prototype workshop. `AccessLadder.tsx` records
- * the identical defect in its own file — its ladder had six rows for seven roles, and the missing
- * one was DESIGNER — with the reason it survives so long: nothing looks broken. There is simply one
- * fewer card than there are audiences, and the audience that is absent is the only one that cannot
- * notice on their own behalf.
- *
- * The row is third rather than last because that is where it sits on the ladder in the section above
- * (researcher, then designer, then professor and the admins), and two orderings of the same set of
- * people on one page is how a reader stops trusting either.
- */
 const AUDIENCES = [
   {
     icon: Compass,
@@ -53,31 +41,11 @@ const AUDIENCES = [
       "Review ladder — approve, reject, revise",
       "Assigned tasks with due dates",
       "Grantable dataset downloads",
-      // ── THE INSPECTOR, AND WHY THE SENTENCE IS SHAPED LIKE THIS ──────────────────────────────
-      // A whole tier with a whole client shipped and this page named the ROW on the ladder and not
-      // one screen behind it: `design-workshop-inspections/page.tsx` ("Workshops to inspect") and
-      // `[id]/page.tsx` ("Workshop under inspection"), which draws `FieldProvenance` under every
-      // value — the same component the designer's own stage form draws, so an inspector and the
-      // designer being inspected cannot read two accounts of who did what.
-      //
-      // ⚠ IT IS A BULLET ON THIS CARD AND NOT A FIFTH CARD, for two reasons. The grid is
-      // `lg:grid-cols-4` and a fifth audience would leave one card alone on a row. More
-      // importantly, the ADMIN half is the half that belongs on a card about administrators:
-      // `permissions.ts:835-838` — "WHAT AN ADMIN GETS INSTEAD is the administration of who
-      // inspects what" — while the reading surface is the inspector's alone.
-      //
-      // ⚠ NEVER WRITE "INSPECTOR AND ABOVE". `lib/permissions.ts:842` is
-      // `INSPECTION_ROLES = ["INSPECTOR"]`, a one-member set mirroring the server's frozenset, and
-      // that file spends a paragraph on why rank 37 sitting between DESIGNER and PROFESSOR misleads
-      // every threshold instinct: `assert_inspection_surface` refuses professors, admins and the
-      // master admin with a 403, deliberately. Hence "appoint an inspector" and not "an inspector
-      // or anybody senior to one" — an admin appoints, and does not thereby gain the read.
       "Appoint an inspector to a workshop: they can read every stage and see who wrote each field, without changing anything"
     ]
   }
 ];
 
-/** Three audience cards — who the repository serves and what each tier gets. */
 export default function TeamSection() {
   const reduce = useHeroReducedMotion();
 
@@ -93,7 +61,6 @@ export default function TeamSection() {
   return (
     <section className="mx-auto max-w-6xl px-6 py-24" aria-label="Built for the whole team">
       <motion.div initial="hidden" whileInView="show" viewport={{ once: true, amount: 0.2 }} variants={container}>
-        {/* The ladder itself is the section above; this one is about WHO the repository serves. */}
         <motion.p variants={item} className="eyebrow mb-3">
           Who it is for
         </motion.p>
@@ -104,8 +71,6 @@ export default function TeamSection() {
           Built for the whole team.
         </motion.h2>
 
-        {/* Four cards, so two-up before four-up: at `md` a three-column grid would have left the
-            fourth card alone on a row of its own, two thirds empty. */}
         <div className="mt-12 grid gap-5 md:grid-cols-2 lg:grid-cols-4">
           {AUDIENCES.map((audience) => (
             <motion.div

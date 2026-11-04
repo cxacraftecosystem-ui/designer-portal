@@ -1,11 +1,3 @@
-"""``GET /search/unified`` on this portal's own index: ranking, grouping, paging, filters and the
-design-workshop gate (services/search_query, routes/search; docs/SEARCH.md).
-
-Against a real database, because the ranking IS Postgres: full-text under ``english`` and
-``simple``, trigram word similarity, reciprocal-rank fusion. The route function is called directly
-with a settings stub, so no HTTP client and no second event loop are involved.
-"""
-
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -21,7 +13,6 @@ from app.api.routes import search as routes
 from app.core.db import db
 from app.services import cross_portal, search_query
 
-# One event loop for the module: `world` connects `db` once and every test awaits it.
 pytestmark = [needs_db, pytest.mark.asyncio(loop_scope="module")]
 
 
@@ -174,7 +165,6 @@ async def test_a_researcher_is_refused_design_workshop_types(world, settings):
     )
     assert result["typesRefused"] == ["designWorkshops", "reports"]
     assert [g["type"] for g in result["groups"]] == ["products"]
-    # DW transcripts stay out of an all-types search too.
     every = await _search(world.researcher, world.stamp)
     assert world.transcript_dw.id not in _ids(every, "transcripts")
 
@@ -195,6 +185,6 @@ def test_build_sql_applies_the_permission_predicate_in_every_list():
     sql, params = search_query.build_sql(
         "indigo", search_query.Scope(types=["artisans"]), limit=5, qvec="[0]"
     )
-    assert sql.count("FROM base b") >= 4  # fts, trgm, vec and the counts all read the scoped base
+    assert sql.count("FROM base b") >= 4
     assert "d.\"audience\" = 'ALL'" in sql and "<=> " in sql
     assert params[0] == "indigo"

@@ -6,11 +6,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * NO FREE-TEXT CRAFT ON THE HANDSET (REQUIREMENTS_2026-10-20 §2.4): every craft is picked from the
- * catalogue through [CraftPickerField]. A source read, the same shape as the web's
- * `craft-no-free-text-unit.spec.ts`.
- */
 class CraftPickerSourceTest {
     private val main = File("src/main/java/com/designprototype/workshop")
     private fun read(path: String) = File(main, path).readText()
@@ -34,17 +29,14 @@ class CraftPickerSourceTest {
     @Test
     fun `every craft picker is the catalogue picker`() {
         val activity = read("MainActivity.kt")
-        // Artisan, product, tool, workshop crafts covered, tool assignment.
         assertTrue(Regex("CraftPickerField\\(").findAll(activity).count() >= 5)
         assertTrue(read("ui/SearchScreen.kt").contains("CraftPickerField("))
-        // The craft register every form reads is the catalogue.
         assertTrue(activity.contains("repository.craftCatalogue(context)"))
     }
 
     @Test
     fun `the stage craft link is the catalogue picker, as in the Field Repository`() {
         val field = read("ui/designworkshop/DwReferenceField.kt")
-        // A Craft REF draws the shared picker, and its pick still goes through `choose`.
         assertTrue(field.contains("if (field.refModel == \"Craft\") {"))
         val branch = field.substringAfter("if (field.refModel == \"Craft\") {").substringBefore("} else SearchableSelectField(")
         assertTrue(branch.contains("CraftPickerField("))
@@ -57,12 +49,10 @@ class CraftPickerSourceTest {
     fun `stage one's craft name is always read-only beside its craft link`() {
         val renderer = read("ui/designworkshop/FieldRenderer.kt")
         assertTrue(renderer.contains("enabled = enabled && !dwCraftNameLocked(field, siblings)"))
-        // The TEXT branch hands the entity's fields down, or the lock never sees the link.
         assertTrue(renderer.contains("rowValues = rowValues,\n                    siblings = siblings,"))
         val craftRef = com.designprototype.workshop.data.FieldDto(key = "craftRef", type = "REF", refModel = "Craft")
         val craftName = com.designprototype.workshop.data.FieldDto(key = "craftName")
         assertTrue(com.designprototype.workshop.ui.designworkshop.dwCraftNameLocked(craftName, mapOf("craftRef" to craftRef)))
-        // A craft name copied from a tool or product record has no craft link beside it.
         assertFalse(com.designprototype.workshop.ui.designworkshop.dwCraftNameLocked(craftName, emptyMap()))
     }
 
@@ -74,10 +64,6 @@ class CraftPickerSourceTest {
         assertTrue(activity.contains(".filterNot { it.readOnly }"))
     }
 
-    /**
-     * IDENTICAL IN BOTH APPS apart from the package and the app's own package prefix on imports.
-     * The sibling checkout is optional (CI checks out one repo), so an absent sibling passes.
-     */
     @Test
     fun `the two shared craft files match the documentation portal's`() {
         val sibling = File("../../../documentation-portal/android/app/src/main/java/com/fieldrepository/app")

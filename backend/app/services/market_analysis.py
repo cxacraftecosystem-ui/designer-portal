@@ -1,49 +1,3 @@
-"""Stage 9's Advanced tier: what the survey data actually says, computed rather than asserted.
-
-THE PROBLEM THIS SOLVES. Stages 7 and 8 capture a real market survey — respondent groups, price
-expectations, products discussed, competitor products and their prices. Stage 9 then asks the
-designer to write down demand, price bands, competitor analysis and a SWOT. Nothing connected the
-two. A designer typed "₹400–800, high demand" into stage 9 having collected twenty-three price
-expectations in stage 8, and no part of the system ever compared the two numbers. The report
-printed the assertion, the evidence sat one stage away, and a reviewer at the ministry had no way
-to tell a considered band from a guess.
-
-So this module computes, from the captured rows alone:
-
-  * the price distribution per product category, from respondents AND competitors, kept apart
-    because they answer different questions (what a buyer will pay vs what the shelf charges);
-  * a verdict on each declared price band against that distribution — how much of the observed
-    market it actually covers, and which way it is wrong when it is wrong;
-  * where each competitor product sits in the distribution it competes in;
-  * which SWOT points are supported by something a respondent actually said, and which are
-    unsupported assertions;
-  * which products are discussed together, as co-occurrence clusters.
-
-THREE PROPERTIES, EACH LOAD-BEARING.
-
-**It is pure.** No database, no network, no model. It takes rows and returns findings, which is
-what lets it be tested exhaustively, run inside a report render, and — the point — run on the
-handset and in the browser. `frontend/lib/marketAnalysis.ts` and the Kotlin port are ports of THIS
-file; when they disagree, this one is right. A designer in a village with no signal gets the same
-analysis as one at a desk, because there is nothing here that needs a server.
-
-**It refuses to conclude from too little.** Four price expectations are not a market. Every figure
-carries the sample it came from, quantiles are withheld below :data:`MIN_SAMPLE_FOR_QUANTILES`, and
-a band gets no verdict below :data:`MIN_SAMPLE_FOR_VERDICT` — it is reported as unverifiable, which
-is a true statement, rather than as sound, which would be a fabricated one. An analysis tool that
-produces confident numbers from three data points is worse than no tool, because the confidence is
-what gets carried into the report.
-
-**It never overwrites the designer.** Nothing here edits stage 9. The designer's declared band
-stays exactly as typed; this produces a FINDING beside it. The judgement is theirs — they were in
-the room and the arithmetic was not — but it is now a judgement made in front of the evidence.
-
-WHY THE QUANTILE METHOD IS SPELLED OUT. :func:`quantile` documents its interpolation exactly,
-because three independent ports have to agree to the rupee. numpy's default is linear
-interpolation on (n-1) positions; that is what is implemented, by hand, so no port has to depend on
-a numerics library to match.
-"""
-
 from __future__ import annotations
 
 import math
@@ -54,26 +8,12 @@ from typing import Any
 
 from app.services.text_format import by_count
 
-#: Below this many observations, quantiles are not reported at all. Five is the smallest sample for
-#: which a quartile is a description of a spread rather than an accident of two numbers.
 MIN_SAMPLE_FOR_QUANTILES = 5
 
-#: Below this many observations, a declared band gets no verdict. Deliberately higher than the
-#: quantile floor: showing a spread from six numbers is honest, telling a designer their band is
-#: WRONG from six numbers is not.
 MIN_SAMPLE_FOR_VERDICT = 8
 
-#: A band is called NARROW when it covers less of the observed market than this. Not a
-#: statistical threshold and not presented as one — it is the point at which "your band misses
-#: most of the people you asked" becomes worth interrupting a designer to say.
 NARROW_COVERAGE = 0.55
 
-#: Words too common to carry evidence. Kept small and English-only ON PURPOSE: the survey text is
-#: frequently Odia, Hindi or transliterated, and a large English stop list would strip the rare
-#: words that make a match meaningful in exactly the responses that matter most. Matching is a
-#: hint for a human to check, never a claim of proof.
-#: Only words of three letters or more can survive `_MIN_TOKEN` anyway, so the one- and two-letter
-#: articles are absent from this list rather than missing from it.
 _STOPWORDS = frozenset(
     {
         "and",
@@ -118,33 +58,14 @@ _STOPWORDS = frozenset(
     }
 )
 
-#: The shortest run of letters kept as a content word. Two-letter fragments are noise in every
-#: script the survey is written in, and the stop list already removes the English ones that matter.
 _MIN_TOKEN = 3
 
 
 def _is_word_character(ch: str) -> bool:
-    """Whether `ch` belongs INSIDE a word: a letter, or a mark that attaches to one.
-
-    THE MARKS ARE THE WHOLE POINT, and leaving them out is a bug that hides in plain sight. A
-    regex of ``[^\\W\\d_]+`` looks Unicode-correct and is not: Python's ``\\w`` follows
-    ``str.isalnum()``, which is False for combining marks, so the virama in ରଙ୍ଗ and the matra in
-    ଦାମ are treated as WORD BOUNDARIES. Odia words shatter into one- and two-character fragments,
-    the length floor then discards the fragments, and every Odia response scores as having no
-    content at all — making "unsupported by the survey" the automatic verdict for precisely the
-    fieldwork this application exists to collect. The same is true of Devanagari, Bengali and every
-    other Indic script in scope, and it is invisible in English testing.
-
-    THE RULE THE PORTS MUST MATCH: a token is a maximal run of characters whose Unicode general
-    category begins with ``L`` (any letter) or ``M`` (any combining mark). JavaScript and Kotlin can
-    write that directly as ``[\\p{L}\\p{M}]+`` — Python's ``re`` has no ``\\p{...}``, which is why
-    this is a scan rather than a pattern. It is not a hot path: survey responses are sentences.
-    """
     return ch.isalpha() or unicodedata.category(ch).startswith("M")
 
 
 def _tokens(text: str) -> set[str]:
-    """Content words of `text`, lowercased. See :func:`_is_word_character` for the tokenising rule."""
     out: set[str] = set()
     current: list[str] = []
     for ch in (text or "") + " ":
@@ -160,13 +81,6 @@ def _tokens(text: str) -> set[str]:
 
 
 def as_number(value: Any) -> float | None:
-    """`value` as a finite float, or None.
-
-    MONEY is stored as a fixed-2 STRING and may carry grouping commas, so this is the one place
-    that knows how to read it. Non-finite is rejected rather than propagated: a NaN entering a
-    quantile silently poisons every figure downstream of it, and a report that prints "₹ nan" has
-    already been submitted by the time anybody notices.
-    """
     if value is None or isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -183,17 +97,6 @@ def as_number(value: Any) -> float | None:
 
 
 def quantile(sorted_values: list[float], q: float) -> float:
-    """The `q`-quantile of an ALREADY SORTED list, by linear interpolation on (n-1) positions.
-
-    Specified rather than delegated, because `frontend/lib/marketAnalysis.ts` and the Kotlin port
-    must produce the same rupee figure as this does. The method is numpy's default:
-
-        position = q * (n - 1);  lower = floor(position);  upper = ceil(position)
-        result   = v[lower] + (v[upper] - v[lower]) * (position - lower)
-
-    The caller sorts. That is not laziness — every caller here computes several quantiles from one
-    sample, and sorting inside would turn one sort into five.
-    """
     if not sorted_values:
         raise ValueError("quantile of an empty sample")
     if len(sorted_values) == 1:
@@ -208,24 +111,15 @@ def quantile(sorted_values: list[float], q: float) -> float:
 
 @dataclass(frozen=True, slots=True)
 class PriceObservation:
-    """One price somebody named, and who named it.
-
-    `label` exists so a finding can be traced back to the row that produced it. An analysis a
-    designer cannot audit is one they have to take on faith, and the whole purpose of this module
-    is to replace faith with arithmetic.
-    """
-
     amount: float
     category: str = ""
-    source: str = "RESPONDENT"  # RESPONDENT | COMPETITOR
-    group: str = ""  # RESPONDENT_GROUP token, for respondent observations
+    source: str = "RESPONDENT"
+    group: str = ""
     label: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class Distribution:
-    """A sample's shape. `quantiles_reported` is False when the sample was too small to describe."""
-
     count: int
     minimum: float
     maximum: float
@@ -241,12 +135,6 @@ class Distribution:
 
 
 def describe(values: list[float]) -> Distribution | None:
-    """The distribution of `values`, or None for an empty sample.
-
-    Below :data:`MIN_SAMPLE_FOR_QUANTILES` the quartiles are filled with the median and
-    `quantiles_reported` is False, so a caller that ignores the flag shows something defensible
-    rather than a quartile computed from two numbers.
-    """
     if not values:
         return None
     ordered = sorted(values)
@@ -267,16 +155,6 @@ def describe(values: list[float]) -> Distribution | None:
 
 @dataclass(frozen=True, slots=True)
 class BandVerdict:
-    """What the survey says about one declared price band.
-
-    `verdict` is one of:
-      SOUND         the band covers most of the observed market
-      NARROW        the band excludes most of it, without being wholly on one side
-      LOW / HIGH    the band sits below / above where the evidence clusters
-      UNVERIFIABLE  too few observations to say anything (NOT a criticism of the band)
-      NO_EVIDENCE   no observations in this category at all
-    """
-
     category: str
     declared_low: float | None
     declared_high: float | None
@@ -290,7 +168,6 @@ class BandVerdict:
 
 
 def _count(count: int, noun: str) -> str:
-    """A count and its noun, agreed: "1 price observation", "3 price observations" (DA-38)."""
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
@@ -299,7 +176,6 @@ def _were(count: int) -> str:
 
 
 def _observations(count: int) -> str:
-    """Count, noun and verb agreed: "1 price observation exists", "2 ... exist"."""
     return f"{_count(count, 'price observation')} {'exists' if count == 1 else 'exist'}"
 
 
@@ -313,7 +189,6 @@ def _band_message(
     below: int,
     above: int,
 ) -> str:
-    """One sentence a designer can act on, naming the numbers rather than grading the designer."""
     label = category or "this category"
     if verdict == "SOUND":
         return (
@@ -342,12 +217,6 @@ def _band_message(
 def judge_band(
     category: str, low: Any, high: Any, observations: list[PriceObservation]
 ) -> BandVerdict:
-    """Compare one declared band against every price observed in its category.
-
-    A reversed band (low > high) is read in the order the designer meant rather than refused: the
-    two boxes are adjacent on a phone and transposing them is a slip, not a claim, and answering a
-    slip with "no verdict" would hide the real finding underneath it.
-    """
     declared_low = as_number(low)
     declared_high = as_number(high)
     if declared_low is not None and declared_high is not None and declared_low > declared_high:
@@ -432,8 +301,6 @@ def judge_band(
 
 @dataclass(frozen=True, slots=True)
 class CompetitorPosition:
-    """Where one competitor product sits among the prices observed in its category."""
-
     name: str
     seller: str
     category: str
@@ -446,12 +313,6 @@ class CompetitorPosition:
 def position_competitors(
     competitors: list[dict[str, Any]], observations: list[PriceObservation]
 ) -> list[CompetitorPosition]:
-    """Place each competitor product in its category's respondent price distribution.
-
-    Positioned against what BUYERS said they would pay, not against the other competitors — the
-    useful question for a designer is "is this shelf price above or below what the people we asked
-    are willing to spend", and a competitor-only comparison cannot answer it.
-    """
     by_category: dict[str, list[float]] = {}
     pooled: list[float] = []
     for observation in observations:
@@ -473,18 +334,6 @@ def position_competitors(
         name = str(row.get("name") or "").strip() or "Unnamed product"
         seller = str(row.get("seller") or "").strip()
 
-        # CATEGORY-MATCHED IF POSSIBLE, POOLED IF NOT, AND THE MESSAGE SAYS WHICH.
-        #
-        # A respondent's price expectation carries NO category — stage 8 asks what they would pay,
-        # not what for — so a strict category lookup finds nothing for almost every competitor and
-        # the whole section reads "too few buyer price expectations" against a survey of forty
-        # people. That is not a cautious answer, it is a useless one, and it is the opposite of
-        # what `judge_band` does two functions up: that one already pools the uncategorised
-        # observations. The two must not disagree about the same sample.
-        #
-        # So the fallback is used and DECLARED. "Against all buyers asked" is a weaker statement
-        # than "against buyers asked about this category", and a designer has to be able to tell
-        # them apart to know how much weight to put on the number.
         sample = by_category.get(category) or []
         matched = len(sample) >= MIN_SAMPLE_FOR_QUANTILES
         if not matched:
@@ -531,8 +380,6 @@ def position_competitors(
 
 @dataclass(frozen=True, slots=True)
 class SwotSupport:
-    """Whether one SWOT point is backed by something a respondent actually said."""
-
     kind: str
     point: str
     supported_by: tuple[str, ...] = ()
@@ -544,26 +391,12 @@ class SwotSupport:
         return self.has_own_evidence or bool(self.supported_by)
 
 
-#: How many content words a SWOT point and a survey response must share before the response is
-#: offered as support. Two, because one shared word is a coincidence at this vocabulary size and
-#: three misses a short point ("price too high") against a short response.
 _SUPPORT_OVERLAP = 2
 
 
 def link_swot_evidence(
     swot: list[dict[str, Any]], responses: list[dict[str, Any]]
 ) -> list[SwotSupport]:
-    """Match each SWOT point to the survey responses that share its vocabulary.
-
-    THIS IS A RETRIEVAL AID, NOT A JUDGEMENT, and the distinction is the reason it can ship without
-    a model behind it. Shared words mean a response is worth reading next to the point, nothing
-    more; the designer decides whether it supports the claim. What it does reliably is the negative
-    case — a SWOT point sharing no vocabulary with any of forty responses and carrying no evidence
-    of its own is an assertion, and saying so is worth more than any positive match.
-
-    A point that filled its own `evidence` field is supported by definition: the designer cited
-    something. That is not second-guessed.
-    """
     prepared = []
     for row in responses:
         text = " ".join(str(row.get(k) or "") for k in ("response", "productsDiscussed", "place"))
@@ -600,8 +433,6 @@ def link_swot_evidence(
 
 @dataclass(frozen=True, slots=True)
 class TrendCluster:
-    """Products that respondents mentioned together, and how often."""
-
     members: tuple[str, ...]
     mentions: int
     co_occurrences: int
@@ -610,16 +441,6 @@ class TrendCluster:
 def cluster_products(
     responses: list[dict[str, Any]], *, minimum_mentions: int = 2, limit: int = 8
 ) -> list[TrendCluster]:
-    """Group the products respondents discussed by how often they came up in the same conversation.
-
-    Co-occurrence rather than a topic model, deliberately. It is explainable to the designer whose
-    data it is ("these three were mentioned together nine times"), it is stable — the same rows
-    give the same clusters every run, which a k-means seeded at random does not — and it runs in
-    milliseconds on a handset. A model here would buy nothing that a designer could check.
-
-    Single-link agglomeration over pairs seen at least twice: two products join when they were
-    discussed together, and a chain of such pairs becomes one cluster.
-    """
     tag_lists: list[list[str]] = []
     for row in responses:
         raw = row.get("productsDiscussed")
@@ -636,8 +457,6 @@ def cluster_products(
             for b in tags[i + 1 :]:
                 pairs[(a, b)] += 1
 
-    # Union-find over the pairs that recur. A pair seen once is two people who happened to say the
-    # same two words; at two it is worth showing.
     parent: dict[str, str] = {t: t for t in mentions}
 
     def find(x: str) -> str:
@@ -674,8 +493,6 @@ def cluster_products(
 
 @dataclass(frozen=True, slots=True)
 class MarketFindings:
-    """Everything this module concluded, plus what it could not conclude and why."""
-
     observations: int = 0
     respondent_prices: Distribution | None = None
     competitor_prices: Distribution | None = None
@@ -698,13 +515,6 @@ def collect_observations(
     *,
     default_category: str = "",
 ) -> list[PriceObservation]:
-    """Every price in stages 8, tagged with where it came from.
-
-    A respondent's `priceExpectation` carries no category of its own — the survey form asks what
-    they would pay, not what for — so it inherits `default_category` when one is known and is
-    otherwise pooled under "". Pretending to a category it does not have would put a buyer's answer
-    about a stole into the price band for floor coverings.
-    """
     out: list[PriceObservation] = []
     for row in responses:
         amount = as_number(row.get("priceExpectation"))
@@ -741,11 +551,6 @@ def analyse(
     bands: list[dict[str, Any]],
     swot: list[dict[str, Any]],
 ) -> MarketFindings:
-    """The whole of stage 9's Advanced tier, from the rows of stages 8 and 9.
-
-    Every argument is a list of the stage entry `data` dicts exactly as they are stored, so a
-    caller has nothing to reshape and the browser and the handset can pass what they already hold.
-    """
     observations = collect_observations(responses, competitors)
     respondent_values = [o.amount for o in observations if o.source == "RESPONDENT"]
     competitor_values = [o.amount for o in observations if o.source == "COMPETITOR"]
@@ -826,13 +631,6 @@ def _distribution_payload(dist: Distribution | None) -> dict[str, Any] | None:
 
 
 def market_findings_payload(findings: MarketFindings) -> dict[str, Any]:
-    """The wire form, camelCased like every other payload this API returns.
-
-    `cautions` and `unsupportedSwot` are named at the TOP of the object rather than buried inside
-    the sections they qualify. A caution that has to be found is a caution that will not be read,
-    and the whole value of this analysis rests on a designer seeing "these figures come from one
-    respondent group" before they see the figures.
-    """
     return {
         "observations": findings.observations,
         "cautions": list(findings.cautions),

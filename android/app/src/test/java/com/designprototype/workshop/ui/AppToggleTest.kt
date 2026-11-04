@@ -6,11 +6,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The rules behind every Android setting switch ([AppToggle]): a tap flips the value only when the
- * row is enabled and not mid-change, and the words TalkBack hears say which state it is in. The web's
- * twin is `toggleKeys.ts`.
- */
 class AppToggleTest {
     @Test
     fun interactiveOnlyWhenEnabledAndNotBusy() {

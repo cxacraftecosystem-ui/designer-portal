@@ -9,20 +9,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * A REFUSAL THAT LOOKED LIKE A SUCCESS.
- *
- * `StageSaveResultDto.errors` was decoded off every save this app has ever made and read by NOTHING
- * in `main`. So when the repository refused a value — a bound tightened on the web, a MONEY field sent
- * "65OO", anything `coerce_value` cannot read — the phone went on showing the typed text, the
- * repository went on holding the previous good value (`save_stage` puts it back deliberately), the
- * stage recorded a matching signature so nothing would ever re-send it, and the workshop scored
- * "Backed up to the server".
- *
- * These pin the four sentences that have to stay true, which are set out on [DwStageRefusal]: WHICH
- * question, WHAT the repository now holds, that nothing typed was discarded, and that the save did NOT
- * fail.
- */
 class DwStageRefusalTest {
 
     private val spec = StageDto(
@@ -50,7 +36,6 @@ class DwStageRefusalTest {
         )
     )
 
-    /** The payload shape `buildStageBody` produces: the singleton, then the rows, then `_custom`. */
     private fun entries(rows: Int = 0, custom: Boolean = false): List<StageEntryBody> = buildList {
         add(StageEntryBody(entityKey = "costing", data = JsonObject(emptyMap())))
         repeat(rows) { index ->
@@ -63,8 +48,6 @@ class DwStageRefusalTest {
         pairs.associate { (scope, fields) ->
             scope to buildJsonObject { fields.forEach { (key, message) -> put(key, message) } }
         }
-
-    // ── Which question ───────────────────────────────────────────────────────────────────────────
 
     @Test
     fun `a refused singleton field is named by its label, not its key`() {
@@ -82,13 +65,6 @@ class DwStageRefusalTest {
 
     @Test
     fun `a refused collection row is decoded through the array that was SENT, not by row number`() {
-        /*
-          THE TRAP THIS WHOLE MODULE IS SHAPED BY. `save_stage` keys a collection row's errors by the
-          entry's INDEX IN `payload.entries` — so a stage sending a singleton and three cost lines
-          files them under `costLine[1]`, `costLine[2]`, `costLine[3]`, and the row the designer sees
-          as "1." is index 1, not index 0. Read as a row number, every message lands one row late and
-          the last one lands on no row at all.
-        */
         val report = dwDecodeStageRefusals(
             spec, entries(rows = 3),
             errors(
@@ -121,13 +97,8 @@ class DwStageRefusalTest {
         assertTrue(report.unplaced.isEmpty())
     }
 
-    // ── A key this build has no control for ──────────────────────────────────────────────────────
-
     @Test
     fun `a custom question this build cannot draw is still reported, and says so`() {
-        // The one refusal a designer is least able to work out for themselves: their own question,
-        // added on the web, of a type this handset has no control for. Dropping it would make the
-        // most important message the only invisible one.
         val report = dwDecodeStageRefusals(
             spec, entries(custom = true),
             errors(CUSTOM_ENTITY_KEY to mapOf("sketchOfVat" to "Not a valid value")),
@@ -163,9 +134,6 @@ class DwStageRefusalTest {
 
     @Test
     fun `a scope the payload cannot account for is reported rather than dropped`() {
-        // An index past the end of what we sent, and an entity sitting at that index that is not the
-        // one named. Naming the WRONG row would send a designer to correct an answer nobody objected
-        // to, so the honest answer is to admit the message cannot be placed.
         val report = dwDecodeStageRefusals(
             spec, entries(rows = 1),
             errors(
@@ -188,14 +156,8 @@ class DwStageRefusalTest {
         assertEquals(listOf("costing: the whole entry was rejected"), report.unplaced)
     }
 
-    // ── What the repository now holds ────────────────────────────────────────────────────────────
-
     @Test
     fun `what the repository holds is UNRECORDED until something has actually read it`() {
-        // The save response carries no stored values — measured against `save_stage`'s return, which
-        // is stageKey/saved/created/updated/removed/errors/droppedKeys/droppedCustomKeys/completeness/
-        // transcriptionsQueued/schemaVersion/customSchemaVersion and nothing else. So it says so, in
-        // the word this repository uses for a thing it has not measured.
         val report = dwDecodeStageRefusals(
             spec, entries(), errors("costing" to mapOf("totalCost" to "not a number")),
         )
@@ -230,7 +192,6 @@ class DwStageRefusalTest {
 
         assertEquals("6500", byKey.getValue("totalCost").held.text)
         assertEquals(DwHeldState.HOLDS, byKey.getValue("totalCost").held.state)
-        // `costLine[2]` is the SECOND row of the collection (entry index 2, singleton at 0).
         assertEquals("250", byKey.getValue("amount").held.text)
         assertEquals("3", byKey.getValue("dyeVatCount").held.text)
         assertTrue(byKey.getValue("totalCost").sentence.contains("is still: “6500”"))
@@ -238,8 +199,6 @@ class DwStageRefusalTest {
 
     @Test
     fun `a key the read came back silent about holds NOTHING, which is not the same as UNRECORDED`() {
-        // The read succeeded, so its silence is a measurement. Saying UNRECORDED here would send a
-        // designer looking for a value that is not there.
         val report = dwDecodeStageRefusals(
             spec, entries(), errors("costing" to mapOf("totalCost" to "not a number")),
         )
@@ -247,8 +206,6 @@ class DwStageRefusalTest {
         assertEquals(DwHeldState.NOTHING, filled.refusals.single().held.state)
         assertTrue(filled.refusals.single().sentence.contains("no earlier answer"))
     }
-
-    // ── The sentences a designer actually reads ──────────────────────────────────────────────────
 
     @Test
     fun `the heading says the save did NOT fail, and that nothing typed was thrown away`() {
@@ -274,13 +231,8 @@ class DwStageRefusalTest {
         assertTrue(dwDecodeStageRefusals(spec, entries(), emptyMap()).isEmpty)
     }
 
-    // ── What it costs to ask ─────────────────────────────────────────────────────────────────────
-
     @Test
     fun `a holding already measured is carried, so an unchanged refusal asks for no second read`() {
-        // The screen decodes on EVERY debounced save. A designer who has typed "65OO" and moved on to
-        // the next twenty boxes is refused on every one of those saves, and reading the stage back
-        // each time would spend a request per keystroke-burst on a prepaid connection.
         val first = dwHoldingsFrom(
             dwDecodeStageRefusals(spec, entries(), errors("costing" to mapOf("totalCost" to "not a number"))),
             StageBucketDto(singleton = buildJsonObject { put("totalCost", 6500) }),
@@ -303,8 +255,6 @@ class DwStageRefusalTest {
             dwDecodeStageRefusals(spec, entries(), errors("costing" to mapOf("totalCost" to "not a number"))),
             StageBucketDto(singleton = buildJsonObject { put("totalCost", 6500) }),
         )
-        // A second field is refused now. It has never been measured, so the read is worth making —
-        // and the one that HAS been measured is not asked about again.
         val second = dwCarryHoldings(
             first,
             dwDecodeStageRefusals(
@@ -320,9 +270,6 @@ class DwStageRefusalTest {
 
     @Test
     fun `a refusal that moved to a different row is measured again rather than assumed`() {
-        // Carried on the ADDRESS as well as the field key: the same question refused on row 3 is not
-        // the same question refused on row 1, and quoting row 1's stored value against row 3 would be
-        // confidently wrong — worse than saying UNRECORDED.
         val first = dwHoldingsFrom(
             dwDecodeStageRefusals(
                 spec, entries(rows = 2), errors("costLine[1]" to mapOf("amount" to "not a number")),
@@ -341,17 +288,6 @@ class DwStageRefusalTest {
         assertEquals(DwHeldState.UNRECORDED, moved.refusals.single().held.state)
     }
 
-    // ── A refusal about the whole row, not about a question ──────────────────────────────────────
-    //
-    // `save_stage` gained a version guard on 2026-09-03: a row somebody else saved while this
-    // payload was in flight is left alone and reported under `_row` INSIDE that row's scope, beside
-    // the per-field messages. Every reader of this map takes an entry for a field key, and read that
-    // way the bullet came out as "_row: Someone else saved this row first… this copy of the app has
-    // no box for that question" — a question no designer has ever seen, followed by this build
-    // apologising for not drawing it. Both halves invented, on the one refusal whose remedy is not
-    // the designer's to carry out.
-
-    /** The sentence the API sends, verbatim. `STAGE_ROW_CONFLICT_MESSAGE`, and it arrives complete. */
     private val conflict =
         "Someone else saved this row first — reopen the stage to see the latest before saving again."
 
@@ -364,11 +300,8 @@ class DwStageRefusalTest {
         val refusal = report.refusals.single()
 
         assertTrue(refusal.isRowLevel)
-        // Placed by the same walk of the sent array as any other refusal: entry index 1 is the FIRST
-        // cost line, because the singleton occupies index 0.
         assertEquals(0, refusal.rowIndex)
         assertEquals("costLine[0]", refusal.address)
-        // Named by the entity as the form titles it — never by the protocol key.
         assertEquals("Cost line", refusal.label)
         assertEquals("Cost line (row 1): $conflict", refusal.sentence)
         assertFalse("the reserved key is not a question", refusal.sentence.contains("_row"))
@@ -388,16 +321,9 @@ class DwStageRefusalTest {
             spec, entries(rows = 2),
             errors("costLine[1]" to mapOf(DW_ROW_REFUSAL_KEY to conflict)),
         )
-        // Nothing on any form is keyed `_row`. Handed to the section it would be looked up, not
-        // found, and dropped in silence — the same defect this module exists to end, one level in.
         assertEquals(emptyMap<String, Map<String, String>>(), report.byAddress)
-        // And there is nothing for a stage read to answer, so a contested row must not spend one
-        // request per debounced save to be told the same thing.
         assertFalse(report.needsRead)
 
-        // Measured anyway, the read must not invent a fact: `_row` is absent from every row, and
-        // resolving that absence to NOTHING would print "The repository holds no answer to this
-        // question." under a conflict about a row somebody else has just filled in.
         val measured = dwHoldingsFrom(report, StageBucketDto())
         assertEquals(DwHeldState.UNRECORDED, measured.refusals.single().held.state)
         assertEquals("Cost line (row 1): $conflict", measured.refusals.single().sentence)
@@ -407,17 +333,12 @@ class DwStageRefusalTest {
     fun `a row-level refusal counts once, on both counters that decide what the app claims`() {
         val wire = errors("costLine[1]" to mapOf(DW_ROW_REFUSAL_KEY to conflict))
 
-        // The sync count. It is what `WorkshopSyncStatus.refusedAnswers` sums and therefore what
-        // stops `isFullySynced` scoring a contested row as "Backed up to the server".
         assertEquals(1, dwRefusedAnswerCount(wire))
-        // The card's count, printed by the stage header as "1 refused".
         assertEquals(1, dwDecodeStageRefusals(spec, entries(rows = 2), wire).count)
     }
 
     @Test
     fun `a row refused for a bad value AND for a conflict keeps both, and only the value marks a box`() {
-        // `save_stage` uses `setdefault` precisely so the two can coexist: a typo the designer must
-        // fix, and an edit somebody else made. Neither may erase the other.
         val wire = errors(
             "costLine[1]" to mapOf(
                 "amount" to "Amount must be a number",
@@ -441,8 +362,6 @@ class DwStageRefusalTest {
 
     @Test
     fun `a row-level refusal on the custom container names the section, not the reserved key`() {
-        // `_custom` is not a registry entity and carries no title anywhere in the schema, so the
-        // fallback would have printed the reserved key at a designer.
         val report = dwDecodeStageRefusals(
             spec, entries(custom = true),
             errors(CUSTOM_ENTITY_KEY to mapOf(DW_ROW_REFUSAL_KEY to conflict)),

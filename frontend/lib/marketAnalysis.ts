@@ -1,69 +1,11 @@
-/**
- * Stage 9's computed findings, in the browser — the port of `backend/app/services/market_analysis.py`.
- *
- * WHY A PORT AND NOT A FETCH. The Python module is pure on purpose: no database, no network, no
- * model, just rows in and findings out. That is what lets the same analysis run on the server, on
- * the handset and here, which is the only way a designer standing in the village where the survey
- * was taken gets the same findings as one at a desk. `GET /design-workshops/{id}/market-analysis`
- * exists for a report render and for a device that has never synced stage 8 — it is the fallback,
- * not the source. Everything below runs off the rows this browser already holds in its draft.
- *
- * IT IS A PORT, NOT A SECOND OPINION. When this file and `market_analysis.py` disagree, the Python
- * is right and this is broken. Three things make disagreement easy and are therefore spelled out
- * rather than delegated to a library:
- *
- *  - **The quantile method.** Linear interpolation on (n-1) positions, written out by hand, because
- *    three ports have to agree to the rupee and none of them may depend on a numerics library.
- *  - **The tokeniser.** `[\p{L}\p{M}]+` — and the `\p{M}` is load-bearing. Without it the virama in
- *    ରଙ୍ଗ and the matra in ଦାମ are word boundaries, every Odia word shatters into fragments the
- *    length floor then discards, and "unsupported by the survey" becomes the automatic verdict for
- *    exactly the fieldwork this application exists to collect. JavaScript's `\w` has the same defect
- *    as Python's; the property escapes are the fix in both.
- *  - **Rounding and money formatting.** Python's `round()` and `format(x, ',.0f')` round half to
- *    EVEN; JavaScript's `toFixed` and `Intl.NumberFormat` round half away from zero. They differ on
- *    every exact half — a median of ₹624.50 prints ₹624 on the server and ₹625 here — so
- *    {@link pyRound} implements Python's rule and every figure goes through it.
- *
- * IT REFUSES TO CONCLUDE FROM TOO LITTLE, identically. The sample floors and the UNVERIFIABLE /
- * NO_EVIDENCE verdicts are not defensive clutter to be simplified away: an analysis that produces a
- * confident verdict from four price expectations is worse than none, because the confidence is what
- * gets carried into a document a ministry reads.
- *
- * IT NEVER WRITES TO STAGE 9. Nothing here returns anything a form should be seeded from. The
- * designer's declared bands, SWOT and demand level stay exactly as typed; this produces findings
- * BESIDE them.
- */
-
 import { byCount } from "@/lib/format";
 
-/**
- * Below this many observations, quantiles are not reported at all. Five is the smallest sample for
- * which a quartile describes a spread rather than an accident of two numbers.
- */
 export const MIN_SAMPLE_FOR_QUANTILES = 5;
 
-/**
- * Below this many observations, a declared band gets no verdict. Deliberately higher than the
- * quantile floor: showing a spread from six numbers is honest, telling a designer their band is
- * WRONG from six numbers is not.
- */
 export const MIN_SAMPLE_FOR_VERDICT = 8;
 
-/**
- * A band is called NARROW when it covers less of the observed market than this. Not a statistical
- * threshold and not presented as one — it is the point at which "your band misses most of the
- * people you asked" becomes worth interrupting a designer to say.
- */
 export const NARROW_COVERAGE = 0.55;
 
-/**
- * Words too common to carry evidence. Kept small and English-only ON PURPOSE: the survey text is
- * frequently Odia, Hindi or transliterated, and a large English stop list would strip the rare words
- * that make a match meaningful in exactly the responses that matter most.
- *
- * Only words of three letters or more survive {@link MIN_TOKEN} anyway, so the one- and two-letter
- * articles are absent from this list rather than missing from it.
- */
 const STOPWORDS = new Set([
   "and", "are", "but", "for", "from", "has", "have", "its", "not", "our", "that", "the",
   "their", "there", "they", "this", "was", "were", "will", "with", "you", "more", "most",
@@ -71,121 +13,29 @@ const STOPWORDS = new Set([
   "may", "might", "also", "very", "much", "many"
 ]);
 
-/**
- * The shortest run of letters kept as a content word. Two-letter fragments are noise in every script
- * the survey is written in, and the stop list already removes the English ones that matter.
- */
 const MIN_TOKEN = 3;
 
-/**
- * How many content words a SWOT point and a survey response must share before the response is
- * offered as support. Two, because one shared word is a coincidence at this vocabulary size and
- * three misses a short point ("price too high") against a short response.
- */
 const SUPPORT_OVERLAP = 2;
 
-/**
- * A token is a maximal run of characters whose Unicode general category is L (letter) or M
- * (combining mark). See the file header for why the marks cannot be dropped — this single character
- * class is the difference between an Odia survey being analysed and being reported as empty.
- */
 const WORD_RUN = /[\p{L}\p{M}]+/gu;
 
-/**
- * What Python's `float()` accepts, once whitespace and grouping commas are gone.
- *
- * `Number()` is NOT that grammar: it reads `"0x1A"` as 26 and `""` as 0, both of which Python
- * refuses, so a hexadecimal-looking scrap in a price column would become a price here and nothing
- * there. Underscores are allowed between digits because Python allows them. `inf`/`nan` are
- * deliberately absent — they parse in Python and are then rejected as non-finite, so refusing them
- * one step earlier is the same answer.
- *
- * `\p{Nd}` RATHER THAN `\d`, AND THE `u` FLAG IS WHAT MAKES IT MEAN THAT (2026-09-03). JavaScript's
- * `\d` is ASCII-only, while `float()` runs its text through a decimal transform first and therefore
- * reads ANY Unicode decimal digit: `float("୧୨୩")` is 123.0 and so is `float("١٢٣")`, on a handset
- * whose keyboard can produce both. The ASCII gate refused them, and `Number()` behind it would have
- * refused them again — so on `m09-comma-grouped-and-unicode-digits` this browser read 8 of the 10
- * price observations the server read and then described the shorter sample it was left with: a
- * median of ₹670 against ₹545, a 25th percentile of ₹338.75 against ₹123. Those are the figures
- * stage 9's panel prints and the .docx carries, so it was the panel and the report disagreeing about
- * one workshop with nothing on either saying a number had been dropped. `DwPy.PY_FLOAT` has been
- * spelled `\p{Nd}` since it was written; this is the web catching up to the handset, not a new rule.
- *
- * The grammar is only half of it. Accepting Odia digits buys nothing unless something folds them
- * before `Number()`, which reads none — see {@link asciiDigits}.
- */
 const PY_FLOAT =
   /^[+-]?(?:\p{Nd}+(?:_\p{Nd}+)*(?:\.(?:\p{Nd}+(?:_\p{Nd}+)*)?)?|\.\p{Nd}+(?:_\p{Nd}+)*)(?:[eE][+-]?\p{Nd}+(?:_\p{Nd}+)*)?$/u;
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Python-compatible primitives
- *
- * Every helper in this block exists because the obvious JavaScript answer is subtly not Python's.
- * They are not general utilities and belong to nothing else.
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/** One row of a stage entity, exactly as it is stored. `DwRow` and a decoded API row both fit. */
 export type MarketRow = Record<string, unknown>;
 
-/**
- * Python's `str.strip()`, character for character.
- *
- * `String.prototype.trim()` IS NOT THAT SET, AND IT IS WRONG IN BOTH DIRECTIONS (2026-09-03).
- * ECMAScript's WhiteSpace is `Zs` plus a short named list plus the byte-order mark U+FEFF. Python's
- * `str.strip()` follows `str.isspace()`, which is `Zs`/`Zl`/`Zp` plus U+0009 to U+000D, the four
- * separators U+001C to U+001F, and the next-line U+0085; and which does not count U+FEFF at all. So
- * `trim()` walks straight past a next-line that Python strips, and strips a byte-order mark that
- * Python leaves attached. Either way a stored value is read on one client and not on the other.
- *
- * The first of those is the whole of `m28-python-whitespace-forms`, and that case is worth reading
- * as its consequences rather than as a character. Pad the stored values with next-lines and: a price
- * of five hundred rupees is unreadable, so the observation quietly leaves the sample; a competitor's
- * price is unreadable, so that product disappears and takes its category's entire distribution with
- * it; a band's lower bound reads as absent, so a band that could have been called SOUND is reported
- * NO_EVIDENCE under a sentence about missing data; a respondent's name carries its invisible padding
- * into `supportedBy`; and an `evidence` field holding nothing but padding counts as evidence, which
- * flips `hasOwnEvidence` on a SWOT point. None of it draws on a screen, so the panel simply disagrees
- * with the server and the handset about one workshop, and says nothing.
- *
- * THE CHARACTERS ARE NAMED HERE RATHER THAN TYPED. An invisible U+0085 inside this comment would be
- * unreadable in every diff and every review of it, which is the defect the case above is made of.
- * `android/app/src/test/resources/dw-analysis-cases.json` is where they are spelled out, as `\u`
- * escapes, next to the table's own note on why they must not be tidied away.
- *
- * `DwPy.strip` states the same set as `isWhitespace || isSpaceChar || U+0085`, which is the JVM's
- * vocabulary for these characters. The two spellings are one set.
- */
 const PY_SPACE = /\p{White_Space}/u;
 
-/** Whether Python's `str.isspace()` is true of one character. */
-/** A count and its noun, agreed: "1 price observation", "3 price observations" (DA-38). The Python's `_count`. */
 function countOf(count: number, noun: string): string {
   return count === 1 ? `${count} ${noun}` : `${count} ${noun}s`;
 }
 
 function isPySpace(character: string): boolean {
   const code = character.charCodeAt(0);
-  // 28 to 31 are U+001C to U+001F, the four `\p{White_Space}` leaves out. Written as numbers because
-  // an escape for them becomes a literal control character the moment a tool decodes it, and a
-  // character class carrying one is a hazard no reader of the diff can see.
   if (code >= 28 && code <= 31) return true;
   return PY_SPACE.test(character);
 }
 
-/**
- * `text` with the runs Python would strip removed from both ends.
- *
- * Code UNITS rather than code points, and safely: every character in the set is BMP, so a surrogate
- * half can never satisfy {@link isPySpace} and a pair can never be cut down the middle.
- *
- * EXPORTED SINCE 2026-09-03, AND IT WAS PRIVATE ON PURPOSE BEFORE THAT. `costIntegrity.ts` is the
- * second consumer: its two label reads mirrored `cost_integrity.py`'s `.strip()` with `trim()`, so
- * a line item padded with U+0085 was named "an unnamed line" in the browser and by its real name on
- * the server and the handset (`DwCostIntegrity.kt` calls `DwPy.strip` at both). The export is the
- * whole of the fix — the alternative was a second implementation of this set, which is exactly the
- * drift this comment exists to prevent. Anything else in the web client reaching for `trim()` on a
- * value the Python `.strip()`s should import this rather than write a third one.
- */
 export function pyStrip(text: string): string {
   let start = 0;
   let end = text.length;
@@ -194,24 +44,13 @@ export function pyStrip(text: string): string {
   return start === 0 && end === text.length ? text : text.slice(start, end);
 }
 
-/** Whether Python would read this value as falsy — which is what `value or ""` turns into `""`. */
 function pythonFalsy(value: unknown): boolean {
   if (value === null || value === undefined || value === false || value === 0 || value === "") return true;
   if (Array.isArray(value)) return value.length === 0;
-  // NaN is deliberately NOT falsy: it is truthy in Python, so `str(nan or "")` is `"nan"`, and
-  // JavaScript's `!NaN` would have produced `""` and a different token set.
   if (typeof value === "object") return Object.keys(value as object).length === 0;
   return false;
 }
 
-/**
- * Python's `str(value)`, as far as the tokeniser can tell the difference.
- *
- * Only letter runs survive tokenising, so an exact `repr` is not needed — what is needed is the same
- * letters in the same order. `JSON.stringify` gives that for arrays and objects (`{"a":"blue"}` and
- * `{'a': 'blue'}` tokenise identically), and the three scalars whose Python spelling differs are
- * written out.
- */
 function pyStr(value: unknown): string {
   if (typeof value === "string") return value;
   if (value === null || value === undefined) return "None";
@@ -225,18 +64,10 @@ function pyStr(value: unknown): string {
   }
 }
 
-/** Python's `str(value or "")`. */
 function pyText(value: unknown): string {
   return pythonFalsy(value) ? "" : pyStr(value);
 }
 
-/**
- * Python's string ordering, which is by CODE POINT.
- *
- * JavaScript's `<` compares UTF-16 code units, so an astral character sorts before U+E000 there and
- * after it in Python. Survey tags and respondent names are the things being sorted and a stable,
- * identical order across the three clients is the only reason any of this is sorted at all.
- */
 function comparePyStrings(a: string, b: string): number {
   const left = [...a];
   const right = [...b];
@@ -249,7 +80,6 @@ function comparePyStrings(a: string, b: string): number {
   return left.length === right.length ? 0 : left.length < right.length ? -1 : 1;
 }
 
-/** Add one to a string of decimal digits, growing it when it carries past the front. */
 function addOne(digits: string): string {
   const out = digits.split("");
   let index = out.length - 1;
@@ -265,29 +95,11 @@ function addOne(digits: string): string {
   return `1${out.join("")}`;
 }
 
-/**
- * Python's `sum()` over floats, which since CPython 3.12 is COMPENSATED and not a running total.
- *
- * A `for` loop and `reduce((a, b) => a + b)` are both naive accumulators. CPython 3.12 gave `sum()`
- * the improved Kahan-Babuška algorithm by Neumaier, and `backend/Dockerfile` pins
- * `PYTHON_VERSION=3.12`, so the compensated answer is the one that actually ships and the obvious
- * JavaScript is the one that is wrong. The two agree until a sample mixes magnitudes far enough
- * apart that the small values fall off the bottom of the accumulator as they are added; if the
- * extremes then cancel, the server still has the small ones and a running total has already lost
- * them. Sorted prices of `[-1e308, 400, 600, 1e308]` give the server a mean of 250 and a running
- * total a mean of 0 — the same stage 9 figure, in two copies of one report.
- *
- * THE COMPENSATION IS FOLDED BACK ONLY WHILE THE RUNNING TOTAL IS FINITE. The compensation term for
- * a step that overflows is itself infinite, so adding it back unconditionally turns a real overflow
- * into a NaN and prints "₹nan" against the server's "₹inf".
- */
 export function pySum(values: Iterable<number>): number {
   let total = 0;
   let compensation = 0;
   for (const value of values) {
     const stepped = total + value;
-    // The larger magnitude keeps its bits; the smaller is what the step lost, and that is exactly
-    // what the compensation has to carry.
     compensation +=
       Math.abs(total) >= Math.abs(value) ? total - stepped + value : value - stepped + total;
     total = stepped;
@@ -295,37 +107,8 @@ export function pySum(values: Iterable<number>): number {
   return Number.isFinite(total) ? total + compensation : total;
 }
 
-/**
- * Python's `round(value, digits)` — correct rounding of the EXACT binary value, ties to even.
- *
- * THIS IS NOT `toFixed`. `(0.125).toFixed(2)` is `"0.13"` because the specification says to pick the
- * larger candidate on a tie; `round(0.125, 2)` is `0.12` because Python rounds to the even digit.
- * Every figure in the payload goes through `round()` on the server, so a coverage of 1/32 or a mean
- * of ₹0.125 would differ in the last place between the two clients — and the whole claim this module
- * makes is that they do not.
- *
- * `toFixed(digits + 25)` is the exact decimal expansion as far as it can matter: a genuine tie means
- * the expansion terminates at `digits + 1`, so anything beyond is zeros, and a non-tie is decided
- * long before twenty-five further digits.
- */
 export function pyRound(value: number, digits: number): number {
   if (!Number.isFinite(value)) return value;
-  /*
-    TWO EXITS BEFORE THE DECIMAL EXPANSION, EACH FOR A VALUE THIS FUNCTION USED TO GET WRONG.
-
-    ABOVE 2^53 EVERY DOUBLE IS AN INTEGER, so rounding one to any number of decimal places is the
-    identity — which is exactly what `round(1e308, 2)` answers in Python. The expansion below could
-    not reach that answer: `toFixed` is specified to fall back to `ToString(x)` at 1e21 and above, so
-    `(1e308).toFixed(27)` is the string "1e+308", the digit-walking then builds "1e+308.00", and
-    `Number` of that is NaN. It reached a real caution — a cost line entered as `1e308` printed
-    "₹nan" where the server prints "₹inf" — and it is pinned by `k28-orphan-total-overflows`.
-
-    NEGATIVE ZERO IS A DISTINCT VALUE AND PYTHON KEEPS IT: `round(-0.0, 2)` is `-0.0`, and the JSON
-    a client compares against carries `-0`. `value < 0` is false for `-0`, so the sign was dropped
-    and a difference of exactly zero on a sheet whose declared figure is below its computed one came
-    out as `0` where the server says `-0`. `money0` and `fixed0` beside this already made the same
-    distinction; this did not. Pinned by `k26-live-workshop`.
-  */
   if (Math.abs(value) >= Number.MAX_SAFE_INTEGER) return value;
   const negative = value < 0 || Object.is(value, -0);
   const text = Math.abs(value).toFixed(Math.min(100, digits + 25));
@@ -355,80 +138,35 @@ export function pyRound(value: number, digits: number): number {
   return negative ? -result : result;
 }
 
-/** Python's `format(value, ".0f")` — half to even, no grouping. */
 function fixed0(value: number): string {
   const negative = value < 0 || Object.is(value, -0);
   return `${negative ? "-" : ""}${pyRound(Math.abs(value), 0).toFixed(0)}`;
 }
 
-/**
- * Python's `format(value, ",.0f")` — half to even, with grouping commas.
- *
- * Not `Intl.NumberFormat`: its default rounding mode is `halfExpand`, and it is also locale-sensitive
- * where this must not be (an Indian locale groups as 1,00,000, and the server prints 100,000).
- */
 function money0(value: number): string {
   const negative = value < 0 || Object.is(value, -0);
   const body = pyRound(Math.abs(value), 0).toFixed(0);
   return `${negative ? "-" : ""}${body.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
 }
 
-/**
- * The rupee figures in the sentences above, for a screen that prints one BESIDE them.
- *
- * Exported so a summary card and the verdict under it cannot group differently: ₹1,00,000 in one and
- * ₹100,000 in the other read as two different numbers to anybody skimming, and the sentence is the
- * one that has to be matched because it is the server's.
- */
 export function formatRupeeAmount(value: number): string {
   return money0(value);
 }
 
-/** Content words of `text`, lowercased. See {@link WORD_RUN} for the tokenising rule. */
 function tokens(text: string): Set<string> {
   const out = new Set<string>();
   for (const match of (text || "").matchAll(WORD_RUN)) {
     const word = match[0].toLowerCase();
-    // Counted in CODE POINTS, as Python counts them: `.length` would read an astral letter as two
-    // and let a one-character word through the floor.
     if ([...word].length >= MIN_TOKEN && !STOPWORDS.has(word)) out.add(word);
   }
   return out;
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Reading the stored values
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/** Anything outside printable ASCII, which is the only text {@link asciiDigits} has work to do on. */
 const NON_ASCII = /[^ -~]/;
 
-/** One Unicode decimal digit, for the walk in {@link asciiDigits}. */
 const ONE_DIGIT = /\p{Nd}/u;
 
-/**
- * Unicode decimal digits folded to ASCII, so `Number()` can read what Python's `float()` reads.
- *
- * `float()` puts its text through a decimal transform before parsing, so every Nd character is worth
- * its decimal value there; `Number()` knows `0`-`9` and nothing else, and answers NaN for the Odia
- * and Arabic-Indic spellings of 123. JavaScript exposes no digit-VALUE function at all, so the value
- * is derived from Unicode's own rule that Nd characters come in contiguous decades beginning at that
- * script's zero: walk down at most nine code points while the character is still Nd, and the
- * distance travelled IS the digit.
- *
- * NFKC FIRST, AND IT IS NOT TIDINESS — it is what makes that walk unambiguous. The Mathematical
- * Alphanumeric digits U+1D7CE to U+1D7FF are five decades with no gap between them, so a walk down
- * from one of them would stroll into the decade above it and read the wrong digit. Every one of them
- * carries a compatibility decomposition to an ASCII digit, so NFKC removes the only abutting family
- * before the walk can meet it. Running it over the whole string is safe here because the caller has
- * already matched {@link PY_FLOAT}: nothing is left but a sign, digits, a dot, underscores and `e`.
- *
- * `DwPy.asciiDigits` reaches the same answer through `Character.digit`, which the JVM has and the
- * browser does not. Added 2026-09-03 with the `\p{Nd}` half of {@link PY_FLOAT}; neither is any use
- * without the other.
- */
 function asciiDigits(text: string): string {
-  // The overwhelming majority of stored prices are ASCII already, and ASCII needs none of this.
   if (!NON_ASCII.test(text)) return text;
   let out = "";
   for (const character of text.normalize("NFKC")) {
@@ -444,26 +182,9 @@ function asciiDigits(text: string): string {
   return out;
 }
 
-/**
- * `value` as a finite number, or null.
- *
- * MONEY is stored as a fixed-2 STRING and may carry grouping commas, so this is the one place that
- * knows how to read it. Non-finite is rejected rather than propagated: a NaN entering a quantile
- * silently poisons every figure downstream of it, and a report that prints "₹ NaN" has already been
- * submitted by the time anybody notices.
- *
- * THE TWO NON-OBVIOUS STEPS ARE {@link pyStrip} AND {@link asciiDigits}, and they are here rather
- * than at the call sites because this is the ONLY place a stored money value is read. `trim()` and
- * an ASCII digit gate each dropped observations the server kept, silently, and the arithmetic
- * downstream then described a smaller sample with no sign that it had.
- */
 export function asNumber(value: unknown): number | null {
   if (value === null || value === undefined || typeof value === "boolean") return null;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  // Python reads `str(value)`, and every other shape a stage field can hold — a tag list, a GEO
-  // object, a rich-text document — stringifies to something `float()` refuses. Refusing them here is
-  // the same answer reached sooner, and it closes the one place the two languages disagree:
-  // `String([5])` is `"5"`, so a one-element list would have become a price here and nothing there.
   if (typeof value !== "string") return null;
   const text = pyStrip(value).replace(/,/g, "");
   if (!text) return null;
@@ -472,20 +193,7 @@ export function asNumber(value: unknown): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
-/**
- * The `q`-quantile of an ALREADY SORTED list, by linear interpolation on (n-1) positions.
- *
- * Specified rather than delegated, because this and `market_analysis.quantile` must produce the same
- * rupee figure. The method is numpy's default:
- *
- *     position = q * (n - 1);  lower = floor(position);  upper = ceil(position)
- *     result   = v[lower] + (v[upper] - v[lower]) * (position - lower)
- *
- * The caller sorts. That is not laziness — every caller here computes several quantiles from one
- * sample, and sorting inside would turn one sort into five.
- */
 export function quantile(sortedValues: number[], q: number): number {
-  // Zero is a price. Returning it for "no data" would print ₹0 into a cost table.
   if (!sortedValues.length) throw new Error("quantile of an empty sample");
   if (sortedValues.length === 1) return sortedValues[0];
   const position = q * (sortedValues.length - 1);
@@ -495,28 +203,14 @@ export function quantile(sortedValues: number[], q: number): number {
   return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * (position - lower);
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The findings
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * One price somebody named, and who named it.
- *
- * `label` exists so a finding can be traced back to the row that produced it. An analysis a designer
- * cannot audit is one they have to take on faith, and the whole purpose of this module is to replace
- * faith with arithmetic.
- */
 export type PriceObservation = {
   amount: number;
   category: string;
-  /** RESPONDENT | COMPETITOR — what a buyer will pay and what the shelf charges are different facts. */
   source: "RESPONDENT" | "COMPETITOR";
-  /** The RESPONDENT_GROUP token, for respondent observations. */
   group: string;
   label: string;
 };
 
-/** A sample's shape. `quantilesReported` is false when the sample was too small to describe. */
 export type Distribution = {
   count: number;
   minimum: number;
@@ -528,23 +222,12 @@ export type Distribution = {
   quantilesReported: boolean;
 };
 
-/**
- * The distribution of `values`, or null for an empty sample.
- *
- * Below {@link MIN_SAMPLE_FOR_QUANTILES} the quartiles are filled with the median and
- * `quantilesReported` is false, so a caller that ignores the flag shows something defensible rather
- * than a quartile computed from two numbers.
- */
 export function describe(values: number[]): Distribution | null {
   if (!values.length) return null;
   const ordered = [...values].sort((a, b) => a - b);
   const count = ordered.length;
   const median = quantile(ordered, 0.5);
   const enough = count >= MIN_SAMPLE_FOR_QUANTILES;
-  // Summed in sorted order and through {@link pySum}, because the server's `sum(ordered)` differs
-  // from the obvious loop in BOTH respects: order, because floating-point addition is not
-  // associative, so a mean summed over the original order can differ from one summed over the
-  // sorted array; and algorithm, because CPython 3.12's `sum()` is compensated.
   const total = pySum(ordered);
   return {
     count,
@@ -558,15 +241,6 @@ export function describe(values: number[]): Distribution | null {
   };
 }
 
-/**
- * What the survey says about one declared price band.
- *
- *   SOUND         the band covers most of the observed market
- *   NARROW        the band excludes most of it, without being wholly on one side
- *   LOW / HIGH    the band sits below / above where the evidence clusters
- *   UNVERIFIABLE  too few observations to say anything (NOT a criticism of the band)
- *   NO_EVIDENCE   no observations in this category at all
- */
 export type BandVerdictKind = "SOUND" | "NARROW" | "LOW" | "HIGH" | "UNVERIFIABLE" | "NO_EVIDENCE";
 
 export type BandVerdict = {
@@ -582,7 +256,6 @@ export type BandVerdict = {
   message: string;
 };
 
-/** One sentence a designer can act on, naming the numbers rather than grading the designer. */
 function bandMessage(
   verdict: BandVerdictKind,
   category: string,
@@ -614,13 +287,6 @@ function bandMessage(
     `would match what was recorded.`;
 }
 
-/**
- * Compare one declared band against every price observed in its category.
- *
- * A reversed band (low > high) is read in the order the designer meant rather than refused: the two
- * boxes are adjacent on a phone and transposing them is a slip, not a claim, and answering a slip
- * with "no verdict" would hide the real finding underneath it.
- */
 export function judgeBand(
   category: string,
   low: unknown,
@@ -667,9 +333,6 @@ export function judgeBand(
   const coverage = inside / dist.count;
 
   if (dist.count < MIN_SAMPLE_FOR_VERDICT) {
-    // NOT a criticism of the band. Seven observations cannot tell a designer their considered band
-    // is wrong, and a designer told so by a machine counting seven numbers will — correctly — stop
-    // believing the tool. The counts are still reported; they may look and decide for themselves.
     return {
       category, declaredLow, declaredHigh, evidence: dist, inside, below, above, coverage,
       verdict: "UNVERIFIABLE",
@@ -690,7 +353,6 @@ export function judgeBand(
   };
 }
 
-/** Where one competitor product sits among the prices observed in its category. */
 export type CompetitorPosition = {
   name: string;
   seller: string;
@@ -701,13 +363,6 @@ export type CompetitorPosition = {
   note: string;
 };
 
-/**
- * Place each competitor product in its category's respondent price distribution.
- *
- * Positioned against what BUYERS said they would pay, not against the other competitors — the useful
- * question for a designer is "is this shelf price above or below what the people we asked are
- * willing to spend", and a competitor-only comparison cannot answer it.
- */
 export function positionCompetitors(
   competitors: MarketRow[],
   observations: PriceObservation[]
@@ -729,29 +384,11 @@ export function positionCompetitors(
   const out: CompetitorPosition[] = [];
   for (const row of competitors) {
     const price = asNumber(row.price);
-    // Skipped rather than counted as zero: a competitor with no price recorded is a row somebody has
-    // not finished, and ₹0 on a shelf is a claim about the market that nobody made.
     if (price === null) continue;
     const category = pyText(row.category);
-    // `pyStrip` and not `trim()` at every one of these: each mirrors a `str.strip()` on the server,
-    // and a name that keeps invisible padding here is a name the report prints differently (2026-09-03).
     const name = pyStrip(pyText(row.name)) || "Unnamed product";
     const seller = pyStrip(pyText(row.seller));
 
-    /*
-      CATEGORY-MATCHED IF POSSIBLE, POOLED IF NOT, AND THE MESSAGE SAYS WHICH.
-
-      A respondent's price expectation carries NO category — stage 8 asks what they would pay, not
-      what for — so a strict category lookup finds nothing for almost every competitor and the whole
-      section reads "too few buyer price expectations" against a survey of forty people. That is not
-      a cautious answer, it is a useless one, and it is the opposite of what `judgeBand` does above:
-      that one already pools the uncategorised observations. The two must not disagree about the
-      same sample.
-
-      So the fallback is used and DECLARED. "Against all buyers asked" is a weaker statement than
-      "against buyers asked about this category", and a designer has to be able to tell them apart to
-      know how much weight to put on the number.
-    */
     let sample = byCategory.get(category) ?? [];
     const matched = sample.length >= MIN_SAMPLE_FOR_QUANTILES;
     if (!matched) sample = pooled;
@@ -771,7 +408,6 @@ export function positionCompetitors(
     const whose = matched
       ? `the ${sample.length} buyers asked about ${category}`
       : `all ${sample.length} buyers asked`;
-    // "Above 20% of buyers" is a true sentence that reads as a boast. Say "below 80%" instead.
     const comparison = percentile >= 0.5 ? "above" : "below";
     const share = percentile >= 0.5 ? percentile : 1 - percentile;
     out.push({
@@ -783,32 +419,19 @@ export function positionCompetitors(
   return out;
 }
 
-/** Whether one SWOT point is backed by something a respondent actually said. */
 export type SwotSupport = {
   kind: string;
   point: string;
   supportedBy: string[];
   overlap: number;
   hasOwnEvidence: boolean;
-  /** A point that cited its own evidence is supported by definition — the designer named a source. */
   supported: boolean;
 };
 
-/**
- * Match each SWOT point to the survey responses that share its vocabulary.
- *
- * THIS IS A RETRIEVAL AID, NOT A JUDGEMENT, and the distinction is the reason it can ship without a
- * model behind it. Shared words mean a response is worth reading next to the point, nothing more;
- * the designer decides whether it supports the claim. What it does reliably is the negative case — a
- * SWOT point sharing no vocabulary with any of forty responses and carrying no evidence of its own
- * is an assertion, and saying so is worth more than any positive match.
- */
 export function linkSwotEvidence(swot: MarketRow[], responses: MarketRow[]): SwotSupport[] {
   const prepared: { name: string; tokens: Set<string> }[] = [];
   for (const row of responses) {
     let text = ["response", "productsDiscussed", "place"].map((key) => pyText(row[key])).join(" ");
-    // A tag list contributes its members again as plain words. It costs nothing (the token set
-    // already holds them) and it is what the server does, so the two cannot drift apart here.
     if (Array.isArray(row.productsDiscussed)) {
       text += ` ${row.productsDiscussed.map((tag) => pyStr(tag)).join(" ")}`;
     }
@@ -818,12 +441,8 @@ export function linkSwotEvidence(swot: MarketRow[], responses: MarketRow[]): Swo
   const out: SwotSupport[] = [];
   for (const row of swot) {
     const point = pyStrip(pyText(row.point));
-    // A blank point is dropped rather than reported unsupported: an empty row in the table is a row
-    // somebody has not typed yet, not an unevidenced claim.
     if (!point) continue;
     const kind = pyText(row.kind);
-    // An `evidence` field holding nothing but padding is NOT evidence, and `trim()` read one as if it
-    // were — `hasOwnEvidence` true here and false on the server, about the same SWOT point.
     const own = pyStrip(pyText(row.evidence)).length > 0;
     const wanted = tokens(point);
     const matches: { shared: number; name: string }[] = [];
@@ -846,24 +465,12 @@ export function linkSwotEvidence(swot: MarketRow[], responses: MarketRow[]): Swo
   return out;
 }
 
-/** Products that respondents mentioned together, and how often. */
 export type TrendCluster = {
   members: string[];
   mentions: number;
   coOccurrences: number;
 };
 
-/**
- * Group the products respondents discussed by how often they came up in the same conversation.
- *
- * Co-occurrence rather than a topic model, deliberately. It is explainable to the designer whose
- * data it is ("these three were mentioned together nine times"), it is stable — the same rows give
- * the same clusters every run, which a k-means seeded at random does not — and it runs in
- * milliseconds on a handset. A model here would buy nothing that a designer could check.
- *
- * Single-link agglomeration over pairs seen at least twice: two products join when they were
- * discussed together, and a chain of such pairs becomes one cluster.
- */
 export function clusterProducts(
   responses: MarketRow[],
   { minimumMentions = 2, limit = 8 }: { minimumMentions?: number; limit?: number } = {}
@@ -871,7 +478,6 @@ export function clusterProducts(
   const tagLists: string[][] = [];
   for (const row of responses) {
     const raw = row.productsDiscussed;
-    // Android and the web both hand TAGS across as a list, but a hand-edited draft may not.
     const tags: unknown[] = Array.isArray(raw) ? raw : pyText(raw).split(",");
     const unique = new Set<string>();
     for (const tag of tags) {
@@ -888,9 +494,6 @@ export function clusterProducts(
     for (const tag of tags) mentions.set(tag, (mentions.get(tag) ?? 0) + 1);
     for (let i = 0; i < tags.length; i += 1) {
       for (let j = i + 1; j < tags.length; j += 1) {
-        // Python keys this on a TUPLE, which cannot be ambiguous. A joined STRING key can be:
-        // on a space, ["a b", "c"] and ["a", "b c"] produce the same key, and "floor mat" is a
-        // real tag in this survey. NUL cannot occur in a tag, so it is the one safe separator.
         const key = `${tags[i]}\u0000${tags[j]}`;
         const existing = pairs.get(key);
         if (existing) existing.seen += 1;
@@ -899,8 +502,6 @@ export function clusterProducts(
     }
   }
 
-  // Union-find over the pairs that recur. A pair seen once is two people who happened to say the
-  // same two words; at two it is worth showing.
   const parent = new Map<string, string>();
   for (const tag of mentions.keys()) parent.set(tag, tag);
   const find = (start: string): string => {
@@ -933,7 +534,6 @@ export function clusterProducts(
 
   const clusters: TrendCluster[] = [];
   for (const [root, members] of groups) {
-    // A single mention is not a trend and is not promoted to one.
     if (!(members.length > 1 || (mentions.get(members[0]) ?? 0) >= minimumMentions)) continue;
     let total = 0;
     for (const member of members) total += mentions.get(member) ?? 0;
@@ -949,7 +549,6 @@ export function clusterProducts(
   return clusters.slice(0, limit);
 }
 
-/** Python's tuple comparison over two member lists: elementwise, then by length. */
 function compareMembers(a: string[], b: string[]): number {
   const shared = Math.min(a.length, b.length);
   for (let i = 0; i < shared; i += 1) {
@@ -959,7 +558,6 @@ function compareMembers(a: string[], b: string[]): number {
   return a.length - b.length;
 }
 
-/** Everything this module concluded, plus what it could not conclude and why. */
 export type MarketFindings = {
   observations: number;
   respondentPrices: Distribution | null;
@@ -973,14 +571,6 @@ export type MarketFindings = {
   cautions: string[];
 };
 
-/**
- * Every price in stage 8, tagged with where it came from.
- *
- * A respondent's `priceExpectation` carries no category of its own — the survey form asks what they
- * would pay, not what for — so it inherits `defaultCategory` when one is known and is otherwise
- * pooled under "". Pretending to a category it does not have would put a buyer's answer about a
- * stole into the price band for floor coverings.
- */
 export function collectObservations(
   responses: MarketRow[],
   competitors: MarketRow[],
@@ -1012,12 +602,6 @@ export function collectObservations(
   return out;
 }
 
-/**
- * The whole of stage 9's Advanced tier, from the rows of stages 8 and 9.
- *
- * Every argument is a list of stage entry `data` objects exactly as they are stored, so a caller has
- * nothing to reshape and the browser can pass what it already holds.
- */
 export function analyse({
   responses,
   competitors,
@@ -1055,8 +639,6 @@ export function analyse({
       category,
       row.lowPrice,
       row.highPrice,
-      // Uncategorised observations are pooled into every band, which is what makes a real survey
-      // answerable at all: stage 8 records what a buyer would pay without asking what for.
       observations.filter((observation) => observation.category === category || !observation.category)
     );
   });
@@ -1076,9 +658,6 @@ export function analyse({
     );
   }
   if (groupCounts.size) {
-    // The first-inserted group wins a tie, which is what Python's `most_common` does — it decorates
-    // with a decreasing index so ties break by position, and two clients disagreeing about WHICH
-    // group dominates would print two different cautions from one set of rows.
     let dominant = "";
     let dominantCount = -1;
     let total = 0;
@@ -1117,10 +696,6 @@ export function analyse({
   };
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The wire form
- * ──────────────────────────────────────────────────────────────────────────── */
-
 export type DistributionPayload = {
   count: number;
   minimum: number;
@@ -1141,7 +716,6 @@ export type BandPayload = {
   below: number;
   above: number;
   coverage: number;
-  /** One of {@link BandVerdictKind} — typed loosely because the server may know a verdict this build does not. */
   verdict: string;
   message: string;
 };
@@ -1167,14 +741,6 @@ export type SwotPayload = {
 
 export type ClusterPayload = { members: string[]; mentions: number; coOccurrences: number };
 
-/**
- * Exactly what `GET /design-workshops/{id}/market-analysis` returns.
- *
- * `cautions` and `unsupportedSwot` are named at the TOP of the object rather than buried inside the
- * sections they qualify. A caution that has to be found is a caution that will not be read, and the
- * whole value of this analysis rests on a designer seeing "these figures come from one respondent
- * group" before they see the figures. The panel renders them in this order for the same reason.
- */
 export type MarketFindingsPayload = {
   observations: number;
   cautions: string[];
@@ -1203,7 +769,6 @@ function distributionPayload(dist: Distribution | null): DistributionPayload | n
   };
 }
 
-/** The findings in the shape the endpoint returns, so one renderer serves both sources. */
 export function marketFindingsPayload(findings: MarketFindings): MarketFindingsPayload {
   const byCategory: Record<string, DistributionPayload | null> = {};
   for (const category of [...findings.byCategory.keys()].sort(comparePyStrings)) {
@@ -1260,7 +825,6 @@ export function marketFindingsPayload(findings: MarketFindings): MarketFindingsP
   };
 }
 
-/** The findings for one workshop's stage-8 and stage-9 rows, in the endpoint's shape. */
 export function analysePayload(input: {
   responses: MarketRow[];
   competitors: MarketRow[];

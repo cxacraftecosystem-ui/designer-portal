@@ -1,31 +1,3 @@
-"""The richer usage aggregates, and the one route that reads a named person's trail.
-
-THE FAILURE THIS FILE EXISTS TO STOP IS A REFUSAL RENDERED AS A MEASUREMENT. ``services/usage.py``
-withholds any figure computed from fewer than ``MIN_IDENTIFIED_USERS_FOR_ROUTE`` identified accounts
-— every metric ``null``, ``withheld`` true — and ``null`` coerces to 0 through arithmetic, through
-``??`` and through Kotlin's ``?: 0``. Four new endpoints multiply the places that can go wrong, and
-a CHART multiplies it again: a plotted zero looks like a measurement while a gap looks like a gap.
-So every new metric is asserted to withhold, and the ranking endpoint is asserted to EXCLUDE
-withheld routes from both orderings rather than sorting them to an end.
-
-THE SECOND FAILURE IS A CAP NOBODY IS TOLD ABOUT, which `analytics.ROW_CAP` records as
-indistinguishable from a dataset that ends there. Three caps are new — the bucket count, the trail
-page and the named-template list — and each is asserted to be REFUSED with the number in the sentence
-rather than quietly truncated.
-
-THE THIRD IS THE ONE THAT MATTERS MOST AND HAS THE FEWEST TESTS PER LINE OF CODE:
-``GET /usage/accounts/{user_id}/trail`` reads one named colleague's request-by-request log. It is
-asserted to refuse every rank below master admin, to refuse a subject who declined AND a subject
-nobody has asked — with a SENTENCE rather than an empty list, because an empty list is read as "this
-person has never used the app" — and to 404 an unknown account rather than answer as though it had
-been silent.
-
-NOTHING HERE TOUCHES A DATABASE. ``db.query_raw`` is a delegate that dispatches on the statement it
-was handed and returns canned rows, which is how the fold, the floor and the bucket-filling can be
-asserted independently of Postgres. The statements themselves are exercised against a live Postgres
-separately; what is under test here is everything that happens to the rows afterwards.
-"""
-
 import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -44,27 +16,14 @@ from app.services import usage
 TEMPLATE = "/design-workshops/{workshop_id}"
 OTHER_TEMPLATE = "/artisans/{artisan_id}"
 
-#: A window fixed rather than relative to "now", so a run cannot straddle a boundary and start
-#: asserting a different number of buckets.
 SINCE = datetime(2026, 8, 1, tzinfo=UTC)
 UNTIL = datetime(2026, 8, 4, tzinfo=UTC)
 
 SUBJECT_ID = "ckv9r2m4x0001qz8h3n7d2f5g"
 
 
-# --------------------------------------------------------------------------------------
-# The fakes
-# --------------------------------------------------------------------------------------
-
 
 class _RawQueries:
-    """``db.query_raw``, dispatching on the statement it was handed.
-
-    Keyed on a fragment that only one of the three statements contains, rather than on call order:
-    a test that stubs one shape must not be satisfiable by another, and an ordering key would make
-    every one of these tests depend on the order the routes happen to issue their queries in.
-    """
-
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.timeline: list[dict[str, Any]] = []
@@ -83,8 +42,6 @@ class _RawQueries:
 
 
 class _EventTable:
-    """``db.usageevent``: the grouping the older aggregates use, and the row read the trail uses."""
-
     def __init__(self) -> None:
         self.groups: list[dict[str, Any]] = []
         self.rows: list[Any] = []
@@ -130,7 +87,6 @@ def _event(index: int, *, at: datetime, status: int = 200) -> Any:
 
 @pytest.fixture
 def store(monkeypatch: pytest.MonkeyPatch) -> Iterator[SimpleNamespace]:
-    """A fake ``db`` across every module that holds a reference to the real one."""
     raw = _RawQueries()
     events = _EventTable()
     users = _UserTable()
@@ -156,13 +112,6 @@ _CALLER: dict[str, Any] = {"user": None}
 
 
 def _read_app() -> FastAPI:
-    """The read routes with the identity overridden and THE GATES LEFT REAL.
-
-    ``require_usage_reader`` and ``require_person_usage_reader`` both depend on
-    ``get_current_user``, and FastAPI applies a dependency override to nested dependencies too — so
-    overriding the identity leaves both rank checks running against the account under test.
-    Overriding the gates instead would produce tests that assert nothing.
-    """
     application = FastAPI()
     application.include_router(usage_routes.router)
     application.dependency_overrides[deps.get_current_user] = lambda: _CALLER["user"]
@@ -199,32 +148,13 @@ def _bucket(label: str, **overrides: Any) -> dict[str, Any]:
     return row
 
 
-# --------------------------------------------------------------------------------------
-# The timeline
-# --------------------------------------------------------------------------------------
-
 
 async def test_the_timeline_fills_empty_buckets_with_zero_and_withholds_thin_ones(
     store: SimpleNamespace, caller: dict[str, Any]
 ) -> None:
-    """**THREE STATES A CHART MUST NOT CONFLATE, AND THE MIDDLE ONE IS THE TRAP.**
-
-    * A bucket with traffic reports its figures.
-    * A bucket with NO traffic reports ZERO and is not omitted. A missing point is read as "no data
-      here"; a zero is read as "nothing happened here", and only the second is true of a day this API
-      was awake for.
-    * A bucket used by fewer than the floor's worth of identified people is WITHHELD: every figure
-      null, ``withheld`` true. It is a refusal, and a chart that treats null as 0 draws it at the
-      bottom of the axis, indistinguishable from the empty day two points to its left.
-
-    THE FLOOR IS PER BUCKET AND NOT PER SERIES, deliberately and more strictly. A series-level check
-    would let a day used by one person ride through inside a window used by fifty — and the window is
-    chosen by whoever is asking, so it can be narrowed until only one person is left in it.
-    """
     caller["user"] = SimpleNamespace(id="a-1", role="ADMIN")
     store.raw.timeline = [
         _bucket("2026-08-01T00:00:00Z", requests=40, ok=38, server_errors=2, identified_users=9),
-        # Day two is absent from the result set entirely: no rows in that range.
         _bucket("2026-08-03T00:00:00Z", requests=6, identified_users=2),
     ]
 
@@ -266,14 +196,6 @@ async def test_the_timeline_fills_empty_buckets_with_zero_and_withholds_thin_one
 async def test_a_bucket_with_no_identified_people_at_all_is_reported_in_full(
     store: SimpleNamespace, caller: dict[str, Any]
 ) -> None:
-    """ROWS WITH NO ACCOUNT DO NOT COUNT TOWARDS THE FLOOR, AND THAT IS NOT A HOLE IN IT.
-
-    The floor protects identified people; a row that identifies nobody cannot de-anonymise anybody.
-    Counting them would withhold the sign-in routes, which are almost entirely unauthenticated — and
-    "the sign-in page is slow for the people who cannot get in" is named in the schema as precisely
-    the thing this record exists to be able to show. A reader "restoring consistency" here would
-    silently delete that capability.
-    """
     caller["user"] = SimpleNamespace(id="a-1", role="ADMIN")
     store.raw.timeline = [_bucket("2026-08-01T00:00:00Z", requests=900, identified_users=0)]
 
@@ -289,13 +211,6 @@ async def test_a_bucket_with_no_identified_people_at_all_is_reported_in_full(
 async def test_an_hourly_timeline_wider_than_the_bucket_cap_is_refused_with_the_arithmetic(
     store: SimpleNamespace, caller: dict[str, Any]
 ) -> None:
-    """REFUSED, NOT TRUNCATED — because a truncated series looks exactly like a period in which
-    nothing happened, which is the worst possible way for a cap to be silent.
-
-    The refusal carries the bucket count that was asked for AND the cap, so the next attempt can be
-    right first time rather than by bisection. And it happens before any database work: a refusal
-    that costs a 756 ms round trip teaches people to fear the endpoint.
-    """
     caller["user"] = SimpleNamespace(id="a-1", role="ADMIN")
     wide = SINCE + timedelta(days=200)
 
@@ -316,12 +231,6 @@ async def test_an_hourly_timeline_wider_than_the_bucket_cap_is_refused_with_the_
 async def test_a_bucket_finer_than_an_hour_does_not_exist(
     store: SimpleNamespace, caller: dict[str, Any]
 ) -> None:
-    """THERE IS NO 'EVERY FIVE MINUTES', AND THE REFUSAL SAYS WHY.
-
-    Below an hour, a series over a screen a few people use is one person's afternoon on a page
-    labelled *aggregates* — and the withholding floor cannot save it, because the floor is a count of
-    people and a five-minute bucket with five people in it is still five people's five minutes.
-    """
     caller["user"] = SimpleNamespace(id="a-1", role="ADMIN")
 
     response = await _get(
@@ -335,26 +244,10 @@ async def test_a_bucket_finer_than_an_hour_does_not_exist(
     assert store.raw.calls == []
 
 
-# --------------------------------------------------------------------------------------
-# Latency
-# --------------------------------------------------------------------------------------
-
 
 async def test_latency_reports_three_percentiles_and_withholds_them_under_the_floor(
     store: SimpleNamespace, caller: dict[str, Any]
 ) -> None:
-    """**THE NUMBERS NO OTHER ROUTE CAN PRODUCE, AND THE THIRD STATE BESIDE THEM.**
-
-    ``avgDurationMs`` everywhere else is a count-weighted mean of per-group means: exact as a mean,
-    and carrying no information whatever about a tail. A screen averaging 120 ms with a p95 of four
-    seconds is broken for one request in twenty and looks healthy in ``/usage/routes``. So the
-    percentiles come from the raw column and cannot be reconstructed from anything stored.
-
-    THREE OUTCOMES, AND ONLY TWO OF THEM ARE ABOUT PRIVACY. A screen with traffic reports; a screen
-    under the floor is WITHHELD; and a screen with NO traffic reports null percentiles with
-    ``withheld`` FALSE — "there is no distribution" is a different fact from "the distribution is not
-    being shown", and rendering the two alike would put a refusal and an empty week in the same cell.
-    """
     caller["user"] = SimpleNamespace(id="a-1", role="ADMIN")
     store.raw.latency = [
         {
@@ -412,22 +305,10 @@ async def test_latency_reports_three_percentiles_and_withholds_them_under_the_fl
     )
 
 
-# --------------------------------------------------------------------------------------
-# The client split
-# --------------------------------------------------------------------------------------
-
 
 async def test_the_client_split_names_every_known_client_and_explains_the_api_fallback(
     store: SimpleNamespace, caller: dict[str, Any]
 ) -> None:
-    """THE COLUMN HAS ALWAYS EXISTED AND NOTHING SENDS THE HEADER, SO THE ANSWER IS HONEST AND DULL.
-
-    Every known client is emitted whether or not it appears, so a client with no traffic reads as a
-    zero rather than as an absence and the shape of the answer does not change on the day somebody
-    adds two header lines. And when traffic IS filed under the fallback, the response says what that
-    means — ``api`` is "a request that did not say what it was", not a third kind of client — because
-    a reader who takes it as a client will report that the platform is used by a machine.
-    """
     caller["user"] = SimpleNamespace(id="a-1", role="ADMIN")
     store.raw.clients = [
         {
@@ -473,36 +354,16 @@ async def test_the_client_split_names_every_known_client_and_explains_the_api_fa
     )
 
 
-# --------------------------------------------------------------------------------------
-# The ranking
-# --------------------------------------------------------------------------------------
-
 
 async def test_the_screen_ranking_excludes_withheld_routes_from_both_orderings(
     store: SimpleNamespace, caller: dict[str, Any]
 ) -> None:
-    """**THE WHOLE REASON THIS ROUTE EXISTS RATHER THAN LETTING A CLIENT SORT.**
-
-    A withheld route carries ``null`` in every metric. ``null`` sorts as 0 through JavaScript's
-    comparator and through Kotlin's ``?: 0``, so a naive "slowest first" ranking puts every screen
-    the server REFUSED to report at the fast end and a naive "busiest" ranking buries them at the
-    bottom. Either way a refusal is rendered as a measurement, on a page a person will read as a
-    finding.
-
-    So withheld routes are EXCLUDED from both orderings rather than placed in them, and counted, so
-    the ranking can be read as covering less than the whole scope. A screen with no traffic is
-    excluded from "slowest" too — it has no average because there was nothing to average, and ranking
-    it as instantaneous is the same defect wearing a third hat.
-    """
     caller["user"] = SimpleNamespace(id="a-1", role="ADMIN")
     store.events.groups = [
-        # A busy, slow, well-used screen.
         {"routeTemplate": TEMPLATE, "statusCode": 200, "_count": {"_all": 500},
          "_avg": {"durationMs": 900.0}, "_max": {"durationMs": 4000}},
-        # A quieter but properly-aggregatable one.
         {"routeTemplate": "/tools/{tool_id}", "statusCode": 200, "_count": {"_all": 50},
          "_avg": {"durationMs": 20.0}, "_max": {"durationMs": 40}},
-        # The one that must not be ranked: two identified people.
         {"routeTemplate": OTHER_TEMPLATE, "statusCode": 200, "_count": {"_all": 300},
          "_avg": {"durationMs": 5000.0}, "_max": {"durationMs": 9000}},
     ] + [
@@ -547,10 +408,6 @@ async def test_the_screen_ranking_excludes_withheld_routes_from_both_orderings(
     )
 
 
-# --------------------------------------------------------------------------------------
-# Caps and gates common to all four
-# --------------------------------------------------------------------------------------
-
 
 @pytest.mark.parametrize(
     "path", ["/usage/timeline", "/usage/latency", "/usage/clients", "/usage/screens"]
@@ -558,17 +415,6 @@ async def test_the_screen_ranking_excludes_withheld_routes_from_both_orderings(
 async def test_every_new_aggregate_states_its_caps_and_is_refused_to_a_designer(
     store: SimpleNamespace, caller: dict[str, Any], path: str
 ) -> None:
-    """TWO RULES THAT MUST HOLD FOR EVERY NEW METRIC, ASSERTED OVER ALL FOUR AT ONCE.
-
-    **The gate is the server's.** A designer is refused the cross-account aggregates for the reason
-    ``can_manage_designer_roster`` gates a READ at Admin: this is a record of what colleagues did.
-    Adding a fourth endpoint without the dependency is the shape of mistake that ships — the route
-    works, the link is hidden, and the URL is open. This repository has done it twice.
-
-    **A cap that is announced is a cap; a cap that is silent is a lie.** Every successful answer
-    carries its limits, on the SUCCESS path and not only in the refusal, because a bound learned by
-    tripping over it is a bound that gets tripped over.
-    """
     caller["user"] = SimpleNamespace(id="d-1", role="DESIGNER")
     application = _read_app()
 
@@ -592,13 +438,6 @@ async def test_every_new_aggregate_states_its_caps_and_is_refused_to_a_designer(
 async def test_naming_more_templates_than_the_cap_is_refused_rather_than_truncated(
     store: SimpleNamespace, caller: dict[str, Any], path: str
 ) -> None:
-    """THE IN-LIST IS AN INDEX STRATEGY AND NOT A PREFERENCE.
-
-    Every one of these statements is ``routeTemplate IN (...)`` plus a date range — a bounded set of
-    probes on ``@@index([routeTemplate, createdAt])``. The list becomes a bitmap of index probes,
-    which is cheap while it is short and stops being an index strategy when it is long. Truncating
-    the list would answer a question nobody asked and label it with the templates that were.
-    """
     caller["user"] = SimpleNamespace(id="a-1", role="ADMIN")
     too_many = [
         ("template", f"/screen-{index}") for index in range(usage.MAX_TEMPLATES_PER_QUERY + 1)
@@ -620,14 +459,6 @@ async def test_naming_more_templates_than_the_cap_is_refused_rather_than_truncat
 async def test_a_deployment_with_no_registered_route_table_is_refused_with_the_cause(
     store: SimpleNamespace, caller: dict[str, Any]
 ) -> None:
-    """AN EMPTY PAGE WOULD BE READ AS "THESE SCREENS WERE NEVER USED", WHICH IS THE OPPOSITE FACT.
-
-    With no ``template`` named, these endpoints default to the mounted route table — which
-    ``main._mounted_route_templates`` installs at startup and REFUSES to install when it cannot vouch
-    for it (it logs at ERROR and registers nothing, leaving the shape rules as the defence). In that
-    state the recorder is still writing rows, so answering "no screens" would be a false statement
-    about a system that is measuring normally. The refusal names the cause and the next move.
-    """
     caller["user"] = SimpleNamespace(id="a-1", role="ADMIN")
     assert usage.known_templates() == frozenset(), "the fixture clears the allow-list"
 
@@ -640,25 +471,10 @@ async def test_a_deployment_with_no_registered_route_table_is_refused_with_the_c
     assert store.raw.calls == []
 
 
-# --------------------------------------------------------------------------------------
-# The trails
-# --------------------------------------------------------------------------------------
-
 
 async def test_a_person_may_read_their_own_trail_and_it_is_ordered_so_paging_is_total(
     store: SimpleNamespace, caller: dict[str, Any]
 ) -> None:
-    """NO NEW PERMISSION, AND THE ORDERING IS PART OF THE CORRECTNESS RATHER THAN A PREFERENCE.
-
-    ``/usage/me/trail`` is ``get_current_user`` because a person reading what the system recorded
-    about them exercises no privilege — and it is what makes the consent notice's "you can see
-    exactly what we hold about you" true rather than aspirational.
-
-    **THE TIE-BREAK ON ``id`` IS LOAD-BEARING.** Two requests can share a millisecond — the timestamp
-    is stamped when the response finished and this API serves in parallel — so ordering on
-    ``createdAt`` alone is not a total order, and a paged read over a non-total order silently skips
-    and repeats rows at the page boundary. The query is asserted, not just the answer.
-    """
     caller["user"] = SimpleNamespace(id="d-1", role="DESIGNER", usageConsent="GRANTED")
     store.events.rows = [
         _event(index, at=SINCE + timedelta(hours=index), status=200 if index else 500)
@@ -687,9 +503,6 @@ async def test_a_person_may_read_their_own_trail_and_it_is_ordered_so_paging_is_
 async def test_the_trail_page_is_capped_and_the_cap_is_stated(
     store: SimpleNamespace, caller: dict[str, Any]
 ) -> None:
-    """A TRAIL IS THE ONE SHAPE HERE THAT REPLAYS AN AFTERNOON, so the page is small and deliberate
-    friction. Over the cap is a 422 from the query validator rather than a silent truncation, and
-    the cap rides on every successful answer as well."""
     caller["user"] = SimpleNamespace(id="d-1", role="DESIGNER", usageConsent="GRANTED")
     application = _read_app()
 
@@ -710,18 +523,6 @@ async def test_the_trail_page_is_capped_and_the_cap_is_stated(
 async def test_the_account_trail_refuses_every_rank_below_master_admin(
     store: SimpleNamespace, caller: dict[str, Any], role: str
 ) -> None:
-    """**ADMIN IS REFUSED, AND THAT IS THE ASSERTION THAT MATTERS.**
-
-    ``can_read_usage`` puts the AGGREGATES at Admin on the argument that a record of what colleagues
-    did is more revealing than the roster — which is itself gated at Admin purely because it shows
-    institutional standing. A named person's minute-by-minute trail is strictly more revealing again
-    than that aggregate: the aggregate cannot say who, and this says nothing else. So it cannot sit
-    at the same rank, and the ladder already has the precedent one rung up.
-
-    The parametrisation includes ADMIN precisely because the tempting "simplification" is to reuse
-    ``require_usage_reader`` here — a diff whose only visible change is the removal of a function,
-    and which hands every administrator in the institution a colleague's browsing history.
-    """
     caller["user"] = SimpleNamespace(id="who-1", role=role)
     store.users.rows[SUBJECT_ID] = SimpleNamespace(id=SUBJECT_ID, usageConsent="GRANTED")
 
@@ -746,17 +547,6 @@ async def test_the_account_trail_refuses_every_rank_below_master_admin(
 async def test_the_account_trail_refuses_a_non_consenting_subject_with_a_sentence(
     store: SimpleNamespace, caller: dict[str, Any], state: str, phrase: str
 ) -> None:
-    """**A SENTENCE, NEVER AN EMPTY LIST — the exact defect ``/usage/me``'s own docstring names.**
-
-    An account that refused, or that nobody has asked, has no attributed rows at all: ``collection_
-    plan`` attributes under GRANTED alone. So the honest answer is not "here are zero rows", which is
-    read as "this person has never used the app", but a statement of why there is nothing.
-
-    TWO DIFFERENT SENTENCES, because the next moves differ — ``gate_refusal``'s rule one consent
-    question over. NOT_RECORDED is answered by them being asked at their next sign-in. REFUSED has
-    already been answered, and telling an administrator to go and ask again is how somebody learns
-    that a refusal is negotiable.
-    """
     caller["user"] = SimpleNamespace(id="m-1", role="MASTER_ADMIN")
     store.users.rows[SUBJECT_ID] = SimpleNamespace(id=SUBJECT_ID, usageConsent=state)
 
@@ -772,8 +562,6 @@ async def test_the_account_trail_refuses_a_non_consenting_subject_with_a_sentenc
 async def test_the_account_trail_404s_an_unknown_account_rather_than_answering_empty(
     store: SimpleNamespace, caller: dict[str, Any]
 ) -> None:
-    """"NO SUCH ACCOUNT" AND "THIS ACCOUNT DID NOTHING" ARE DIFFERENT FACTS, and a reader who cannot
-    tell them apart will report the second."""
     caller["user"] = SimpleNamespace(id="m-1", role="MASTER_ADMIN")
 
     response = await _get(_read_app(), "/usage/accounts/nobody/trail", params=_range())
@@ -785,21 +573,6 @@ async def test_the_account_trail_404s_an_unknown_account_rather_than_answering_e
 async def test_the_master_admin_reads_a_consenting_subject_and_the_rows_carry_their_own_consent(
     store: SimpleNamespace, caller: dict[str, Any], caplog: pytest.LogCaptureFixture
 ) -> None:
-    """THE ONE CASE THAT SUCCEEDS, AND THE THREE THINGS IT MUST CARRY WITH IT.
-
-    * The subject's id echoed back, so a payload cannot be mistaken for somebody else's.
-    * ``consentState`` on every ROW, not folded away. The account's current answer is not the same
-      fact as the consent each row was collected under: somebody may have agreed part-way through
-      the window, in which case the earlier part is genuinely empty and the rows that exist all say
-      GRANTED.
-    * A notice, in the response, saying this is one named person's trail — the aggregates carry
-      ``notes`` for the same reason, and this is the payload where the reader most needs telling.
-
-    AND THE READ IS LOGGED. There is no durable audit table — the usage table cannot record this
-    read, because ``/usage/*`` is in ``UNRECORDED_TEMPLATES`` so the dataset is not a record of
-    itself — so one server log line naming the reader, the subject and the window is what exists, and
-    the route says so rather than implying more.
-    """
     caller["user"] = SimpleNamespace(id="m-1", role="MASTER_ADMIN")
     store.users.rows[SUBJECT_ID] = SimpleNamespace(
         id=SUBJECT_ID,

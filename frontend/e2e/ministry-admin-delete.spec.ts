@@ -2,25 +2,11 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { API, apiToken, bearer, CREDENTIALS_MISSING, PASSWORD, signInWithToken } from "./support/session";
 
-/**
- * A Ministry Admin sees Delete, and what they delete comes back (owner, 2026-10-20). Signed in, in a
- * browser, against a running stack (`e2e-live.yml` seeds the accounts below).
- *
- * The rule under test is `canDeleteRecords = isContentAdmin(user)`, WHETHER OR NOT admin view is on
- * (owner, 2026-10-21): every Delete reads it, so a Ministry Admin must see the questionnaire's Delete,
- * each sitting's Delete and a record page's "Danger zone" even with admin view off, and a designer
- * must see none of them. Deleting a questionnaire or a sitting is a SOFT delete, so the same Ministry
- * Admin then restores both from the screen — restoring stays in admin view.
- *
- *   npx playwright test e2e/ministry-admin-delete.spec.ts
- */
-
 test.skip(Boolean(CREDENTIALS_MISSING), CREDENTIALS_MISSING);
 
 const MINISTRY_ADMIN_EMAIL = process.env.E2E_MINISTRY_ADMIN_EMAIL ?? "ministryadmin@example.org";
 const DESIGNER_EMAIL = process.env.E2E_DESIGNER_EMAIL ?? "designer@example.org";
 
-/** Signed in as `email`; admin view switched on before the first page reads it. */
 async function signInAs(page: Page, email: string, adminView: boolean): Promise<string> {
   const token = await apiToken(page.request, email, PASSWORD);
   await signInWithToken(page, token);
@@ -30,14 +16,12 @@ async function signInAs(page: Page, email: string, adminView: boolean): Promise<
         const sub = String(JSON.parse(atob(value.split(".")[1] ?? "")).sub ?? "");
         if (sub) window.localStorage.setItem(`field_repo_admin_view:${sub}`, "on");
       } catch {
-        // Not a JWT: the Delete assertions say what is missing.
       }
     }, token);
   }
   return token;
 }
 
-/** An unattached questionnaire with one sitting, made through the API as the Ministry Admin. */
 async function questionnaireWithASitting(page: Page, token: string, stamp: number) {
   const created = await page.request.post(`${API}/api/questionnaires`, {
     headers: bearer(token),
@@ -69,7 +53,6 @@ test("a Ministry Admin in admin view sees Delete, deletes, and restores", async 
   await page.goto(`/questionnaires/${form.id}`);
   await expect(page.getByRole("heading", { name: form.title })).toBeVisible();
 
-  // The sitting's Delete, then its restore.
   const sittingRow = page.locator("li").filter({ hasText: respondent }).first();
   await expect(sittingRow.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
   await sittingRow.getByRole("button", { name: "Delete", exact: true }).click();
@@ -80,7 +63,6 @@ test("a Ministry Admin in admin view sees Delete, deletes, and restores", async 
   await expect(deleted).toBeHidden();
   await expect(page.locator("li").filter({ hasText: respondent }).first()).toBeVisible();
 
-  // The questionnaire's own Delete, then its restore from the trash on the list.
   await page.getByRole("button", { name: "Delete", exact: true }).first().click();
   await confirmDelete(page);
   await expect(page).toHaveURL(/\/questionnaires$/);
@@ -96,7 +78,6 @@ test("a Ministry Admin in admin view sees Delete, deletes, and restores", async 
   expect(body.entries.map((entry) => entry.respondentName)).toEqual([respondent]);
 });
 
-/** The first artisan on the stack, or a skip: the Danger zone needs a record page to end. */
 async function firstArtisanId(page: Page, token: string): Promise<string> {
   const list = await page.request.get(`${API}/api/artisans?pageSize=1`, { headers: bearer(token) });
   expect(list.ok(), await list.text()).toBeTruthy();
@@ -114,7 +95,6 @@ test("a Ministry Admin with admin view OFF still sees Delete and the Danger zone
   await expect(page.getByRole("heading", { name: form.title })).toBeVisible();
   const sittingRow = page.locator("li").filter({ hasText: `Respondent ${stamp}` }).first();
   await expect(sittingRow.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
-  // Restoring is still admin view's: the trash is not drawn with it off.
   await expect(page.getByRole("region", { name: "Deleted answers" })).toHaveCount(0);
 
   await page.goto(`/artisans/${await firstArtisanId(page, token)}`);

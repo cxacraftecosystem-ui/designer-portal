@@ -1,16 +1,3 @@
-"""Artisan QR cards through the API, against a real database.
-
-Pinned here: a card is issued once however many first reads race; a reissue revokes and the old
-code answers REPLACED; resolve finds by QR and by typed code, refuses a mistyped code (422) and a
-forged tag (404), and limits misses but never hits; every route is 404 while cards are off; the PDFs
-are the right size and print the masked Aadhaar and never a 12-digit run; a sheet prints ceil(n/10)
-A4 pages and refuses a request naming an artisan that can't be printed; the register list carries
-the card; the backfill is idempotent.
-
-The seed follows tests/test_workshop_join_sync.py: rows are written in a private event loop before
-the TestClient starts, and the tests then drive the client only.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -44,7 +31,6 @@ SHEET_COUNT = 12
 
 
 def _fingerprint(seed: str) -> str:
-    """A stand-in Aadhaar fingerprint: the schema stores one beside every last four, never alone."""
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
@@ -135,15 +121,12 @@ def world():
                     }
                 )
                 sheet.append(row.id)
-            # The backfill, twice: the second run issues nothing.
             _seen_dry, missing_dry, issued_dry = await backfill_artisan_cards.run(apply=False)
             first = await backfill_artisan_cards.run(apply=True)
             second = await backfill_artisan_cards.run(apply=True)
             backfilled = await db.artisancard.count(
                 where={"artisanId": {"in": sheet}, "revokedAt": None}
             )
-            # The racer's card is issued by the API, below, so the backfill must not have reached it:
-            # wipe whatever it issued for that one artisan.
             await db.artisancard.delete_many(where={"artisanId": racer.id})
             return {
                 "admin": admin.id,

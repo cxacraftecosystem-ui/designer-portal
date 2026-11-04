@@ -1,22 +1,5 @@
 "use client";
 
-/**
- * Join cards on the web: print one, show it once, print it on paper, and list and cancel the cards
- * printed for this workshop. The handset's `DwJoinCardsPanel` (WorkshopCodesScreen.kt), over the same
- * routes and under the same server rules — see `lib/joinCards.ts` for which rules those are and why
- * none of them is re-decided here.
- *
- * THE FRESH CARD LIVES IN STATE AND NOWHERE ELSE. The server keeps only a digest and the last four
- * characters, so the symbol drawn below is the only copy outside paper. It is not written to the
- * draft, to browser storage or to the address bar, and leaving the page loses it — which the card
- * itself says, in the same words as the handset.
- *
- * NOT ADMIN-GATED. Anybody who can open the workshop may print a SINGLE-USE card (three unused at a
- * time); a card for more than one person, and the number of days, are offered to an admin only, and
- * the server refuses them to anybody else in its own words. Somebody who serves on the workshop as
- * its inspector or a director is refused by the server too, and that sentence is shown as given.
- */
-
 import { Toggle } from "@/components/ui/Toggle";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Ban, Loader2, Printer, QrCode } from "lucide-react";
@@ -37,11 +20,9 @@ import { isAdmin } from "@/lib/permissions";
 import { encodeQr, qrSvgPath } from "@/lib/qrEncode";
 import { formatWorkshopCodeForPrint } from "@/lib/workshopCodes";
 
-/** What the card says about itself — the handset's `designWorkshopJoinCardPurposeMessage`, verbatim. */
 export const JOIN_CARD_PURPOSE =
   "Lets one person join this workshop. Treat it like a key — don't photograph or forward it. It expires after use or in a few weeks.";
 
-/** The same purpose, for an admin's card good for several people. */
 function purposeFor(card: JoinCard): string {
   if (card.maxUses === 1) return JOIN_CARD_PURPOSE;
   const who = card.maxUses === null ? "any number of people" : `up to ${card.maxUses} people`;
@@ -66,10 +47,6 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (character) => `&#${character.charCodeAt(0)};`);
 }
 
-/**
- * Print one card on its own sheet, from a window of its own, so the page's chrome and every other
- * card stay off the paper. Answers false when the browser blocked the window.
- */
 function printCard(card: JoinCard, symbol: NonNullable<CardSymbol>, workshopTitle: string): boolean {
   const opened = window.open("", "_blank", "width=640,height=820");
   if (!opened) return false;
@@ -101,10 +78,8 @@ export function JoinCardsPanel({
   workshopTitle,
   shareable
 }: {
-  /** The workshop's id on the server. */
   workshopId: string;
   workshopTitle: string;
-  /** False for a workshop that exists only in this browser — there is nothing to print a card for. */
   shareable: boolean;
 }) {
   const { user } = useAuth();
@@ -115,7 +90,6 @@ export function JoinCardsPanel({
   const [listed, setListed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  /** The card just printed, SECRET INCLUDED. In memory only — see the header. */
   const [minted, setMinted] = useState<JoinCard | null>(null);
 
   const [label, setLabel] = useState("");
@@ -123,11 +97,6 @@ export function JoinCardsPanel({
   const [anyNumber, setAnyNumber] = useState(false);
   const [days, setDays] = useState(String(JOIN_CARD_DEFAULT_DAYS));
 
-  /**
-   * True when this account is not one that prints cards for this workshop — its inspector or a
-   * director reading it, say. The list answers the ordinary 404 for them, and the panel then says who
-   * does print cards instead of offering a button that would be refused.
-   */
   const [notIssuer, setNotIssuer] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -147,7 +116,6 @@ export function JoinCardsPanel({
   }, [workshopId]);
 
   useEffect(() => {
-    // A different workshop drops the previous one's fresh card: it is not this workshop's key.
     setMinted(null);
     setListed(false);
     setNotIssuer(false);
@@ -185,7 +153,6 @@ export function JoinCardsPanel({
     setNotice(null);
     try {
       await revokeJoinCard(card.id);
-      // A symbol left on screen for a card that no longer works is how somebody hands over a dead card.
       if (minted?.id === card.id) setMinted(null);
       await refresh();
     } catch (error) {

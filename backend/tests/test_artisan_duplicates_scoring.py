@@ -1,9 +1,3 @@
-"""The duplicate-artisan scorer against ``shared/duplicate-score-vectors.json``, plus its pieces.
-
-No database: the scorer is pure. The vector file is identical in both portals, so a change to the
-weights, caps, honorifics or phonetic rules is a change to both or to neither.
-"""
-
 from __future__ import annotations
 
 import json
@@ -21,7 +15,7 @@ VECTORS = json.loads((_ROOT / "shared" / "duplicate-score-vectors.json").read_te
 def test_vector(vector):
     a, b = d.profile_from_dict(vector["a"]), d.profile_from_dict(vector["b"])
     expect = vector["expect"]
-    for left, right in ((a, b), (b, a)):  # symmetric: a pair is stored once, in id order
+    for left, right in ((a, b), (b, a)):
         explained = d.explain_pair(left, right)
         if expect["score"] is None:
             assert explained is None
@@ -43,9 +37,6 @@ def test_vectors_cover_the_cases_the_contract_names():
                    "different gender", "far apart", "0.90", "0.75", "0.60"):
         assert needle in names, needle
 
-
-# The sections the Field Repository wrote first. The file is one file in both portals, so both
-# scorers answer every section.
 
 
 def test_thresholds_match_the_vector_file():

@@ -1,59 +1,5 @@
 name: Android build
 
-# Stage 3 of 3:  deploy-backend.yml → deploy-frontend.yml → [ THIS ]
-#
-# ─── WHY LAST, AND WHY IT STILL RUNS WHEN A DEPLOY FAILED ─────────────────────────────
-# This stage builds and checks the APK; it does not deploy anything. (Shipping a build to
-# devices is a separate, deliberate act: the in-app OTA updater compares versionCode against
-# a release-signed APK published by a `v*` tag push — publish-android.yml, docs/CI.md §1.4. Nothing here can
-# reach a phone.) So it is ordered last purely as a dependency courtesy: it is the cheapest
-# stage and the least urgent, and putting it ahead of the deploys would delay them.
-#
-# But note there is deliberately NO `conclusion == 'success'` gate on the trigger, unlike
-# deploy-frontend.yml. A build+test gate's inputs are the source tree, not the state of the
-# servers: if the EC2 deploy fails, "does the Android app still compile?" is a question you
-# want answered *more* urgently, not less. Suppressing it would hide a Kotlin compile break
-# behind an unrelated infrastructure failure and you would not find it until the next push.
-# (deploy-frontend.yml's gate job always runs for the same reason — it keeps this workflow
-# reachable even when it decides not to publish.)
-#
-# Pull requests also build directly, without waiting on the chain: nothing is deployed from
-# a PR, so there is nothing to order against, and a contributor should get the compile
-# result on the PR itself rather than after their merge lands on main.
-#
-# THE `paths:` FILTER ON THAT PR TRIGGER IS NARROW ON PURPOSE, and for a long time it was also
-# the reason a PR touching only `backend/` and `frontend/` ran NOTHING: this was the only workflow
-# with a `pull_request` trigger at all, and it declined. That hole is covered by `checks.yml`, which
-# runs the backend suite and the web checks on every pull request with no path filter. Keep it that
-# way: if you ever find yourself widening the filter below to get some non-Android guard to run, the
-# guard belongs in checks.yml, not in a job that installs an Android SDK to reach it.
-#
-# ─── THE ONE EXCEPTION, AND IT IS NOT A HYPOTHETICAL ──────────────────────────────────
-#
-# This note used to justify the filter with "a backend-only change cannot break a Kotlin compile".
-# THAT SENTENCE IS FALSE, and it has already cost this repository a day.
-#
-# `backend/app/services/stage_definitions.py` is the source of the 160 KB
-# `android/app/src/main/assets/design-workshop-schema.json` that is COMPILED INTO THE APK, and at
-# least six Kotlin tests read that asset off disk and assert against it — `DwWorkshopSearchRegistryTest`,
-# `DwParentGroupTest`, `DwReferenceCarryParityTest`, `DwConditionalRequirementTest`,
-# `DwAnalysisParityTest` and `DocxContentTest`. Two of them assert COUNTS ("N of the M entities take
-# the untouched path"), so adding one field to the registry can turn them red without a line of
-# Kotlin changing.
-#
-# On 2026-08-24 exactly that happened: a registry wave shipped with every backend and web gate green
-# and broke five of these tests. The registry wave's gate never ran the Android suite; the Android
-# wave's gate was forbidden from touching registry files. Each stayed correctly in its lane and the
-# failure sat in the gap between them — which is precisely what a path filter is.
-#
-# So the registry's own inputs and its dumped output are in the filter now. This is NOT the widening
-# the paragraph above forbids: it is not reaching for a non-Android guard, it is naming the two
-# non-Android files that this Android job's own assertions are computed from. The test to apply to a
-# future addition here is that one — does a change to this path alter what a Kotlin test asserts? —
-# and for everything else in `backend/` the answer is still no, and it still belongs in checks.yml.
-#
-# No repository secrets are required by this workflow.
-
 on:
   workflow_run:
     workflows: ["Deploy frontend to Vercel"]
@@ -63,57 +9,19 @@ on:
     paths:
       - "android/**"
       - ".github/workflows/android-build.yml"
-      # The registry: its source, and the two modules that source imports. A change to any of them
-      # can move `registry_version()` or the dumped asset, and six Kotlin tests assert against that
-      # asset — see the note above for the day this cost. `android/**` already covers the dumped
-      # asset itself, so what these three add is the case where the PYTHON moved and somebody has
-      # not yet re-dumped: the Android suite then fails on the mismatch, which is the whole point.
       - "backend/app/services/stage_definitions.py"
       - "backend/app/services/stage_schema.py"
       - "backend/app/services/design_workshops.py"
-      # The record-revision redaction, for exactly the same reason and by exactly the same test.
-      # `RecordEditHistoryRedactionTest` reads these three off disk and asserts the handset's copy of
-      # the rules still matches them — the five redacted columns, the five placeholder wordings, the
-      # key-masked columns, and the edit-history caption. A PR that moves the Python or the TSX
-      # without moving the Kotlin must reach the Android suite, or the mismatch sits in the gap
-      # between two lanes until the next push to main, which is the 2026-08-24 failure above.
-      #
-      # Without these entries the drift tests still RUN — the job checks out the whole repository and
-      # fires on every workflow_run and on any `android/**` PR — they simply would not gate the pull
-      # request that caused the drift, which is the only moment the answer is cheap.
       - "backend/app/services/access.py"
       - "backend/app/services/records.py"
       - "frontend/components/CollabPanel.tsx"
-      # The trace engine, for the same reason and by the same kind of test. The handset and the
-      # browser run two vendorings of ONE upstream engine — `android/core-*` in Kotlin, hashed in
-      # `android/UPSTREAM-MANIFEST-KOTLIN.txt`, and `frontend/lib/trace/engine/` in TypeScript,
-      # hashed in `frontend/lib/trace/UPSTREAM-MANIFEST.txt` — and the only mechanical check that
-      # the two draw the same thing is `:core-pipeline`'s `ParityTest`, which replays the shared
-      # fixtures under `docs/fixtures/` through the Kotlin and holds it to the TypeScript's numbers.
-      # A pull request that moves the TypeScript engine without moving the Kotlin must therefore
-      # reach this job, or the same sheet of paper produces two different drawings depending on
-      # which client the designer used, in a document that goes to a ministry. `android/**` covers
-      # the Kotlin side; this entry adds the case where only the TypeScript moved.
-      #
-      # This used to name `frontend/components/sketches/upload/geometryToSvg.ts` as well, because
-      # the handset's JavaScript bundle COMPILED THAT FILE IN and an edit to it left the committed
-      # asset stale. There is no bundle and no asset now — `core-export`'s `SvgExport` is the writer
-      # on the handset — so that path can no longer stale anything on this side, and it is gone with
-      # the rest of the bundle lane.
       - "frontend/lib/trace/**"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# ─── EVERY `uses:` IS A COMMIT SHA, SINCE 2026-09-03 ─────────────────────────────────────
-# A version tag is mutable — whoever owns the action can repoint `v4` and the next run executes
-# different code with no change in this file. The SHA is what runs; the human tag rides along in a
-# trailing comment so the line is still readable. `.github/dependabot.yml` keeps them current.
-
 concurrency:
-  # Keyed by the commit under test so a re-push supersedes an in-flight build. Safe to
-  # cancel here (unlike the deploy stages) — nothing is mutated outside the runner.
   group: android-build-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
@@ -127,77 +35,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # On a workflow_run trigger the default ref is the tip of main, which may have
-          # moved past the commit that was deployed. Build the commit that went out.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Set up JDK 25
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
-          # The JDK that RUNS Gradle: 25, the newest LTS (Temurin), since 2026-10-09. It does
-          # NOT set the bytecode level — android/app/build.gradle.kts pins compileOptions and
-          # the Kotlin jvmTarget to 17, Android's documented ceiling (API 34 maps to Java 17),
-          # and the four core-* engine modules pin jvmTarget 17 plus -Xjdk-release=17, so the
-          # class files stay at major version 61 whatever runs the build. Gradle 9.8.1 runs on
-          # 17 to 27 and AGP 9.4 needs 17 or newer. Keep publish-android.yml and
-          # android-emulator.yml on the same value: a release built on a different JDK than
-          # the one this pipeline tests is a variable nobody wants.
           java-version: "25"
-          # Caches ~/.gradle/caches and the wrapper distribution (Gradle 9.8.1, ~150 MB),
-          # keyed on the gradle files. Without it every run re-downloads the whole
-          # AndroidX/Compose dependency graph, which dominates the wall-clock time.
           cache: gradle
 
       - name: Make the Gradle wrapper executable
-        # The wrapper is committed with mode 100644 (it was added from Windows), so the
-        # runner cannot exec it as-is. Cheaper than rewriting the file mode in git.
         run: chmod +x gradlew
 
       - name: Ensure the required Android SDK packages are installed
-        # The runner image ships an Android SDK, but which platform/build-tools versions are
-        # preinstalled drifts with the image. android/app/build.gradle.kts compiles against
-        # the 37.2 platform (Android 17, minor release 2; targetSdk 37) and pins
-        # buildToolsVersion 37.0.0, which is also above AGP 9.4's 36.0.0 floor — so install
-        # exactly those rather than betting on the image. Both are no-ops when already present.
         run: |
           set -euo pipefail
           sdkmanager="${ANDROID_HOME:-$ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
           yes | "$sdkmanager" --licenses > /dev/null 2>&1 || true
           "$sdkmanager" "platforms;android-37.2" "build-tools;37.0.0" > /dev/null
 
-      # android/local.properties is gitignored, so it does not exist here. Two consequences,
-      # both intended:
-      #   • sdk.dir falls back to $ANDROID_HOME, which the runner sets.
-      #   • buildConfigField DEFAULT_API_BASE_URL falls back to the CloudFront production
-      #     URL hard-coded in build.gradle.kts — i.e. the CI APK points at production, not
-      #     at anyone's laptop. Do not "helpfully" write a local.properties here.
-
       - name: Fetch the vendored sherpa-onnx AAR
-        # WITHOUT THIS STEP THIS WORKFLOW CANNOT COMPILE, and it failed for exactly that
-        # reason from the moment the offline speech engine landed (at 1.13.5 then):
-        #   Could not find :sherpa-onnx-static-link-onnxruntime-1.13.5:
-        #
-        # The engine is on NO Maven repository — `docs/ASR-RUNTIME-MEASUREMENT.md` §1 proved
-        # that through the Gradle resolver rather than by searching: six coordinate spellings,
-        # six live 404s. So `app/build.gradle.kts` binds it as a bare file through the
-        # `flatDir` in settings.gradle.kts, and `.gitignore` excludes `android/app/libs/`
-        # because the file is 37 MB — correctly, as a binary that size does not belong in
-        # git history. The consequence is that it exists on a developer's machine and has
-        # never existed on a runner, so the break was invisible locally and total in CI.
-        #
-        # VERIFIED AGAINST THE DIGEST `build.gradle.kts` ALREADY DOCUMENTS, and that check is
-        # the point of the step rather than a flourish: this pulls 37 MB of native code that
-        # ships inside the APK, so "downloaded successfully" is not the question — "is it the
-        # artifact we measured" is. The size and SHA-256 below are the ones recorded beside
-        # the `implementation` line, both re-checked against the upstream release asset and
-        # against the local file. A mismatch fails the build rather than warning: an engine
-        # that is not the one that was measured is not one to sign an APK around.
-        #
-        # 1.13.8 since 2026-10-09, the newest sherpa-onnx release that day. The name, the
-        # digest and the size move together here, in publish-android.yml, in
-        # android-emulator.yml, in codeql.yml and beside the `implementation` line: five places,
-        # one value.
         run: |
           set -euo pipefail
           aar="app/libs/sherpa-onnx-static-link-onnxruntime-1.13.8.aar"
@@ -210,20 +67,9 @@ jobs:
 
       - name: Compile Kotlin (debug)
         id: compile
-        # Run before assembleDebug even though assemble depends on it: a compile break is
-        # by far the most common failure and this surfaces it in ~1 min instead of ~4.
         run: ./gradlew :app:compileDebugKotlin --console=plain --stacktrace
 
       - name: The other portal, for the shared-file parity tests
-        # THE SHARED FILES ARE HELD IDENTICAL BY CI, NOT BY MEMORY (owner's ruling, 2026-10-20). Every
-        # sibling-parity test in this repository (the craft master, the map files, the nav and scanner
-        # files, the transcription manifest, the cross-portal modules, the artisan form contract) compares
-        # against a checkout of the other portal and skips without one; until this step cloned it on every
-        # run, CI had one repository and every one of them skipped. The comparison is made against the
-        # other repository's `main`, or against the branch of the same name when a cross-repo stream has
-        # pushed one there. Both repositories are public, so no token is needed. The clone lands BESIDE
-        # this checkout, under the other repository's name, because some tests find the sibling by that
-        # relative path rather than by the environment.
         working-directory: .
         env:
           PEER: cxacraftecosystem-ui/documentation-portal
@@ -242,28 +88,6 @@ jobs:
 
       - name: Unit tests
         id: tests
-        # HONEST STATUS, re-measured on this tree: `android/app/src/test` now holds well over a
-        # hundred Kotlin test files (the step prints the exact count on every run, so no number is
-        # written down here to rot) and `app/src/androidTest` holds 8. This step ASSERTS THINGS. It did not
-        # when it was written — `src/` contained only `main/`, the task printed
-        #   > Task :app:compileDebugUnitTestKotlin NO-SOURCE
-        # and this comment used to say so. It was wired up anyway precisely so that the first
-        # test anyone added would be enforced the moment it landed, with no CI change; that is
-        # what happened, and the note is updated rather than left describing a closed gap.
-        #
-        # The probe below stays, and stays worded both ways round. It is cheap, and the case it
-        # guards against is not hypothetical for a source set Gradle skips SILENTLY: a build-file
-        # edit that stops the test source set being seen turns this step green in seconds while
-        # asserting nothing at all, which is indistinguishable from "the tests passed" in the tick
-        # on the PR. The warning is the only thing that would tell you.
-        #
-        # THE VENDORED ENGINE'S OWN SUITES RUN HERE TOO, since 2026-10-09. The `paths:` note at
-        # the top of this file sends a pull request that moves `frontend/lib/trace/**` to this
-        # job BECAUSE `:core-pipeline`'s ParityTest holds the Kotlin engine to the TypeScript's
-        # numbers — and until that date this step ran only `:app`, so the test that note relies
-        # on never ran in CI at all. The four `:core-*:test` tasks are the engine's 760 tests,
-        # ParityTest among them; they are plain JVM tests and cost about a minute and a half,
-        # nearly all of it compiling them.
         run: |
           set -euo pipefail
           if [ -d app/src/test ] && [ -n "$(find app/src/test -name '*.kt' -o -name '*.java' 2>/dev/null | head -1)" ]; then
@@ -274,26 +98,8 @@ jobs:
           ./gradlew :app:testDebugUnitTest \
             :core-imaging:test :core-vector:test :core-pipeline:test :core-export:test \
             --console=plain
-          # Instrumented tests (app/src/androidTest, 8 files) are NOT run here: they need an
-          # emulator/AVD on the runner, which this job has not got. They are device PROBES —
-          # DwAsrEngineProbeTest and friends measure the on-device speech engine — so they are
-          # not a substitute for the unit set and are not silently missing coverage. They run in
-          # android-emulator.yml, by hand; do not bolt them onto this job, which would put a
-          # 10-minute emulator boot in front of the compile result every contributor is
-          # actually waiting for.
 
       - name: Android Lint (debug)
-        # Non-blocking, and the reason it was is now gone. It was made advisory because
-        # `./gradlew :app:lintDebug` reported "1 errors, 44 warnings" and aborted on a
-        # pre-existing manifest nit (PermissionImpliesUnsupportedChromeOsHardware: CAMERA with
-        # no <uses-feature required="false">), so a hard gate would have failed every run from
-        # day one and trained everyone to ignore red. The toolchain move of 2026-10-09 brought
-        # AGP 9.4's lint and the Compose and lifecycle libraries' own checks, which found six
-        # more errors; all seven were fixed in the code, the manifest line among them, and
-        # run 37929056714 measured "0 errors, 99 warnings, 47 hints". The report is uploaded on
-        # every run. Deleting continue-on-error below now makes this a real gate; that is a
-        # policy decision for the repository's owner, because a lint rule a library ships in
-        # an ordinary minor release can then block a pull request that touched no Android code.
         id: lint
         continue-on-error: true
         run: ./gradlew :app:lintDebug --console=plain
@@ -315,11 +121,6 @@ jobs:
       - name: Upload the debug APK
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          # DEBUG-SIGNED build. It is a compile artifact for testers to sideload, NOT a
-          # release: the in-app OTA updater only accepts APKs signed with the release key,
-          # and Android refuses to install an APK whose signature differs from the one
-          # already on the device. Cutting a real release is a `v*` tag push to
-          # publish-android.yml, the one workflow that holds the key (docs/CI.md §1.4).
           name: app-debug-${{ github.event.workflow_run.head_sha || github.sha }}
           path: android/app/build/outputs/apk/debug/DesignWorkshop_Android-App_Debug-Build_v*.apk
           if-no-files-found: error
@@ -341,14 +142,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: android-unit-test-results
-          # The engine modules' reports too, since their suites run in the same step.
           path: |
             android/app/build/reports/tests/
             android/core-*/build/reports/tests/
-          # `warn`, not `error`. There ARE test sources now, so a report is expected — but this
-          # step runs with `always()`, including on a run where compileDebugKotlin failed and the
-          # test task never started. Failing the upload there would replace the compile error on
-          # the PR with a missing-artifact error, which is the wrong thing to be reading.
           if-no-files-found: warn
           retention-days: 14
 

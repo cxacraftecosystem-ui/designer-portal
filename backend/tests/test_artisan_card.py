@@ -1,6 +1,3 @@
-"""The artisan QR card token (services/artisan_card.py): the shared vectors, the tag, rotation, and
-what the payload must never carry. No database."""
-
 from __future__ import annotations
 
 import json
@@ -68,16 +65,12 @@ def test_a_tag_verifies_only_under_its_own_key_and_version():
     current = ac.parse(ac.payload(KEY, "D", 2, "7K3QM9XA2F"))
     old = ac.parse(ac.payload(PREVIOUS, "D", 1, "7K3QM9XA2F"))
     assert ac.verify(_settings(2), current)
-    # The previous version only with KEY_PREVIOUS set.
     assert not ac.verify(_settings(2), old)
     assert ac.verify(_settings(2, PREVIOUS), old)
-    # Two versions back, or a version from the future: no.
     assert not ac.verify(_settings(2), ac.parse(ac.payload(KEY, "D", 3, "7K3QM9XA2F")))
     assert not ac.verify(_settings(3, PREVIOUS), ac.parse(ac.payload(PREVIOUS, "D", 1, "7K3QM9XA2F")))
-    # A changed code under the same tag fails.
     forged = ac.parse(f"CXA1:D2:7K3QM9XA2G:{current.tag}")
     assert not ac.verify(_settings(2), forged)
-    # A typed code carries no tag, so there is nothing to refuse: lookup is by code.
     assert ac.verify(_settings(2), ac.parse(ac.short_code("D", "7K3QM9XA2F")))
 
 
@@ -106,7 +99,6 @@ def test_the_config_defaults():
 
 
 def test_the_payload_carries_no_personal_data_and_no_record_id():
-    """Whatever the artisan, the QR is the issuer, a version, a random code and a tag."""
     artisan_id = "clx0abc123def456ghi789jk"
     fingerprint = "a" * 64
     for _ in range(200):
@@ -130,7 +122,6 @@ def test_the_qr_is_version_3_at_level_q_and_the_svg_is_the_printed_symbol():
     assert code.version == 3 and code.error == "Q"
     svg = pdf.qr_svg(token)
     assert svg.startswith("<svg") and 'viewBox="0 0 37 37"' in svg
-    # A module is at least 0.6 mm on the ID-1 card.
     assert pdf.QR_BOX_ID1 / len(matrix) >= 0.6 * 72 / 25.4
 
 

@@ -7,12 +7,6 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/*
- * C9 (owner decision, 2026-10-17): the wire shapes and the pure rules behind "Start from an earlier
- * workshop". The card that draws them is `ui/designworkshop/DwCopyFromEarlier.kt`.
- */
-
-/** The stages a designer may start from an earlier workshop — `workshop_copy.COPYABLE_STAGES`. */
 val DW_COPYABLE_STAGES: Set<String> = setOf(
     "INTRODUCTORY_ADMIN_DOCUMENTATION",
     "CLUSTER_CRAFT_BACKGROUND",
@@ -20,7 +14,6 @@ val DW_COPYABLE_STAGES: Set<String> = setOf(
     "SURVEY_PLANNING",
 )
 
-/** The provenance `source` of copied text not yet edited or kept. */
 const val DW_COPIED_SOURCE = "copied"
 
 @Serializable
@@ -53,7 +46,6 @@ data class DwConfirmCopiedDto(
     val confirmed: List<String> = emptyList(),
 )
 
-/** The boxes holding copied text that is not counted yet: unsent marks, or server marks not edited. */
 fun dwPendingCopies(
     copiedFrom: Map<String, String>,
     stamps: Map<String, DwFieldStampDto>,
@@ -61,17 +53,6 @@ fun dwPendingCopies(
 ): Set<String> =
     copiedFrom.keys + stamps.filter { (key, stamp) -> stamp.source == DW_COPIED_SOURCE && key !in edited }.keys
 
-/**
- * C9: what a stage's copy marks become once the server has ACCEPTED a push that carried [sent] —
- * the web's `copiesAfterPush`, rule for rule.
- *
- * The marks then live in the server's stamp, so they leave the draft: kept, the first "Keep as is"
- * only dropped the local mark and left the server's `copied` stamp standing, and every later save
- * re-sent the mark. A key leaves only when the draft still holds the SAME source it sent. Each one
- * acknowledged is mirrored into [provenance] as a `copied` stamp (unless it already carries one), so
- * the box stays out of completeness and "Keep as is" confirms it on the server. Null when nothing
- * the push carried is still marked here.
- */
 fun dwCopiesAfterPush(
     copiedFrom: Map<String, String>,
     provenance: DwStageProvenanceDto,
@@ -86,7 +67,6 @@ fun dwCopiesAfterPush(
     return (copiedFrom - acknowledged.keys) to provenance.copy(singleton = stamps)
 }
 
-/** Whether a stored answer is empty — the only boxes a copy may fill. */
 fun dwIsEmptyValue(value: JsonElement?): Boolean = when (value) {
     null, JsonNull -> true
     is JsonPrimitive -> value.isString && value.content.isBlank()
@@ -94,11 +74,9 @@ fun dwIsEmptyValue(value: JsonElement?): Boolean = when (value) {
     is JsonObject -> value.isEmpty()
 }
 
-/** The values a copy writes: the source's, for the boxes that are still empty. */
 fun dwCopyIntoEmpty(current: Map<String, JsonElement>, source: Map<String, JsonElement>): Map<String, JsonElement> =
     source.filter { (key, _) -> dwIsEmptyValue(current[key]) }
 
-/** A value as one readable line — rich text flattened to its words. */
 fun dwCopyPreview(value: JsonElement?, limit: Int = 220): String {
     val words = mutableListOf<String>()
     fun walk(node: JsonElement?) {

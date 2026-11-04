@@ -1,22 +1,3 @@
-"""Artisan QR cards as PDF: one ID-1 card, one A6 card, or a sheet of ID-1 cards for a workshop.
-
-Sizes, at physical scale:
-
-* ``id1`` — an 85.6 × 54 mm page (the credit-card size), one card.
-* ``a6`` — a 105 × 148 mm page per card.
-* a sheet — A4 portrait, 2 × 5 ID-1 cards edge to edge with crop marks in the margin, so a
-  guillotine cut along the marks separates them.
-
-The face prints the name and local name, the craft and cluster, ``Aadhaar XXXX XXXX 9012`` (left out
-when the last four are unknown), the portal's name, an optional 22 × 28 mm photo, and the QR at 25 mm
-with the short code under it. The QR is drawn as rectangles from segno's matrix — the same symbol
-:func:`qr_svg` hands the web — so a module is 25 / 37 ≈ 0.68 mm (version 3, error level Q, four
-modules of quiet zone). Nothing else about the artisan is printed, and the QR holds no personal data.
-
-Photos come through :func:`load_photo` at 600 px at most; a photo that cannot be read is left out
-rather than failing the print.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -33,28 +14,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: reportlab.lib.units.mm, computed the way reportlab computes it (inch = 72.0, cm = inch / 2.54,
-#: mm = cm * 0.1) so the module-level sizes below need no reportlab import at all.
 mm = 72.0 / 2.54 * 0.1
 
 ID1 = (85.6 * mm, 54 * mm)
 A6 = (105 * mm, 148 * mm)
 SIZES = ("id1", "a6")
 
-#: QR quiet zone, in modules.
 QUIET_ZONE = 4
-#: The printed QR square, quiet zone included.
 QR_BOX_ID1 = 25 * mm
 QR_BOX_A6 = 40 * mm
 PHOTO_W = 22 * mm
 PHOTO_H = 28 * mm
-#: Longest side a photo is scaled down to before it is embedded.
 PHOTO_MAX_PX = 600
-#: The most of one stored photo read into memory before scaling.
 PHOTO_MAX_BYTES = 8 * 1024 * 1024
-#: Without Pillow a JPEG is embedded as stored, and only when it is this small.
 PHOTO_RAW_MAX_BYTES = 1536 * 1024
-#: Card sheet: columns × rows on A4 portrait.
 SHEET_COLUMNS = 2
 SHEET_ROWS = 5
 SHEET_PER_PAGE = SHEET_COLUMNS * SHEET_ROWS
@@ -76,11 +49,8 @@ class CardFace:
     photo: bytes | None = None
 
 
-# ── The QR ────────────────────────────────────────────────────────────────────────────────────
-
 
 def qr_matrix(token: str) -> list[list[bool]]:
-    """The module matrix with its quiet zone; True is dark. Alphanumeric, error level Q."""
     code = segno.make(token, error="q", mode="alphanumeric", micro=False, boost_error=False)
     rows = [[bool(cell) for cell in row] for row in code.matrix]
     width = len(rows[0]) + 2 * QUIET_ZONE
@@ -92,7 +62,6 @@ def qr_matrix(token: str) -> list[list[bool]]:
 
 
 def _runs(matrix: list[list[bool]]) -> list[tuple[int, int, int]]:
-    """Each horizontal run of dark modules as ``(x, y, length)``."""
     out: list[tuple[int, int, int]] = []
     for y, row in enumerate(matrix):
         x = 0
@@ -108,8 +77,6 @@ def _runs(matrix: list[list[bool]]) -> list[tuple[int, int, int]]:
 
 
 def qr_svg(token: str) -> str:
-    """The same symbol the PDF prints, as one white square and one black path (``M``/``h``/``v``/
-    ``z`` only, the shape ``two_factor.qr_svg`` already hands both clients)."""
     matrix = qr_matrix(token)
     size = len(matrix)
     path = "".join(f"M{x} {y}h{n}v1h-{n}z" for x, y, n in _runs(matrix))
@@ -130,17 +97,13 @@ def _draw_qr(c: rl_canvas.Canvas, token: str, x: float, y: float, box: float) ->
     c.rect(x, y, box, box, stroke=0, fill=1)
     c.setFillColorRGB(0, 0, 0)
     for mx, my, n in _runs(matrix):
-        # Matrix rows run top to bottom; the PDF's y axis runs up.
         c.rect(x + mx * module, y + box - (my + 1) * module, n * module, module, stroke=0, fill=1)
 
 
-# ── Photos ────────────────────────────────────────────────────────────────────────────────────
-
 
 def scale_photo(data: bytes) -> bytes | None:
-    """``data`` as a JPEG no larger than 600 px on its longest side, or None if it can't be read."""
     try:
-        from PIL import Image  # Pillow is in the lock file; the fallback below covers its absence.
+        from PIL import Image
     except ImportError:
         if data[:3] == b"\xff\xd8\xff" and len(data) <= PHOTO_RAW_MAX_BYTES:
             return data
@@ -157,7 +120,6 @@ def scale_photo(data: bytes) -> bytes | None:
 
 
 def load_photo(object_key: str) -> bytes | None:
-    """One stored photo, scaled. Blocking: call it from a thread."""
     from app.services import s3
 
     try:
@@ -169,8 +131,6 @@ def load_photo(object_key: str) -> bytes | None:
 
 
 def load_photos(object_keys: dict[str, str], *, workers: int = 4) -> dict[str, bytes]:
-    """``{artisan id: object key}`` to ``{artisan id: scaled bytes}``, a few downloads at a time.
-    Each photo is scaled as it arrives, so at most ``workers`` full-size files are held at once."""
     if not object_keys:
         return {}
     out: dict[str, bytes] = {}
@@ -182,8 +142,6 @@ def load_photos(object_keys: dict[str, str], *, workers: int = 4) -> dict[str, b
                 out[artisan_id] = data
     return out
 
-
-# ── Text ──────────────────────────────────────────────────────────────────────────────────────
 
 
 class _Fonts:
@@ -202,7 +160,6 @@ class _Fonts:
         return sum(stringWidth(span, font, size) for span, font in self.runs(text, bold=bold))
 
     def fit(self, text: str, width: float, size: float, *, bold: bool, smallest: float) -> tuple[str, float]:
-        """Shrink to ``smallest``, then cut with an ellipsis, until ``text`` fits ``width``."""
         while size > smallest and self.width(text, size, bold=bold) > width:
             size -= 0.25
         if self.width(text, size, bold=bold) <= width:
@@ -243,8 +200,6 @@ class _Fonts:
 def aadhaar_line(last4: str | None) -> str | None:
     return f"Aadhaar XXXX XXXX {last4}" if last4 else None
 
-
-# ── Faces ─────────────────────────────────────────────────────────────────────────────────────
 
 
 def _photo(c: rl_canvas.Canvas, data: bytes | None, x: float, y: float) -> bool:
@@ -331,7 +286,6 @@ def _face_a6(c: rl_canvas.Canvas, fonts: _Fonts, card: CardFace, portal: str, *,
 
 
 def _crop_marks(c: rl_canvas.Canvas, left: float, bottom: float, width: float, height: float) -> None:
-    """Guillotine marks in the margin at every cut line of a ``SHEET_COLUMNS`` × ``SHEET_ROWS`` grid."""
     card_w, card_h = ID1
     gap, length = 1.5 * mm, 5 * mm
     c.setStrokeColorRGB(0, 0, 0)
@@ -355,7 +309,6 @@ def _canvas(buffer: BytesIO, pagesize: tuple[float, float]) -> rl_canvas.Canvas:
 
 
 def render_cards(cards: Sequence[CardFace], size: str, portal: str, *, photo: bool = True) -> bytes:
-    """One card per page at ``size`` (``id1`` or ``a6``)."""
     buffer = BytesIO()
     pagesize = ID1 if size == "id1" else A6
     c = _canvas(buffer, pagesize)
@@ -371,7 +324,6 @@ def render_cards(cards: Sequence[CardFace], size: str, portal: str, *, photo: bo
 
 
 def render_sheet(cards: Sequence[CardFace], portal: str, *, photo: bool = True) -> bytes:
-    """ID-1 cards on A4 portrait, ``SHEET_PER_PAGE`` to a page, with crop marks."""
     from reportlab.lib.pagesizes import A4
     buffer = BytesIO()
     c = _canvas(buffer, A4)

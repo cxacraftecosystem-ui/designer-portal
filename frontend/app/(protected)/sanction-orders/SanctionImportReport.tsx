@@ -1,53 +1,10 @@
 "use client";
 
-/**
- * WHAT ONE SANCTION UPLOAD DID — the panel that turns a 201 into something an officer can act on.
- *
- * It is `annual-plan/PlanUploadReport.tsx`'s three load-bearing properties, deliberately, so that
- * the two importers read as the same author's work:
- *
- * 1. **The counts are held as DATA**, an array of `{label, value}`, so a count added to the wire
- *    cannot be silently left off the screen. `PlanUploadReport` calls that "the failure this whole
- *    panel exists to prevent, one level down", and it is the same failure here.
- * 2. **Problems are split by SEVERITY** — `"error"` rows under "Rows that were not recorded",
- *    everything else under "Rows the import had to assume something about". Collapsing them puts a
- *    lost ministry order and a day-first date reading in one list of forty.
- * 3. **Server `reason` strings are rendered VERBATIM.** They are written on the server to be shown
- *    as-is; this is the fourth place in the stack that could paraphrase a refusal and the one where
- *    paraphrasing it would cost an officer their understanding of who owns what.
- *
- * ── THE TWO THINGS THIS PANEL SAYS THAT THE ANNUAL PLAN'S DOES NOT HAVE TO ──────────────────────
- *
- * **HOW MANY PEOPLE THIS PRESS LET IN.** An annual-plan upload writes rows in a directory; this one
- * mints `User` accounts, admits them to the platform allow-list and empanels them. That number is
- * not derivable from the row counts — one order can create three accounts and the next none — and it
- * is the number an officer's next hour depends on.
- *
- * **WHERE THEIR FIRST SIGN-IN LINKS ARE.** An import issues them exactly as the form does, one per
- * account an order created; the page draws each in its own panel above this report, to copy with its
- * prewritten message. A link is shown once, so this panel says where they are and what to do about
- * one that was not copied: re-issue it from that designer's button on the register.
- *
- * ── THE ARITHMETIC IS DRAWN SO IT CAN BE CHECKED ────────────────────────────────────────────────
- *
- * `rowsRead = recorded + skipped + refused`. Every one of those is drawn including the zeroes, which
- * is the only way an officer can tell an import that did nothing from one whose report lost a row.
- * When the four do not sum, the panel SAYS SO rather than hiding it — that mismatch is the symptom
- * of rows going missing between the two POSTs, and it is the only way anybody would ever see it.
- */
-
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, FileSpreadsheet, Info, KeyRound } from "lucide-react";
 
 import type { SanctionImportReport as Report, SanctionParseProblem } from "@/lib/sanctionOrders";
 
-/**
- * The counts worth printing, in the order an officer reads them.
- *
- * HELD AS DATA AND NOT AS SIX HAND-WRITTEN SPANS — see the module docstring. `always` marks the ones
- * printed even at zero: `rowsRead` because "0 rows read" is the most useful thing to know about an
- * upload that did nothing, and the other three because they are the terms of the sum.
- */
 function tallies(report: Report): Array<{ label: string; value: number; always?: boolean }> {
   return [
     { label: "rows read from the sheet", value: report.rowsRead, always: true },
@@ -76,7 +33,6 @@ function Tally({ report }: { report: Report }) {
   );
 }
 
-/** One problem row: the Excel gutter number first, because that is what Ctrl+G takes. */
 function ProblemRow({ problem }: { problem: SanctionParseProblem }) {
   return (
     <li className="border-t border-line-200 px-3 py-2 first:border-t-0">
@@ -84,7 +40,6 @@ function ProblemRow({ problem }: { problem: SanctionParseProblem }) {
         {problem.row != null ? `Row ${problem.row}` : "This workbook"}
         {problem.sheet ? ` · sheet "${problem.sheet}"` : null}
       </p>
-      {/* VERBATIM. The sentence was written on the server to be shown as it is. */}
       <p className="mt-1 text-sm leading-6 text-ink-700">{problem.reason}</p>
       {problem.value ? (
         <p className="mt-1 wrap-break-word text-xs text-ink-muted">Cell text: {problem.value}</p>
@@ -139,28 +94,12 @@ export function SanctionImportReport({
 }) {
   const errors = report.problems.filter((problem) => problem.severity === "error");
   const warnings = report.problems.filter((problem) => problem.severity !== "error");
-  /**
-   * THE SUM, CHECKED ON SCREEN RATHER THAN ASSUMED.
-   *
-   * `rowsRead` is the count the PREVIEW reported and this client echoed back; the other three are
-   * the server's own. If they disagree, rows went missing between the two POSTs — and a panel that
-   * quietly drew both numbers without comparing them is a panel in which that can never be noticed.
-   */
   const accounted = report.recorded + report.skipped + report.refused;
   const sums = accounted === report.rowsRead;
 
   return (
     <div className="panel mb-5 p-4">
       <div className="flex items-start gap-3">
-        {/*
-          The ministry pair, because this panel is only ever drawn on `/sanction-orders` — one of the
-          four surfaces `AppShell` stamps `data-surface="ministry"` on. Both halves are required: the
-          ramp is literal and does not invert, so `bg-ministry-50` is a near-white peach in dark as
-          well as light and `text-ministry-700` on a dark card is 2.44:1. The dark pair
-          (`ministry-950/40` ground, `ministry-300` ink) is `CarryContextBanner`'s own device with the
-          hue moved. Copied from `PlanUploadReport` rather than re-derived, so the two importers'
-          panels cannot drift apart on a rung.
-        */}
         <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-ministry-50 text-ministry-700 dark:bg-ministry-950/40 dark:text-ministry-300">
           <FileSpreadsheet className="h-4 w-4" aria-hidden />
         </span>
@@ -185,10 +124,6 @@ export function SanctionImportReport({
       </div>
 
       {report.accountsCreated > 0 ? (
-        /*
-          NOT DECORATION, AND THE ONE THING ON THIS PANEL AN OFFICER MUST NOT MISS: the links are
-          shown once, above, and a designer whose link is not passed on cannot sign in.
-        */
         <p className="mt-4 flex items-start gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
           <KeyRound className="mt-1 h-4 w-4 shrink-0 text-ink-500" aria-hidden />
           <span>
@@ -224,7 +159,6 @@ export function SanctionImportReport({
                 </p>
                 <p className="mt-1 text-sm leading-6 text-ink-700">
                   <span className="font-medium text-ink-900">{order.sanctionOrderNo}</span> ·{" "}
-                  {/* LEAD FIRST, AND NEVER RE-SORTED HERE — the server's order is the officer's. */}
                   {order.designers.map((designer) => designer.designerName).join(", ") ||
                     "no designer named"}{" "}
                   ·{" "}

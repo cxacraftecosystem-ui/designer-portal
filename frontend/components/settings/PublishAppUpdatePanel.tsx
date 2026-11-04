@@ -1,21 +1,5 @@
 "use client";
 
-/**
- * Publish an Android build from the browser — master admin only.
- *
- * Until now the only way to push an update to every device was the phone's own menu ("Push update
- * to all"), which publishes the build the publisher happens to be running. That is a strange place
- * for it: the person who has the signed APK is at a laptop, having just built it, and to ship it
- * they had to sideload it onto their own phone first and re-publish from there. This is the same
- * two-step the phone does — put the APK in object storage, then record the release against it —
- * done from where the file already is.
- *
- * THE ONE RULE THAT MATTERS: versionCode must be strictly greater than the published one. The
- * in-app updater compares version codes, so a release at or below the current one is accepted by
- * the API, appears to succeed, and then silently reaches nobody. That failure is invisible for days,
- * so it is checked here before a 25 MB upload starts rather than discovered later.
- */
-
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { useEffect, useState } from "react";
 import { Loader2, Rocket, Upload } from "lucide-react";
@@ -32,11 +16,6 @@ type Release = {
   publishedAt?: string;
 };
 
-/**
- * The version code typed in the panel, or null. Since 2026-10-21 the code is no longer derived from
- * the name: the name restarted at 0.0.1 and the code keeps counting up (it is `appVersionCode` in
- * android/app/build.gradle.kts), and the server stores it as sent.
- */
 function parseVersionCode(text: string): number | null {
   const trimmed = text.trim();
   if (!/^\d+$/.test(trimmed)) return null;
@@ -44,7 +23,6 @@ function parseVersionCode(text: string): number | null {
   return Number.isSafeInteger(value) && value >= 1 ? value : null;
 }
 
-/** MAJOR.MINOR.PATCH, three plain numbers. */
 function isVersionName(text: string): boolean {
   return /^\d+\.\d+\.\d+$/.test(text.trim());
 }
@@ -98,20 +76,6 @@ export function PublishAppUpdatePanel() {
           objectKey: object.objectKey,
           url: object.publicUrl,
           notes: notes.trim() || null,
-          /*
-            THE BYTE COUNT OF THE FILE THIS PANEL JUST UPLOADED, and this browser is the only party
-            that can state it (2026-09-03). `POST /app/release` stores `sizeBytes` exactly as sent
-            precisely because only the publisher holds the file; the server has the object key and no
-            way to measure what is behind it without a HEAD it makes nowhere else on the route. The
-            phone then compares it against the bytes it actually downloaded
-            (`android/…/data/AppUpdateIntegrity.kt`) — a truncated APK on a village connection
-            otherwise reaches the installer and fails there, with nothing saying why.
-
-            `file.size` and not the upload's own progress total: this is the measurement of the file
-            the designer chose, taken by the process that had it, which is the same measurement the
-            handset makes of what it received. The field is optional server-side and null records no
-            claim, so a browser that has not shipped this line publishes exactly as it did before.
-          */
           sizeBytes: file.size
         })
       });

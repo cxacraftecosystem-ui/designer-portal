@@ -21,11 +21,6 @@ import { qs } from "@/lib/questionnaire/qs";
 import { BUNDLE_EXTENSION, formHref, PORTAL } from "@/lib/questionnairePortal";
 import { createQuestion, createQuestionnaire, createSection, type QForm, type QFormKind } from "@/lib/questionnaireForms";
 
-/**
- * Add a received bundle as a NEW form owned by the reader (UNIFY A10): the form, then each section,
- * then its questions. A bundle this device has already added opens the form it became instead.
- * Needs a connection; the button says so when there is none.
- */
 export async function importBundle(bundle: QuestionnaireBundle): Promise<string> {
   const already = importedBundles()[bundle.bundleId];
   if (already) return already;
@@ -47,7 +42,6 @@ export async function importBundle(bundle: QuestionnaireBundle): Promise<string>
   return created.id;
 }
 
-/** "Open bundle" on the forms library: pick a `.dpwq` / `.frwq`, then P17 "Received a form". */
 export function OpenBundleButton({ className = "field-button-secondary" }: { className?: string }) {
   const router = useRouter();
   const input = useRef<HTMLInputElement | null>(null);
@@ -107,7 +101,6 @@ export function OpenBundleButton({ className = "field-button-secondary" }: { cla
   );
 }
 
-/** "Download bundle" on a form's page: the handoff file, saved on this device. */
 export function DownloadBundleButton({
   form,
   className = "field-button-secondary"

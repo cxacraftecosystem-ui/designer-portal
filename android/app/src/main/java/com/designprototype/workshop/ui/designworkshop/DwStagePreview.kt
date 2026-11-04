@@ -50,57 +50,24 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
-/**
- * How long after the last edit the document is rebuilt — the web's `LIVE_DEBOUNCE_MS`, to the ms.
- * Long enough that a word typed at speed is one rebuild, short enough that the page answers before
- * the designer's eyes reach it.
- */
 internal const val DW_LIVE_PREVIEW_DEBOUNCE_MS = 250L
 
-/**
- * The most one build may take — reading the draft, fetching the server's copy and laying the document
- * out — before the panel stops saying "Building…" and offers Try again. A preview that spins for ever
- * is a failure dressed as progress.
- */
 internal const val DW_LIVE_PREVIEW_TIMEOUT_MS = 20_000L
 
-/** How long one read of the server's copy of the workshop may take before it counts as failed. */
 internal const val DW_PREVIEW_SERVER_READ_MS = 8_000L
 
-/**
- * What became of the read of the server's copy for one build of the preview. Kept apart from the
- * draft because "the server answered with nothing" and "the server was not reached" look the same
- * once they are both a missing remote — and only the first is an empty workshop.
- */
 internal sealed interface DwServerRead {
-    /** The workshop has never been uploaded, so there is no server copy to read. */
     data object NotNeeded : DwServerRead
 
     data class Read(val copy: StageListDto) : DwServerRead
 
-    /** Not attempted: this device is offline and holds no earlier read. */
     data object Offline : DwServerRead
 
-    /** Attempted, and it failed or ran past [DW_PREVIEW_SERVER_READ_MS]. */
     data object Failed : DwServerRead
 }
 
-/** The preview's input: the draft to lay out, and whether the server's side of it is in it. */
 internal data class DwStagePreviewSource(val draft: WorkshopDraft?, val serverRead: DwServerRead)
 
-/**
- * The draft the stage preview is built from — [reportSourceFor]'s merge of this device's draft with
- * the server's copy, exactly as the report screen merges them (a stage this device holds work for is
- * the device's; every other stage is the server's), with this stage's unsaved answers, from [live],
- * laid over it.
- *
- * ALWAYS THE MERGE, NEVER "LOCAL WHEN IT EXISTS". The first debounced save writes a draft holding
- * only this stage; preferring it over the server's copy made the cover and every other stage vanish
- * from the preview a moment after the first keystroke.
- *
- * Null only when there is genuinely nothing: no draft here, nothing from the server, and nothing
- * typed on this stage yet.
- */
 internal fun dwStagePreviewDraft(
     schema: SchemaResponse,
     workshopId: String,
@@ -117,16 +84,6 @@ internal fun dwStagePreviewDraft(
     return draft.copy(stages = draft.stages + (stageKey to stage))
 }
 
-/**
- * The server's copy of the workshop, read at most once per stage screen while it succeeds — the
- * preview rebuilds on every pause in typing, and each rebuild must not be another round trip. A read
- * that fails or times out is not remembered, so the next rebuild (or Try again) asks again.
- *
- * THE READ RUNS IN [scope], NOT IN THE CALLER. Each keystroke restarts the preview's debounce and so
- * cancels the build that is waiting here; were the fetch the caller's, continuous typing would cancel
- * every read before it finished and the server's stages would never arrive. The next build picks up
- * the same read where it is.
- */
 internal class DwPreviewServerCopy(private val scope: CoroutineScope) {
     private val lock = Mutex()
     private var copy: StageListDto? = null
@@ -153,7 +110,6 @@ internal class DwPreviewServerCopy(private val scope: CoroutineScope) {
         val result = try {
             pending.await()
         } catch (cancelled: CancellationException) {
-            // The read itself was cancelled (the screen is going) — or this caller was.
             if (currentCoroutineContext().isActive) null else throw cancelled
         }
         lock.withLock {
@@ -166,33 +122,12 @@ internal class DwPreviewServerCopy(private val scope: CoroutineScope) {
     }
 }
 
-/**
- * THE STAGE'S PAGES, LIVE, BESIDE THE FORM — the handset's counterpart of the web's
- * `StageDocumentPreview`.
- *
- * COMPOSE-NATIVE, NOT A WEBVIEW, and the choice is about fidelity as much as about the network. The
- * handset already lays the report out on A4 sheets ([DwReportSheets]) with the same packing rules
- * and the same block renderer it uses on the report screen, from the same Kotlin builder that writes
- * its .docx and .pdf ([buildWorkshopDocument]) — so the pages here are the pages the phone's own file
- * will have. A WebView would need the web app's renderer bundled into the APK to work with no
- * signal, and would then be drawing a SECOND layout of a document this device already knows how to
- * lay out, with a different text engine and different line breaks.
- *
- * Built from [liveDraft] — the draft on disk with this stage's unsaved answers laid over it —
- * [DW_LIVE_PREVIEW_DEBOUNCE_MS] after the last edit, on `Dispatchers.Default`. The sheets keep the
- * previous document up until the new one is measured, so typing never flashes an empty panel.
- */
 @Composable
 internal fun DwStageDocumentPreview(
     workshopId: String,
     stageTitle: String,
     schema: SchemaResponse?,
-    /** Bumped on every edit; a new value restarts the debounce. */
     revision: Int,
-    /**
-     * The draft as it would be if this stage were saved now — see [dwStagePreviewDraft] — and whether
-     * the server's copy is in it. A null draft with the server read is genuinely nothing to show.
-     */
     liveDraft: suspend () -> DwStagePreviewSource,
     modifier: Modifier = Modifier,
 ) {
@@ -202,18 +137,13 @@ internal fun DwStageDocumentPreview(
     var showAll by rememberSaveable { mutableStateOf(false) }
     var document by remember(workshopId) { mutableStateOf<ReportDocument?>(null) }
     var failed by remember(workshopId) { mutableStateOf(false) }
-    // Nothing anywhere to build from — see [dwStagePreviewDraft]. Cleared by the next build that finds something.
     var empty by remember(workshopId) { mutableStateOf(false) }
-    // How the last build's server read went; Offline or Failed means the server's stages are missing.
     var serverRead by remember(workshopId) { mutableStateOf<DwServerRead?>(null) }
     var retry by remember(workshopId) { mutableStateOf(0) }
 
     LaunchedEffect(open, revision, schema, retry) {
         if (!open || schema == null) return@LaunchedEffect
-        // The first build after opening is immediate; every later one waits for typing to pause.
         if (document != null || empty) delay(DW_LIVE_PREVIEW_DEBOUNCE_MS)
-        // `Result` rather than a nullable, so "nothing to show" (null draft) and "took too long"
-        // (null from the timeout) cannot be mistaken for each other.
         val outcome: Result<Pair<DwServerRead, ReportDocument?>>? = withTimeoutOrNull(DW_LIVE_PREVIEW_TIMEOUT_MS) {
             try {
                 val source = liveDraft()
@@ -251,12 +181,9 @@ internal fun DwStageDocumentPreview(
             read != null -> {
                 document = null
                 serverRead = read
-                // Empty only when the server was asked and answered (or there is none to ask).
                 empty = read !is DwServerRead.Offline && read !is DwServerRead.Failed
                 failed = false
             }
-            // Timed out or threw. The last good pages stay up with the line below saying the newest
-            // edit is not in them; with no pages yet, the panel offers Try again instead of spinning.
             else -> failed = true
         }
     }

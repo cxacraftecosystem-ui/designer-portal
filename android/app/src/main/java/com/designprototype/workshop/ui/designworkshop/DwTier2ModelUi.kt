@@ -46,24 +46,6 @@ import com.designprototype.workshop.data.dwTransferHeading
 import com.designprototype.workshop.data.dwTransferLine
 import com.designprototype.workshop.ui.field
 
-/**
- * **THE LANGUAGE MODELS THIS PHONE CAN RUN: NAME, SIZE, MEMORY, VERDICT, ONE ACTION.**
- *
- * A separate list from [DwModelChoiceList] because that list's sentences are about transcription
- * ("how accurately it transcribes…"), which would be false under a proofreader.
- *
- * **WHAT IS SHOWN IS WHAT THIS PHONE MAY DO.** A row appears when `dwTier2InstallOffer` gives it a
- * control or a state — downloadable, downloading, paused, installed — and not otherwise: a phone whose
- * own reading rules a model out (too little memory in total, a 32-bit processor, not enough storage)
- * is not shown that model, and a phone that can take none of them is shown no list at all
- * ([dwTier2Visible]). Every verdict comes from `dwModelFit`; every word from `data/DwTier2Models.kt`
- * and `data/DwTier2Install.kt`.
- *
- * **THE ONE CONTROL THAT SPENDS DATA IS GATED ON `dwTier2InstallMayBeOffered`** (inside
- * `dwTier2InstallOffer`), never on `dwModelDownloadMayBeOffered` alone, and a TIGHT row asks for
- * [dwModelOverrideSentence]'s confirmation before a byte moves — the same consent the speech model
- * asks for.
- */
 @Composable
 internal fun DwTier2ModelList(
     choices: List<DwModelChoice>,
@@ -187,7 +169,6 @@ private fun DwTier2Row(
                 onClick = {
                     when {
                         offer == DwTier2InstallOffer.INSTALLED -> models.remove(modelId)
-                        // A resume continues a choice already made; a fresh TIGHT download asks first.
                         offer != DwTier2InstallOffer.RESUME && dwModelNeedsConsent(choice) -> confirming = true
                         else -> models.install(modelId)
                     }

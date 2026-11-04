@@ -9,7 +9,6 @@ import { SessionStartSheet } from "@/components/questionnaire/SessionStartSheet"
 import { V2Gate } from "@/components/questionnaire/V2Gate";
 import { qs } from "@/lib/questionnaire/qs";
 
-/** The start sheet (DESIGN §4.2). `?artisanId=` (repeatable) preselects from the artisan record. */
 export default function NewSessionPage() {
   return (
     <>

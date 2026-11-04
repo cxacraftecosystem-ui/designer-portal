@@ -15,11 +15,6 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 import java.io.File
 
-/**
- * The top-bar dispatcher (`data/ScanDispatch.kt`) against the shared fixture `scan-dispatch.json`
- * (REQUIREMENTS_2026-10-20 §6.3): the same rows the web's `scan-dispatch-unit.spec.ts` reads, in
- * both portals. This app carries the DPW decoders, so it runs both columns.
- */
 class ScanDispatchTest {
     private val portal = ScanPortal.DESIGNER
     private val codecs: ScanCodecs? = DesignerScanCodecs

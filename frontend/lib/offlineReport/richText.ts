@@ -1,13 +1,3 @@
-/**
- * The half of `backend/app/services/rich_text.py` a report reads: coerce a stored document, print it
- * as plain text, and turn it into report blocks.
- *
- * NOT `lib/richText.ts`, which is the EDITOR's model and is allowed to be generous about what it
- * accepts while somebody is typing. This is the server's reading of the same stored JSON — its
- * budgets, its kind fallbacks, its dropping of an image with no media — because the document a
- * browser builds offline has to say exactly what the server's says about the same answer.
- */
-
 import {
   bookmarkId,
   cleanText,
@@ -67,7 +57,6 @@ function isListItem(kind: Kind): boolean {
 
 function coerceMarks(raw: unknown): Set<Mark> {
   const found = new Set<Mark>();
-  // A list, or a set — which is what an already-coerced document carries, as Python's does.
   if (!Array.isArray(raw) && !(raw instanceof Set)) return found;
   for (const item of raw as Iterable<unknown>) {
     const token = String(item).toUpperCase() as Mark;
@@ -90,7 +79,6 @@ function isNumber(value: unknown): value is number {
   return typeof value === "number";
 }
 
-/** Slices by code point, as Python slices a str. */
 function cut(text: string, budget: number): string {
   const chars = Array.from(text);
   return chars.length <= budget ? text : chars.slice(0, Math.max(0, budget)).join("");
@@ -155,7 +143,6 @@ function plainBlock(text: string): RichBlock {
   return { kind: "PARAGRAPH", spans: [{ text, marks: new Set() }], align: "LEFT", level: 0, rows: [], media: "", widthPct: 70 };
 }
 
-/** `rich_text.from_json`. */
 export function fromJson(raw: unknown): RichDoc {
   if (raw === null || raw === undefined) return EMPTY;
   if (typeof raw === "string") return fromPlain(raw);
@@ -211,7 +198,6 @@ export function fromJson(raw: unknown): RichDoc {
   return { blocks };
 }
 
-/** `rich_text.to_plain`. */
 export function toPlain(raw: unknown): string {
   const document = fromJson(raw);
   const lines: string[] = [];
@@ -241,14 +227,12 @@ export function toPlain(raw: unknown): string {
   return pyStrip(lines.join("\n"));
 }
 
-/** `rich_text.is_empty`. */
 export function isEmptyRich(raw: unknown): boolean {
   if (raw === null || raw === undefined) return true;
   if (typeof raw === "string") return !pyStrip(raw);
   return fromJson(raw).blocks.every(blockIsEmpty);
 }
 
-/** `rich_text.stored_text_document`: a string that is a whole stored document, or null. */
 export function storedTextDocument(value: string): RichDoc | null {
   const stripped = pyStrip(value);
   if (!stripped.startsWith("{") || !stripped.endsWith("}")) return null;
@@ -263,7 +247,6 @@ export function storedTextDocument(value: string): RichDoc | null {
   return fromJson(parsed);
 }
 
-/** `rich_text.plain_from_stored`. */
 export function plainFromStored(value: unknown): unknown {
   if (typeof value === "string") {
     const document = storedTextDocument(value);
@@ -316,7 +299,6 @@ function tableBlock(block: RichBlock): TableBlock | null {
   };
 }
 
-/** Python's `round(x, 2)`, which rounds the binary value half to even. */
 function roundTo(value: number, digits: number): number {
   const factor = 10 ** digits;
   const scaled = value * factor;
@@ -328,7 +310,6 @@ function roundTo(value: number, digits: number): number {
   return rounded / factor;
 }
 
-/** `rich_text.to_report_blocks`. */
 export function toReportBlocks(
   raw: unknown,
   resolveMedia: ((id: string) => ImageRef | null) | null,
@@ -397,7 +378,6 @@ export function toReportBlocks(
   return out;
 }
 
-/** `rich_text.plain_runs`: a whole document flattened into one line of runs, for a table cell. */
 export function plainRuns(raw: unknown): Run[] {
   const document = fromJson(raw);
   const runs: Run[] = [];
@@ -411,7 +391,6 @@ export function plainRuns(raw: unknown): Run[] {
   return runs;
 }
 
-/** The media ids a stored document places. */
 export function richMediaIds(raw: unknown): string[] {
   return fromJson(raw)
     .blocks.filter((b) => b.kind === "IMAGE" && b.media)

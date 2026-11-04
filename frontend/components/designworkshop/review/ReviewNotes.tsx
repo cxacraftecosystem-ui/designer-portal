@@ -1,10 +1,5 @@
 "use client";
 
-/**
- * NOTES ON A REVIEW SCREEN: the composer a Flag opens, the tray drafts collect in, and the register
- * of what has been filed — shared by the inspection, approval and supervision screens (B2, A19).
- */
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MessageSquarePlus, Trash2 } from "lucide-react";
 
@@ -30,7 +25,6 @@ import { ReviewChip, type FlagTarget } from "./ReviewReadStage";
 
 const MAX_NOTE_CHARS = 4000;
 
-/** The drafted notes of one reader on one workshop and screen, kept in this browser until sent. */
 export function useReviewTray(userId: string | undefined, workshopId: string, surface: DwTraySurface) {
   const [drafts, setDrafts] = useState<DwNoteDraft[]>([]);
   const loaded = useRef<string | null>(null);
@@ -65,14 +59,12 @@ export function useReviewTray(userId: string | undefined, workshopId: string, su
   };
 }
 
-/** The note a Flag (or the bar's Note) opens: what it is about, and the sentence. */
 export function NoteComposer({
   target,
   stages,
   onClose,
   onAdd
 }: {
-  /** Null while closed. */
   target: FlagTarget | null;
   stages: DwStage[];
   onClose: () => void;
@@ -84,7 +76,6 @@ export function NoteComposer({
   const textRef = useRef<HTMLTextAreaElement>(null);
   const [openFor, setOpenFor] = useState<FlagTarget | null>(null);
 
-  // Reset the box each time it opens for a new target (state from the previous render, not an effect).
   if (target !== openFor) {
     setOpenFor(target);
     if (target) {
@@ -160,7 +151,6 @@ export function NoteComposer({
   );
 }
 
-/** The drafted notes, waiting to go out together. The caller supplies the sending buttons. */
 export function NoteTray({
   drafts,
   stages,
@@ -208,7 +198,6 @@ export function NoteTray({
   );
 }
 
-/** Everything filed so far, by round: what it is about, who said it, and whether it was acted on. */
 export function NoteRegister({
   notes,
   stages,

@@ -1,41 +1,3 @@
-"""THE MONDAY SUMMARY: one message a week to every reviewer and official, in-app and by e-mail.
-
-What waits for them, what is overdue, what came in this week, and one coverage figure. Sent by the
-queue worker (``app/worker.py``) on Monday from 08:00 India Standard Time; a worker that was down at
-08:00 catches up the same day, and after Monday the week is skipped, never sent late.
-
-── ONCE PER PERSON PER WEEK ─────────────────────────────────────────────────────────────────────
-
-``WeeklyDigest`` has a unique ``(userId, weekStart)``. For each person: insert the row PENDING (a
-unique violation means somebody already has it: skip), build the payload, call
-:func:`app.services.notifications.notify`, mark it DELIVERED with the ids it wrote. A worker that
-dies in between leaves PENDING; the next pass reclaims a PENDING row untouched for 15 minutes with a
-compare-and-set on ``updatedAt`` and delivers it. An empty week (nothing waiting, overdue or new) is
-SKIPPED_EMPTY and sends nothing. An account that turned the summary off is SKIPPED_OPTOUT, checked
-at send time, with no payload kept.
-
-── WHO GETS ONE ─────────────────────────────────────────────────────────────────────────────────
-
-:func:`is_authority`: Inspectors, the three ministry tiers and the two admin tiers, plus anybody
-holding an inspection post. Designers, researchers and the rest of the people who upload data do
-not. Every count is read through the same scope the person's own screens use, so a summary never
-reveals a workshop outside it.
-
-For an inspection-post holder that scope is ``inspectable_by_clause``, read here and nowhere else
-outside the inspection feature. It is a READ: it counts and lists, it writes nothing to a workshop,
-and the links it builds open the inspection screens, which check the scope again
-(``tests/test_dw_inspector_scope_gate.py`` lists this file in ``THE_FEATURE`` for that reason).
-
-── WHAT IS KEPT, AND WHAT NEVER IS ──────────────────────────────────────────────────────────────
-
-The payload holds counts, workshop titles and app paths: what the e-mail shows, nothing more. Never
-an artisan, a phone number, Aadhaar data, a designer's contact or a review note. Rows older than 26
-weeks are purged and go with the account. Log lines carry the digest id, the account id and counts.
-
-The documentation portal has the same module by name, the same table and the same routes, with its
-own content rules. The two portals never call each other for this.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -60,18 +22,14 @@ from prisma import Json
 
 logger = logging.getLogger(__name__)
 
-# ── The schedule ─────────────────────────────────────────────────────────────────────────────────
-DIGEST_WEEKDAY = 0  # Monday
+DIGEST_WEEKDAY = 0
 DIGEST_HOUR_IST = 8
 SCHEDULE_LABEL = "Mondays, 08:00 IST"
-#: The worker asks at most this often inside the window; outside it the question costs no query.
 CHECK_EVERY = timedelta(minutes=10)
-#: A PENDING row untouched this long belongs to a worker that died; the next pass takes it over.
 STALE_PENDING_AFTER = timedelta(minutes=15)
 BATCH_SIZE = 50
 RETENTION_WEEKS = 26
 
-# ── The content ──────────────────────────────────────────────────────────────────────────────────
 REVIEW_OVERDUE_DAYS = 7
 SANCTION_OVERDUE_DAYS = 14
 ITEMS_PER_SECTION = 5
@@ -84,7 +42,6 @@ SKIPPED_OPTOUT = "SKIPPED_OPTOUT"
 PREFERENCE = "weeklyDigest"
 NOT_ELIGIBLE = "The weekly summary is for reviewers and officials."
 
-#: The roles that get a summary by role alone. Anybody else holding an inspection post gets one too.
 AUTHORITY_ROLES = frozenset(
     {
         "INSPECTOR",
@@ -97,15 +54,10 @@ AUTHORITY_ROLES = frozenset(
 )
 POSTED_OFFICER_ROLES = frozenset({"ASSISTANT_DIRECTOR", "REGIONAL_DIRECTOR"})
 
-#: The statuses a workshop is still being worked in: ministry_dashboard's registered + ongoing.
 OPEN_STATUSES: tuple[str, ...] = ("DRAFT", "IN_PROGRESS", "NEEDS_REVISION", "PRE_SUBMISSION")
 
 _last_check: datetime | None = None
 
-
-# --------------------------------------------------------------------------------------
-# Time
-# --------------------------------------------------------------------------------------
 
 
 def _aware(now: datetime | None) -> datetime:
@@ -114,28 +66,23 @@ def _aware(now: datetime | None) -> datetime:
 
 
 def week_start_for(now: datetime | None = None) -> date:
-    """The Monday, as an India Standard Time calendar date, of the week ``now`` falls in."""
     local = _aware(now).astimezone(mailer.IST)
     return local.date() - timedelta(days=local.weekday())
 
 
 def in_send_window(now: datetime | None = None) -> bool:
-    """Monday 08:00 to 23:59 IST."""
     local = _aware(now).astimezone(mailer.IST)
     return local.weekday() == DIGEST_WEEKDAY and local.hour >= DIGEST_HOUR_IST
 
 
 @dataclass(frozen=True)
 class Window:
-    """ "This week": ``[weekStart − 7 days 08:00 IST, weekStart 08:00 IST)``, as UTC instants."""
-
     week_start: date
     start: datetime
     end: datetime
 
     @property
     def today(self) -> datetime:
-        """Midnight of the Monday, the way a stored calendar date (``endDate``) reads."""
         return datetime.combine(self.week_start, time(), tzinfo=UTC)
 
 
@@ -145,7 +92,6 @@ def window_for(week_start: date) -> Window:
 
 
 def _week_value(week_start: date) -> datetime:
-    """A ``@db.Date`` column is written as midnight UTC of that date."""
     return datetime.combine(week_start, time(), tzinfo=UTC)
 
 
@@ -159,17 +105,12 @@ def _iso_date(value: Any) -> str | None:
 
 
 def _week_iso(value: Any) -> str | None:
-    """A stored ``weekStart`` back to "2026-10-19". It is a date, so it is read in UTC, not IST."""
     if isinstance(value, datetime):
         return value.date().isoformat()
     if isinstance(value, date):
         return value.isoformat()
     return None
 
-
-# --------------------------------------------------------------------------------------
-# Who
-# --------------------------------------------------------------------------------------
 
 
 async def holds_inspection_post(user_id: str) -> bool:
@@ -179,7 +120,6 @@ async def holds_inspection_post(user_id: str) -> bool:
 
 
 async def is_authority(user: Any) -> bool:
-    """May this account receive the summary? See the module docstring."""
     if user is None:
         return False
     if role_value(user) in AUTHORITY_ROLES:
@@ -188,13 +128,11 @@ async def is_authority(user: Any) -> bool:
 
 
 async def inspection_holders() -> set[str]:
-    """Every account that holds an inspection post on any workshop. One read."""
     posts = await db.designworkshopinspector.find_many(distinct=["userId"])
     return {row.userId for row in posts}
 
 
 async def eligible_users(*, after: str | None = None, take: int = BATCH_SIZE) -> list[Any]:
-    """One page of eligible accounts, by id. E-mail is optional: the in-app half always goes."""
     holders = sorted(await inspection_holders())
     who: list[dict[str, Any]] = [{"role": {"in": sorted(AUTHORITY_ROLES)}}]
     if holders:
@@ -205,20 +143,14 @@ async def eligible_users(*, after: str | None = None, take: int = BATCH_SIZE) ->
     return await db.user.find_many(where=where, order={"id": "asc"}, take=take)
 
 
-# --------------------------------------------------------------------------------------
-# What
-# --------------------------------------------------------------------------------------
-
 
 @dataclass
 class _Scope:
-    """Which workshops this person's own screens show them, and where a workshop link goes."""
-
-    clause: dict[str, Any] | None  # None = the whole estate
-    empty: bool  # True = no workshops at all (an inspector with no posts)
+    clause: dict[str, Any] | None
+    empty: bool
     label: str
-    queue: str  # the list a workshop line opens
-    item_base: str  # "/design-workshops/" and the like
+    queue: str
+    item_base: str
 
 
 async def _scope(user: Any, holds_posts: bool) -> _Scope:
@@ -277,7 +209,6 @@ async def _count_or_zero(
     if scope.empty:
         return 0
     if scope.clause is None:
-        # The whole estate is the same answer for every administrator in the pass: read it once.
         return await _memo(
             shared, f"estate:{key}", lambda: db.designworkshop.count(where=_in_scope(scope, *parts))
         )
@@ -305,11 +236,6 @@ async def _rows_or_none(
 
 
 async def _inspection_waiting(user_id: str) -> list[Any]:
-    """The inspector's queue: assigned, handed in, not yet reviewed by them this round.
-
-    The same two reads as ``GET /design-workshop-inspections/awaiting-count`` (feature/s-dp-notify):
-    the waiting workshops, then this inspector's suggestions for them.
-    """
     from app.services.design_workshop_inspectors import inspectable_by_clause
 
     waiting = await db.designworkshop.find_many(
@@ -336,8 +262,6 @@ async def _inspection_waiting(user_id: str) -> list[Any]:
 async def _sanction_stalls(
     older_than: datetime | None = None, since: datetime | None = None
 ) -> int:
-    """Recorded orders still missing their stage-1 details, scored by the one scorer — the same
-    arithmetic as ``sanction_orders.awaiting_count``, narrowed by the order's date."""
     from app.services import sanction_orders
     from app.services.stage_schema import stage, stage_completeness
 
@@ -395,8 +319,6 @@ def _section(
 
 
 async def _memo(shared: dict[str, Any] | None, key: str, factory: Any) -> Any:
-    """One pass reads an estate-wide figure once, however many officials it is for. The box is
-    small; a sanction-order score repeated per official was most of a pass's queries."""
     if shared is None:
         return await factory()
     if key not in shared:
@@ -411,10 +333,6 @@ async def build_payload(
     now: datetime | None = None,
     shared: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Everything one summary says, read through the person's own scope. Counts, titles, app paths.
-
-    ``shared`` is a per-pass cache for the figures that are the same for everybody who sees them
-    (the approval queue, the sanction register, a rank's review queue)."""
     from app.services import design_workshop_approvals
     from app.services.sanction_orders import (
         awaiting_count as sanction_awaiting,
@@ -423,7 +341,6 @@ async def build_payload(
 
     now = _aware(now)
     user_id = str(user.id)
-    # Who holds a post is one read per pass, not one per person (``eligible_users`` reads the same set).
     holds_posts = (
         user_id in await _memo(shared, "inspectionHolders", inspection_holders)
         if shared is not None and user_id
@@ -509,8 +426,6 @@ async def build_payload(
         )
         if reviewer
         else none(),
-        # Scoped to the person, except that the whole-estate scope is shared by every administrator
-        # and so is read once per pass (the ``key``); see ``_count_or_zero``.
         _count_or_zero(scope, open_overdue, shared=shared, key="stagesLate"),
         _rows_or_none(scope, {"endDate": "asc"}, open_overdue, shared=shared, key="stagesLateItems"),
         _count_or_zero(scope, {"lastHandedInAt": week}, shared=shared, key="newHandedIn"),
@@ -554,8 +469,6 @@ async def build_payload(
         [_item(row, approval_base, row.lastHandedInAt) for row in approval_items or []]
         + [_item(row, inspection_base, row.lastHandedInAt) for row in inspections],
     )
-    # An approver's late count is estate-wide and already holds every report an inspector could be
-    # late on, so the two are never added together.
     late_review_count = int(approvals_late or 0) if approver else len(inspections_late)
     overdue = _section(
         "overdue",
@@ -615,7 +528,6 @@ async def build_payload(
 
 
 def summary_line(payload: dict[str, Any]) -> str:
-    """ "4 waiting · 2 overdue · 11 new · Reports in 71%": the in-app body, the handset's one line."""
     label, figure, _note = mailer.coverage_words(payload.get("coverage"))
     parts = [
         f"{payload.get('waiting', 0)} waiting",
@@ -627,10 +539,6 @@ def summary_line(payload: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
-# --------------------------------------------------------------------------------------
-# Sending
-# --------------------------------------------------------------------------------------
-
 
 async def _send(
     row: Any,
@@ -640,7 +548,6 @@ async def _send(
     settings: Settings,
     shared: dict[str, Any] | None = None,
 ) -> str:
-    """Build and deliver one claimed PENDING row. Returns the status it ended in."""
     if not await notifications.wants_email(str(user.id), PREFERENCE):
         await db.weeklydigest.update(where={"id": row.id}, data={"status": SKIPPED_OPTOUT})
         return SKIPPED_OPTOUT
@@ -656,13 +563,10 @@ async def _send(
         link=f"/digest/{row.id}",
         email_kind=mailer.WEEKLY_DIGEST,
         email_params={"digestId": row.id, **payload},
-        # The opt-out was read at the top of this function and this person wants the e-mail; naming
-        # the preference again would read the same row a second time inside ``notify``.
         preference=None,
         settings=settings,
     )
     if delivery.notification is None and delivery.email is None:
-        # notify never raises; nothing written means a failed write. Leave it PENDING for repair.
         logger.warning(
             "digest %s for account %s wrote nothing; left for the next pass", row.id, user.id
         )
@@ -695,8 +599,6 @@ async def deliver_one(
     settings: Settings | None = None,
     shared: dict[str, Any] | None = None,
 ) -> str:
-    """Insert, build, notify, mark — for one person and one week. Returns the status, or "EXISTS"
-    when another pass already holds the row."""
     now = _aware(now)
     settings = settings or get_settings()
     try:
@@ -715,8 +617,6 @@ async def _repair(
     tally: dict[str, Any],
     shared: dict[str, Any],
 ) -> None:
-    # Wall-clock, not ``now``: staleness is about when a worker last touched the row, whatever week
-    # the pass is reporting on.
     cutoff = datetime.now(UTC) - STALE_PENDING_AFTER
     stale = await db.weeklydigest.find_many(
         where={
@@ -755,10 +655,6 @@ _TALLY_KEY = {
 async def run_weekly_digests(
     now: datetime | None = None, *, force: bool = False, settings: Settings | None = None
 ) -> dict[str, Any]:
-    """One scheduler pass. Called by the queue worker every loop; cheap outside Monday's window.
-
-    ``force`` skips the window and the ten-minute throttle (tests); the kill switch still holds.
-    """
     global _last_check
     settings = settings or get_settings()
     if not settings.weekly_digest_enabled:
@@ -823,10 +719,6 @@ async def run_weekly_digests(
     return tally
 
 
-# --------------------------------------------------------------------------------------
-# Reading
-# --------------------------------------------------------------------------------------
-
 
 def _payload(row: Any) -> dict[str, Any]:
     value = getattr(row, "payload", None)
@@ -834,7 +726,6 @@ def _payload(row: Any) -> dict[str, Any]:
 
 
 def serialize_digest(row: Any) -> dict[str, Any]:
-    """``GET /notifications/digests/{id}``: the page's whole content."""
     payload = _payload(row)
     created = getattr(row, "createdAt", None)
     return {
@@ -848,7 +739,6 @@ def serialize_digest(row: Any) -> dict[str, Any]:
 
 
 def serialize_latest(row: Any | None) -> dict[str, Any] | None:
-    """The ``latest`` block of ``GET /notifications/digest``."""
     if row is None:
         return None
     payload = _payload(row)
@@ -866,7 +756,6 @@ def serialize_latest(row: Any | None) -> dict[str, Any] | None:
 
 
 async def preference_state(user: Any, settings: Settings | None = None) -> dict[str, Any]:
-    """``GET /notifications/digest``."""
     settings = settings or get_settings()
     email_available = mailer.mail_configured(settings)
     if not await is_authority(user):

@@ -76,99 +76,30 @@ import java.time.format.DateTimeFormatter
 import androidx.compose.ui.platform.LocalLocale
 import java.util.Locale
 
-/*
- * Two things about the transcription providers, gated at two different heights — the Android mirror
- * of the web's `/settings/api-keys` page, which stacks exactly these halves in exactly this order.
- *
- * THE RANKING ([ProviderOrderPanel], first) is `require_admin`. Deciding whether a Hindi interview
- * goes to ElevenLabs or to Deepgram first is an editorial judgement about transcription accuracy and
- * it belongs to the admins who run the workshops. Nothing about a key's VALUE is exposed by it —
- * only whether each engine has one and what the provider said the last time we asked.
- *
- * THE KEYS (`/secrets`, below) stay MASTER ADMIN ONLY, because handing out live provider credentials
- * (reveal returns plaintext) is a different class of power. [ApiKeysRestrictedCard] takes the list's
- * place while the ranking above it stays fully live, and that is what lets one screen serve both
- * roles. Which of the two paths puts the card there is the subject of the last paragraph below.
- *
- * Two rules shape the key half, and both are the reason it is worth having at all:
- *
- * 1. A VALUE IS NEVER ON SCREEN UNTIL IT IS ASKED FOR. `GET /secrets` deliberately carries only a
- *    four-character hint, so the list renders with no credential in the process at all. Plaintext
- *    exists solely behind `GET /secrets/{key}/reveal`, which the server audit-logs against the
- *    account that called it. A revealed value therefore un-reveals itself after
- *    [REVEAL_TIMEOUT_MS] so a key cannot be left glowing on a phone put down on a table, is
- *    dropped the moment the screen leaves the composition, and is never written to a log, a
- *    crash report or an analytics event — there is not one logging call in this file.
- * 2. A SAVED KEY IS LIVE IMMEDIATELY. A write invalidates the server's cache, so the very next
- *    provider call (API *and* the transcription queue) uses it — no restart, no redeploy. The
- *    banner says so out loud rather than leaving the master admin wondering whether to SSH in.
- *
- * The caller gates this screen on ADMIN and hands it `isMasterAdmin`, which decides whether the key
- * half is ASKED FOR at all; the API decides the answer to every request that is actually made, and a
- * 403 renders [ApiKeysRestrictedCard] instead of an error, because "you are not allowed" is a state
- * and not a failure. The hint can only remove a request, so an account that may not read keys still
- * cannot, whatever route brought it here.
- *
- * TWO CORRECTIONS ARE BURIED IN THAT SENTENCE, both of them shipped defects. This paragraph used to
- * say the caller gated on MASTER admin, and it did: `AdminHubEntry.API_KEYS` carried
- * `masterOnly = true`, so the `require_admin` ranking above sat behind a `require_master_admin` door
- * and no admin ever saw the screen written for them. Then, with the door open, it said the 403 alone
- * kept the arrangement honest — which is true only where there is signal. Offline the refusal never
- * arrives, the failure is an IOException, and the ordinary admin this screen had just been opened to
- * got "Unable to load the managed keys" and a snackbar about a resource they were never entitled to.
- */
-
-/**
- * Is this `/secrets` failure the server REFUSING THIS ACCOUNT, or is it something that went wrong?
- *
- * 403 is the only refusal. Everything else — a timeout, a captive portal, a 502 from CloudFront, no
- * signal at all — is a failure, and the two must not be confused in either direction: reading a
- * network drop as "you are not the master admin" would tell a master admin they had been demoted,
- * and reading a 403 as a failure would show an ordinary admin an error they cannot act on.
- *
- * `internal` so `ApiKeysAccessTest` can walk it. That test is the one that states the thing this
- * screen's own KDoc used to get wrong: with no signal — the normal condition in a village — the
- * failure is an IOException rather than a 403, so an account sent to ask `/secrets` when it was
- * never allowed to gets "Unable to load the managed keys" and a snackbar instead of the restricted
- * card. That is why [ApiKeysScreen] takes `isMasterAdmin` and does not ask at all.
- */
 internal fun secretsRefusedTheAccount(error: Throwable): Boolean =
     error is HttpException && error.code() == 403
 
-/** How long a revealed value stays on screen before it hides itself again. */
 private const val REVEAL_TIMEOUT_MS = 30_000L
 
 private const val SOURCE_DATABASE = "database"
 private const val SOURCE_ENVIRONMENT = "environment"
 
-/** Which per-row action is in flight, so only that row's buttons go busy. */
 enum class ApiKeyAction { REVEAL, TEST, SAVE, CLEAR }
 
-/**
- * State + actions for [ApiKeysScreen]. Built by [rememberApiKeysState]; every action is fire-and-
- * forget on the composition's own scope, so leaving the screen cancels whatever was in flight.
- *
- * Revealed plaintext lives ONLY in [revealedValues], which is private, is never rendered except by
- * the row that asked for it, and is emptied by [hideAll] when the screen is disposed.
- */
 @Stable
 class ApiKeysState internal constructor(
     private val repository: WorkshopRepository,
     private val scope: CoroutineScope
 ) {
-    /** Null until the first load finishes — the list is empty only if the server says it is. */
     var secrets by mutableStateOf<List<ManagedSecretDto>?>(null)
         private set
 
-    /** True when the API answered 403: this account is not the master admin. */
     var restricted by mutableStateOf(false)
         private set
 
-    /** The last failure, shown inline. Cleared when the next action starts. */
     var error by mutableStateOf<String?>(null)
         private set
 
-    /** The last confirmation ("… saved", "… is working"), shown inline. */
     var notice by mutableStateOf<String?>(null)
         private set
 
@@ -178,25 +109,20 @@ class ApiKeysState internal constructor(
     var busyAction by mutableStateOf<ApiKeyAction?>(null)
         private set
 
-    /** The key whose Save panel is open, or null. */
     var editing by mutableStateOf<String?>(null)
         private set
 
-    /** The value being typed into the Save panel. Held only while that panel is open. */
     var draft by mutableStateOf("")
         private set
 
-    /** The key whose "Clear override" confirmation is open, or null. */
     var confirmingClear by mutableStateOf<String?>(null)
         private set
 
-    /** The key whose value was just copied, for the two-second tick on the copy button. */
     var copied by mutableStateOf<String?>(null)
         private set
 
     private val revealedValues = mutableStateMapOf<String, String>()
 
-    /** The plaintext currently on screen for [key], or null when the row is redacted. */
     fun revealed(key: String): String? = revealedValues[key]
 
     fun busyAction(key: String): ApiKeyAction? = if (busyKey == key) busyAction else null
@@ -212,7 +138,6 @@ class ApiKeysState internal constructor(
         busyAction = null
     }
 
-    /** Swap one row in place, so a test/save/clear never costs a full reload of the list. */
     private fun replaceRow(row: ManagedSecretDto) {
         val current = secrets
         secrets = if (current == null) listOf(row) else current.map { if (it.key == row.key) row else it }
@@ -236,29 +161,12 @@ class ApiKeysState internal constructor(
         }
     }
 
-    /**
-     * Draw the restricted card WITHOUT asking `/secrets` first — for an account the caller already
-     * knows is not the master admin.
-     *
-     * This only ever SUBTRACTS a request; it can never show a key. The 403 branch in [load] is still
-     * the authority and still fires for anyone who does ask, so an account whose rank changed on the
-     * server since sign-in is refused by the server exactly as before.
-     *
-     * It exists because the tile above this screen opened to plain admins. For them `GET /secrets`
-     * is a guaranteed 403 on every open — a request billed to prepaid mobile data for an answer the
-     * client already knows — and, with no signal, it does not even come back as one: the failure is
-     * an IOException, so [load] would set [error] and this screen would raise "Unable to load the
-     * managed keys" plus a snackbar at an admin who was never entitled to them. Mirrors the web,
-     * which renders `<ApiKeysPanel/>` only `{master ? … : null}`
-     * (frontend/app/(protected)/settings/api-keys/page.tsx:84).
-     */
     fun markRestricted() {
         restricted = true
         secrets = emptyList()
         error = null
     }
 
-    /** Tapping the eye a second time hides the value; otherwise fetch it (audit-logged server-side). */
     fun toggleReveal(secret: ManagedSecretDto) {
         if (revealedValues.containsKey(secret.key)) {
             hide(secret.key)
@@ -281,13 +189,11 @@ class ApiKeysState internal constructor(
         }
     }
 
-    /** Redact one row again. Called by the eye, by the auto-hide timer, and after a write. */
     fun hide(key: String) {
         revealedValues.remove(key)
         if (copied == key) copied = null
     }
 
-    /** Drop every plaintext this screen is holding. Called on dispose. */
     fun hideAll() {
         revealedValues.clear()
         copied = null
@@ -395,53 +301,15 @@ class ApiKeysState internal constructor(
     }
 }
 
-/** Remembers an [ApiKeysState] bound to this composition's scope. */
 @Composable
 fun rememberApiKeysState(repository: WorkshopRepository): ApiKeysState {
     val scope = rememberCoroutineScope()
     return remember(repository, scope) { ApiKeysState(repository, scope) }
 }
 
-/**
- * Providers & API keys. ADMIN and above — the caller gates it there, for the ranking's sake — and
- * the key list below the ranking is the master admin's.
- *
- * WHO DECIDES THE KEY HALF, in this order. [isMasterAdmin] decides whether the phone ASKS: an
- * ordinary admin gets [ApiKeysRestrictedCard] straight away and `/secrets` is never called, which is
- * what the web does with `{master ? <ApiKeysPanel/> : null}`. The API decides the ANSWER whenever it
- * is asked: a 403 still sets `restricted` and draws the same card, and deliberately never touches
- * `error`, so a stale hint is refused by the server rather than trusted.
- *
- * The hint alone would be a client inventing a permission; the 403 alone left an admin with no
- * signal — the normal condition here — looking at "Unable to load the managed keys" and a snackbar,
- * because an unreachable server does not answer 403 (see [secretsRefusedTheAccount]). Both, in this
- * order, is the only arrangement that is honest offline and safe online.
- *
- * HOSTING: this is an admin-hub tool, so it lays out as a plain [Column] and renders into whatever
- * scrolling parent hosts it — exactly like [TaskAdminScreen] and every other hub tool. It must NOT
- * scroll itself: the hub renders inside the app's shared `verticalScroll` Column, and a nested
- * `verticalScroll` is measured with an infinite height budget, which throws
- * "Vertical viewport was given infinite maximum height" and takes the whole screen down before it
- * can draw. That crash is why this screen would not open at all.
- *
- * [onBack] is optional and, like [TaskAdminScreen], is left null by the hub, whose own
- * "All admin tools" pill is the back control — a second arrow here would only duplicate it. When it
- * is null the Back key still closes an open edit/clear panel first, then falls through to the host.
- *
- * [onMessage] and [onError] are optional mirrors of what the screen already shows inline, for hosts
- * that also want a snackbar.
- */
 @Composable
 fun ApiKeysScreen(
     repository: WorkshopRepository,
-    /**
-     * `deps.is_master_admin` — `role == "MASTER_ADMIN"`, nothing softer.
-     *
-     * Required rather than defaulted on purpose. A default of `true` would silently restore the
-     * pointless 403 for every future caller that forgot it, and a default of `false` would hide the
-     * key list from the master admin; there is one call site, so the compiler asking is cheaper than
-     * either.
-     */
     isMasterAdmin: Boolean,
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -455,15 +323,11 @@ fun ApiKeysScreen(
         if (isMasterAdmin) state.load() else state.markRestricted()
     }
 
-    // Security: nothing revealed survives leaving this screen.
     DisposableEffect(state) { onDispose { state.hideAll() } }
 
     LaunchedEffect(state.notice) { state.notice?.let(onMessage) }
     LaunchedEffect(state.error) { state.error?.let(onError) }
 
-    // Back closes an open panel first, so a half-typed key is never one tap from leaving the screen.
-    // With nothing open and no [onBack], stay disabled so the host's own handler (the admin hub's
-    // "return to the tool list") gets the press instead of it being silently swallowed here.
     val hasPanelOpen = state.editing != null || state.confirmingClear != null
     BackHandler(enabled = hasPanelOpen || onBack != null) {
         when {
@@ -495,25 +359,18 @@ fun ApiKeysScreen(
             )
         }
 
-        // The ranking first: it is the control most admins come here for, and the only one they can
-        // all use. The key list below it is the master admin's. Its own failures are its own — they
-        // must not be mistaken for the key list being broken, so they never reach this screen's
-        // shared error line.
         ProviderOrderPanel(onMessage = onMessage)
 
-        // The month's transcription spend (read only; the route answers admins only and draws nothing otherwise).
         com.designprototype.workshop.transcript.ui.TranscriptBudgetCard()
 
-        // ElevenLabs Voice Isolator (0.0.5), off until the master admin turns it on. Admins read it.
         com.designprototype.workshop.transcript.ui.AudioIsolationCard(canChange = state.secrets != null && !state.restricted)
+        com.designprototype.workshop.transcript.ui.TranscriptAutoSwitchesCard(canChange = state.secrets != null && !state.restricted)
 
         if (state.restricted) {
             ApiKeysRestrictedCard()
             return@Column
         }
 
-        // Named now that the ranking sits above it — two sections on one screen, and only one of
-        // them is about credentials.
         Text(
             "Managed API keys",
             display = true,
@@ -569,11 +426,6 @@ fun ApiKeysScreen(
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Pieces
-// ---------------------------------------------------------------------------------------------
-
-/** The one thing a master admin needs to know before touching anything here. */
 @Composable
 private fun ApiKeysLiveBanner() {
     Column(
@@ -597,7 +449,6 @@ private fun ApiKeysLiveBanner() {
     }
 }
 
-/** Shown when the API answers 403 — a state, not an error. */
 @Composable
 private fun ApiKeysRestrictedCard() {
     ElevatedCard(
@@ -679,7 +530,6 @@ private fun ApiKeyCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // --- Identity -------------------------------------------------------------------
             Text(
                 secret.label,
                 style = MaterialTheme.typography.titleMedium,
@@ -697,7 +547,6 @@ private fun ApiKeyCard(
 
             HorizontalDivider(color = tokens.hairline)
 
-            // --- Value ----------------------------------------------------------------------
             ApiKeyFieldLabel("Value")
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -750,9 +599,6 @@ private fun ApiKeyCard(
             }
 
             if (plaintext != null) {
-                // The auto-hide countdown lives here, keyed on the value, so it restarts on a fresh
-                // reveal and is cancelled by the composition the instant the row is redacted or the
-                // screen is left — no timer can outlive what it was guarding.
                 var remaining by remember(secret.key, plaintext) {
                     mutableStateOf((REVEAL_TIMEOUT_MS / 1000L).toInt())
                 }
@@ -775,7 +621,6 @@ private fun ApiKeyCard(
 
             HorizontalDivider(color = tokens.hairline)
 
-            // --- Source + status -------------------------------------------------------------
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ApiKeySourceBadge(secret.source)
                 ApiKeyStatusBadge(secret.lastStatus)
@@ -817,7 +662,6 @@ private fun ApiKeyCard(
 
             HorizontalDivider(color = tokens.hairline)
 
-            // --- Actions ---------------------------------------------------------------------
             ActionRow {
                 OutlinedButton(
                     onClick = { state.test(secret) },
@@ -870,7 +714,6 @@ private fun ApiKeyCard(
     }
 }
 
-/** The Save/Update panel. Password-style: the value being typed is never rendered either. */
 @Composable
 private fun ApiKeyEditPanel(secret: ManagedSecretDto, state: ApiKeysState, busy: Boolean) {
     Column(
@@ -889,11 +732,6 @@ private fun ApiKeyEditPanel(secret: ManagedSecretDto, state: ApiKeysState, busy:
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onPrimaryContainer
         )
-        // THE EYE, ADDED 2026-08-30. A repository key is a fifty-character string pasted from a
-        // provider's console on a phone; a masked box is exactly where a truncated paste hides,
-        // and the failure then surfaces hours later on somebody else's screen. `noun = "key"`
-        // because the box is labelled "Paste the key" and a spoken "Show password" would name a
-        // control that is not on this screen. See ui/PasswordReveal.kt.
         var revealDraft by remember { mutableStateOf(false) }
         OutlinedTextField(
             value = state.draft,
@@ -945,7 +783,6 @@ private fun ApiKeyEditPanel(secret: ManagedSecretDto, state: ApiKeysState, busy:
     }
 }
 
-/** The Clear-override confirmation. Spells out what comes back into force. */
 @Composable
 private fun ApiKeyClearPanel(secret: ManagedSecretDto, state: ApiKeysState, busy: Boolean) {
     Column(
@@ -995,8 +832,6 @@ private fun ApiKeyClearPanel(secret: ManagedSecretDto, state: ApiKeysState, busy
 @Composable
 private fun ApiKeyFieldLabel(text: String) {
     Text(
-        // The composition's locale, which recomposes when the person changes their language;
-        // `Locale.getDefault()` read here would not (lint: NonObservableLocale).
         text.uppercase(LocalLocale.current.platformLocale),
         style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.SemiBold,
@@ -1067,21 +902,12 @@ private fun ApiKeyStatusBadge(status: String) {
     }
 }
 
-// ---------------------------------------------------------------------------------------------
-// Plain helpers
-// ---------------------------------------------------------------------------------------------
-
 private fun apiKeySourceHelp(source: String): String = when (source) {
     SOURCE_DATABASE -> "Saved here — overrides the default."
     SOURCE_ENVIRONMENT -> "Using the default."
     else -> "No value — dependent features are off."
 }
 
-/**
- * Put the value on the clipboard, flagged SENSITIVE on API 33+ so the system's paste preview does
- * not draw the credential in a floating toast. Returns false rather than throwing when the platform
- * refuses; the value is never logged either way.
- */
 private fun copySecretToClipboard(context: Context, label: String, value: String): Boolean =
     runCatching {
         val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
@@ -1099,7 +925,6 @@ private fun copySecretToClipboard(context: Context, label: String, value: String
 private val apiKeyStampFormatter: DateTimeFormatter =
     DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a", Locale.getDefault())
 
-/** The web's `formatDateTime`, best-effort: ISO in, "25 Jul 2026, 06:01 pm" out, null if unparseable. */
 private fun formatApiKeyStamp(value: String?): String? {
     if (value.isNullOrBlank()) return null
     val instant = runCatching { OffsetDateTime.parse(value).toInstant() }.getOrNull()

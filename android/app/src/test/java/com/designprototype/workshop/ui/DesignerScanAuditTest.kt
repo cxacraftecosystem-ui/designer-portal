@@ -16,7 +16,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/** The 2026-10-20 audit of the designer handset: scanner, craft note and artisan consent. */
 class DesignerScanAuditTest {
     private val peer = ScanOutcome(
         ScanOutcomeKind.ADD_FROM_PEER,

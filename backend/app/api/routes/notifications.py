@@ -1,28 +1,3 @@
-"""The in-app activity list: a person's own notices, the unread count, and marking them read.
-
-Every route reads or writes only the CALLER's rows — there is no way to name another account — so
-the gate is a login and nothing else. The same four routes, with the same shapes, exist in the
-documentation portal; both web clients and both Android clients are written against them.
-
-    GET  /api/notifications?limit=30&before=<id>&unreadOnly=false
-         -> {"items": [notice...], "unreadCount": n, "hasMore": bool}
-    GET  /api/notifications/unread-count          -> {"unreadCount": n}
-    POST /api/notifications/{id}/read             -> {"item": notice, "unreadCount": n}
-    POST /api/notifications/read  {"ids": [...]} or {"all": true}
-                                                  -> {"updated": n, "unreadCount": n}
-
-THE MONDAY SUMMARY (``services/weekly_digest.py``) rides here too, with its own switch so it shows
-and works when mail is off:
-
-    GET  /api/notifications/digest                -> {eligible, enabled, emailAvailable, schedule, latest}
-    PUT  /api/notifications/digest  {"enabled": b} -> the same; 403 for an account that cannot get one
-    GET  /api/notifications/digests/{id}          -> one summary, the owner's only (404 for anyone else)
-
-Marking read is idempotent (an already-read notice keeps its first ``readAt``), so the handset's
-offline queue may replay a mark as often as it likes. An id that is not the caller's is ignored by
-the batch route and is a 404 on the single one — never a 403, which would confirm it exists.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -40,9 +15,7 @@ from app.services.notifications import serialize
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
-#: The most one page holds. The handset asks for its whole offline copy in one page of this size.
 MAX_PAGE = 100
-#: The most ids one batch mark may name.
 MAX_IDS = 500
 
 
@@ -62,12 +35,6 @@ async def list_notifications(
     unreadOnly: bool = Query(False),
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """Newest first. ``before`` is the id of the last notice already shown (the next page starts
-    after it); an id that is not the caller's, or no longer exists, starts from the top.
-
-    The next page is found from the anchor's OWN ``createdAt`` and ``id`` (keyset), not with a
-    Prisma cursor and ``skip=1``. With ``unreadOnly`` the anchor is often the notice the person just
-    opened, so it no longer matches the filter; a cursor would then skip the first real older notice."""
     where: dict[str, Any] = {"userId": current_user.id}
     if unreadOnly:
         where["readAt"] = None
@@ -100,7 +67,6 @@ async def unread_count(current_user: Any = Depends(get_current_user)) -> dict[st
 
 @router.post("/read")
 async def mark_read(payload: MarkReadRequest, current_user: Any = Depends(get_current_user)) -> dict[str, int]:
-    """Mark the named notices read, or every one with ``all``. Already-read ones are left alone."""
     where: dict[str, Any] = {"userId": current_user.id, "readAt": None}
     if not payload.all:
         ids = [value for value in dict.fromkeys(payload.ids) if value]
@@ -110,8 +76,6 @@ async def mark_read(payload: MarkReadRequest, current_user: Any = Depends(get_cu
     updated = await db.notification.update_many(where=where, data={"readAt": datetime.now(UTC)})
     return {"updated": int(updated or 0), "unreadCount": await _unread(current_user.id)}
 
-
-# The summary's literal paths, declared before the ``/{notification_id}`` route below.
 
 
 @router.get("/digest")
@@ -131,7 +95,6 @@ async def save_digest_preference(
 
 @router.get("/digests/{digest_id}")
 async def read_digest(digest_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """One summary, for its owner. Anybody else gets 404, never 403, which would confirm it exists."""
     row = await db.weeklydigest.find_first(
         where={"id": digest_id, "userId": current_user.id, "status": weekly_digest.DELIVERED}
     )

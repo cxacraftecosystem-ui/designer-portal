@@ -1,52 +1,8 @@
 "use client";
 
-/**
- * WHAT EACH OF THE TWO DOWNLOADS CONTAINS, AND WHAT IT DOES NOT — said on screen, before anybody
- * presses anything.
- *
- * THIS PANEL IS A SAFETY CONTROL, NOT AN EXPLAINER. A questionnaire produces two .xlsx files with
- * the same title on them, that land in the same Downloads folder, and that look identical in an
- * email client:
- *
- *   * the QUESTION SET — the instrument. Questions, order, help text, required flags. Nothing else.
- *   * the FULL WORKBOOK — the same questions plus every sitting: each respondent's NAME, the
- *     interviewer's notes and every answer they gave.
- *
- * Attaching the second one to a message meant for the first is not a mistake the app can undo, and
- * the server cannot prevent it either — the owner is entitled to their own file. The only thing that
- * stands between a designer and that mistake is knowing, at the moment they choose, which file is
- * which. So this is drawn wherever either download is offered, and it names the contents of both
- * rather than only the one being offered: a notice that described only the safe file would leave the
- * dangerous one unexplained, which is the wrong half to leave out.
- *
- * IT ALSO STATES WHAT AN UPLOAD DOES, because that is the same fact read backwards and it is where
- * the second defect lived: a workbook that came out of the platform imports its questions and NOT
- * its answers, since those answers already exist here under the names of the people who recorded
- * them. A designer who uploads a colleague's file and sees no sittings must be able to find out why
- * without contacting anybody.
- *
- * Tokens only — `ink-*`, `line-200`, `surface-50` and the brand `amber-100`/`amber-800` rungs (never
- * `amber-50`/`amber-200`, which are stock Tailwind and do not pair with them). Nothing here inverts
- * incorrectly in dark mode as a result.
- */
-
 import { useId, useState } from "react";
 import { ChevronDown, FileSpreadsheet, Lock, Share2, Upload } from "lucide-react";
 
-/**
- * THE SUMMARY IS ALWAYS ON SCREEN AND THE DETAIL IS BEHIND A DISCLOSURE, which is the one shape that
- * serves both readers.
- *
- * A four-paragraph panel pinned to the top of the questionnaire list is read once and scrolled past
- * for ever afterwards, so the sentence that matters would be invisible on exactly the hundredth
- * visit when the wrong file gets attached to an email. A disclosure that starts CLOSED with a
- * neutral label ("More about downloads") hides the warning from the person who has never met it.
- *
- * So the load-bearing sentence — which file carries respondents and which does not — is never
- * collapsed, and only the elaboration is. Plain conditional rendering rather than an animated
- * height: there is nothing here worth a motion branch, and an un-animated disclosure needs no
- * reduced-motion counterpart to get wrong.
- */
 export function ArtefactNotice({ className }: { className?: string }) {
   const [open, setOpen] = useState(false);
   const panelId = useId();
@@ -82,7 +38,6 @@ export function ArtefactNotice({ className }: { className?: string }) {
   );
 }
 
-/** The elaboration behind the disclosure. Its own component so the shell above stays one screen. */
 function ArtefactDetail() {
   return (
     <>

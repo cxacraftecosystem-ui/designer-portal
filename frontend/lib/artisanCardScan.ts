@@ -1,7 +1,3 @@
-/**
- * A scanned or typed artisan card, taken as far as one answer: who it is and where to open them.
- * Shared by every scanner on the web so a card reads the same wherever it is scanned.
- */
 import { ApiError } from "@/lib/api";
 import { maskedLast4, newArtisanFromCardHref, resolveArtisanCard } from "@/lib/artisanCardApi";
 

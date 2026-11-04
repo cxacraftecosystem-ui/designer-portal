@@ -34,18 +34,7 @@ export function locationFromForm(form: FormData) {
     accuracy: optionalNumberPayload(form, "accuracy"),
     address: textValue(form, "locationAddress") || undefined,
     placeName: textValue(form, "placeName") || undefined,
-    // When the device produced the fix. Provenance that cannot say WHEN is half a record: the whole
-    // point of separating it from the stated address is that a reader can judge it, and a
-    // coordinate with no timestamp cannot be judged at all.
     capturedAt: textValue(form, "capturedAt") || undefined,
-    // The STATED address — see LocationPayload for why these are not the same kind of thing as the
-    // coordinates above. They are columns on Location like every field here, and LocationFields
-    // renders them on all six forms. They were read only by the artisan form, which merged them in
-    // by hand: the other five suggested them from the map, validated them, and then dropped them
-    // here at save. Worse on an edit — a save writes a BRAND NEW Location row (attach_location in
-    // backend/app/services/records.py), so a stored state/pincode was replaced by nothing. Read them
-    // in the one place every form already goes through, rather than in five more call sites that
-    // would each have to remember.
     state: textValue(form, "state") || undefined,
     district: textValue(form, "district") || undefined,
     village: textValue(form, "village") || undefined,
@@ -66,12 +55,6 @@ export function recordedTimezoneFromForm(form: FormData) {
   return textValue(form, "recordedTimezone") || "Asia/Kolkata";
 }
 
-/**
- * Dirty-state tracker for record forms. Call `markDirty` on any user change (the forms wire it to
- * the form's onInput plus every themed-dropdown onChange and media picker); while dirty the browser
- * warns before a full page unload. In-app navigation is guarded separately by each form's Back
- * button + UnsavedChangesDialog. `resetDirty` after a successful save.
- */
 export function useUnsavedChanges() {
   const [dirty, setDirty] = useState(false);
 
@@ -90,24 +73,12 @@ export function useUnsavedChanges() {
   return { dirty, markDirty, resetDirty };
 }
 
-// ── Jumping to a field (record completeness, 2026-10-18) ─────────────────────────────────────────
-
-/** The `focus=` key in this page's URL, or null. */
 export function focusKeyFromSearch(search: string): string | null {
   const value = new URLSearchParams(search).get("focus");
   return value && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(value) ? value : null;
 }
 
-/**
- * Bring the field a completeness rule names into view, put the caret in it, and flash it once — the
- * `.fr-flash-row` outline (§10.2), whose static half survives reduced motion. Answers whether an
- * anchor was found.
- *
- * SELF-CONTAINED ON PURPOSE: nothing outside this function body is referenced, so
- * `e2e/record-completeness-unit.spec.ts` can run its source in a real page.
- */
 export function focusField(key: string, root: ParentNode = document): boolean {
-  // The first real control inside the anchor — never a mirror twin (`tabindex="-1"`, §12.2).
   const target =
     'input:not([type="hidden"]):not([tabindex="-1"]):not([disabled]), textarea:not([tabindex="-1"]):not([disabled]), button:not([disabled]):not([tabindex="-1"]), [contenteditable="true"], [tabindex]:not([tabindex="-1"])';
   const anchor = root.querySelector<HTMLElement>(`[data-field="${key.replace(/["\\]/g, "")}"]`);
@@ -127,11 +98,6 @@ export function focusField(key: string, root: ParentNode = document): boolean {
   return true;
 }
 
-/**
- * Honour `?focus=<key>` once the form it names is on screen. The key is read on arrival (an edit
- * deep link strips its own `?edit=` from the URL, and the focus key with it), and applied after the
- * first paint that has `ready` true — the inline forms are seeded asynchronously.
- */
 export function useFocusField(ready = true) {
   const pending = useRef<string | null | undefined>(undefined);
   useEffect(() => {
@@ -139,7 +105,6 @@ export function useFocusField(ready = true) {
     if (!ready || !pending.current) return;
     const key = pending.current;
     let frame = window.requestAnimationFrame(() => {
-      // Two frames: a remounted form lays out, then the edit-only blocks appear.
       frame = window.requestAnimationFrame(() => {
         if (focusField(key)) pending.current = null;
       });

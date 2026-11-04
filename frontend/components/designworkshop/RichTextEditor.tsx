@@ -1,128 +1,5 @@
 "use client";
 
-/**
- * The rich-text editing surface — the DOM half. `lib/richText.ts` is the other half and owns the
- * document, the selection arithmetic and every command; read that file's header first.
- *
- * WHAT THIS IS. A `contenteditable` whose children are NOT managed by React, plus a CONTEXTUAL
- * toolbar that appears only while this editor holds the focus or the selection and disappears when
- * it does not. A stage in this application can carry a dozen narrative fields; a toolbar drawn
- * permanently above each of them is twelve toolbars on one screen, which is both unusable and not
- * what was asked for. One bar, anchored to the editor being written in, is the shape.
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * THE SIX THINGS THAT BREAK A CONTENTEDITABLE, AND WHAT THIS FILE DOES ABOUT EACH
- * ─────────────────────────────────────────────────────────────────────────────
- *
- * 1. **THE TOOLBAR MUST NOT TAKE THE FOCUS.** Every button calls `preventDefault()` on
- *    `mousedown`, and so does the bar itself. Without it the browser moves focus to the button
- *    before the click resolves, the document selection collapses on the way, and by the time the
- *    handler runs there is nothing selected to embolden — the press appears to do nothing at all,
- *    which is the single most reported bug in every hand-rolled editor. `mousedown` and not
- *    `click`: focus moves on the down stroke, so cancelling it later is too late. Touch is covered
- *    by the same handler, because a tap synthesises a `mousedown` before it moves focus.
- *
- * 2. **PASTE IS SANITISED INTO THE MODEL, NEVER INSERTED AS MARKUP.** The `paste` listener cancels
- *    the event outright and reads `text/plain`. A paste out of Word carries a `text/html` flavour
- *    that is several hundred kilobytes of `mso-` styling around forty words; there is no allowlist
- *    that survives contact with it, so it is never parsed. `docFromPastedText` recovers the
- *    STRUCTURE from characters Word itself puts in the plain-text flavour — a bullet character, an
- *    "1.", a leading tab — and the designer is told, on screen, that the source's own formatting
- *    did not come with it. If the clipboard carried only HTML, its text is extracted with
- *    `DOMParser` into a detached document and only the `textContent` is read; nothing from that
- *    parse is ever attached to the page.
- *
- * 3. **IME COMPOSITION IS NEVER INTERRUPTED.** `composingRef` is raised on `compositionstart` and
- *    lowered on `compositionend`, and while it is up this file will not re-render the surface, will
- *    not read the DOM back into the model, and will not apply an incoming value from the form. A
- *    re-render mid-composition destroys the node the input method is composing into: a designer
- *    typing a Devanagari conjunct on any Indic keyboard — or anyone typing on any phone keyboard,
- *    which composes every word — gets three separate letters instead of the character they meant.
- *    An external value that arrives mid-composition is parked in `pendingExternalRef` and applied
- *    the instant composition finishes.
- *
- * 4. **UNDO IS OURS, NOT THE BROWSER'S.** `document.execCommand` is deprecated and its history
- *    stack differs per engine; worse, it is a stack of DOM mutations, and this editor's commands
- *    rewrite the surface wholesale, so the browser's idea of "the previous state" stops matching
- *    the document after the first list toggle. `historyRef` holds snapshots of the MODEL with the
- *    selection that produced them, consecutive typing is coalesced into one step, and the
- *    `historyUndo` / `historyRedo` input types are intercepted so Ctrl+Z reaches our stack whether
- *    it came from the keyboard, the Edit menu or a trackpad gesture.
- *
- * 5. **A CONTROLLED VALUE MUST NOT MOVE THE CARET.** This is the classic controlled-contenteditable
- *    bug and it is solved deliberately, in two layers:
- *
- *      a. Every value this editor emits is remembered as a canonical signature
- *         (`storedSignature`, which normalises null / "" / an empty block list / a document of
- *         empty paragraphs to one string). When the `value` prop changes, its signature is compared
- *         against the last one emitted; if they match, the prop is this editor's own value making a
- *         round trip through the form's state and the surface is LEFT ALONE. A debounced save that
- *         re-renders the whole stage therefore cannot touch the caret, because nothing about the
- *         document changed.
- *      b. When the signature genuinely differs — a fresh load, a form reset, another editor's save
- *         — the surface IS re-rendered, and the previous selection is re-applied afterwards, clamped
- *         into the new document. So even a real external change keeps the caret near where it was
- *         rather than throwing it to position zero.
- *
- *    The third layer is that ordinary typing never re-renders at all: the browser edits the text
- *    inside a block, `input` reads the DOM back into the model, and the DOM is already correct, so
- *    there is nothing to write back and no caret to restore.
- *
- * 6. **STRUCTURE IS DECIDED BY US, NOT BY THE ENGINE.** `beforeinput` intercepts Enter, Backspace
- *    at a block boundary, forward delete at a block end, cut, drop and the four `format*` commands,
- *    runs the matching pure function from `lib/richText`, re-renders and restores the selection.
- *    Chrome, Firefox and Safari each do something different with Enter inside a heading and with
- *    Backspace at the start of a list item; none of the three is what the model wants. What the
- *    browser is still allowed to do is insert and delete characters INSIDE one block, because that
- *    is the path an input method and a spell-checker need and the one place the engines agree.
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * WHAT IS SAVED, AND WHAT IS NOT — the honest list, also shown to the designer
- * ─────────────────────────────────────────────────────────────────────────────
- *
- * Every control on this toolbar maps onto a construct the stored RichDoc carries, and there is
- * deliberately no control for anything it does not. There is still NO hyperlink and NO text colour:
- * the model has no mark for either, so each would be a control whose result is visible in the
- * browser and absent from the .docx a ministry receives — which is worse than not offering it,
- * because the designer believes it worked.
- *
- * A TABLE and an INLINE PHOTOGRAPH are offered, and each earned it by existing on all five surfaces
- * before a button for it appeared here: `BlockKind.TABLE` / `BlockKind.IMAGE` in `rich_text.py` and
- * in `RichText.kt`, both mapping onto blocks the report model already had (`TableBlock`,
- * `ImageBlock`), so neither needed a new drawing path in the .docx writer, either PDF writer or the
- * preview. The picture goes up through the app's OWN media pipeline — `uploadMediaBatch`, linked to
- * the workshop exactly as a stage's gallery photograph is — so an inline image is a real
- * `MediaFile` row that the resolver loads, not a data URI smuggled into a JSON column.
- *
- * Two things this editor DOES offer degrade in the generated file rather than vanishing, and both
- * are stated in the "What gets saved" panel under the editor rather than left to be discovered:
- *
- *  - **Inline code** is stored faithfully (`CODE` is a member of the `Mark` enum and survives the
- *    round trip) but `report_model.Run` has no monospace flag, so `_runs_for` cannot carry it and
- *    the .docx and PDF print the text in the body face. The words are all there; the face is not.
- *  - **List nesting** is stored faithfully (`level`, 0-3) but `BulletListBlock` has no per-item
- *    depth, so the generated file prints every item of a list at one level.
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * WHAT THE WEB DOES THAT ANDROID CANNOT, AND WHY EACH ONE IS FREE
- * ─────────────────────────────────────────────────────────────────────────────
- *
- * Find and replace, the live word and character count, the distraction-free full-screen mode and
- * the markdown-style input rules are all editor-side conveniences: every one of them produces
- * ordinary RichDoc blocks and spans, and none of them adds a single key to the stored value. That
- * is the test a "web is richer" feature has to pass here — the stored document may not diverge, so
- * a feature is free exactly when it changes how a designer arrives at a document rather than what
- * the document is.
- *
- * NO LIBRARY WAS ADDED. TipTap/ProseMirror, Lexical and Slate were all permitted and all three
- * would have been reasonable; what they buy is selection handling, IME and paste, and what they
- * cost here is 90-200 KB gzipped plus a schema-conversion layer between their tree-shaped document
- * and this flat one — a layer that would have to be written and tested anyway, and that is most of
- * the work. The three hard parts are handled above and the bundle cost of this feature is the two
- * files themselves. If that trade is ever revisited, `lib/richText.ts` is the seam: it has no DOM
- * in it, so a library could be dropped in beneath it without any stored value changing.
- */
-
 import { Toggle } from "@/components/ui/Toggle";
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
@@ -172,9 +49,6 @@ import {
 import { OnDeviceDictationButton } from "@/components/dictation/OnDeviceDictationButton";
 import { DictationButton } from "@/components/designworkshop/Dictation";
 import { AiVerbSelectionMenu } from "@/components/designworkshop/AiVerbSelectionMenu";
-// The passage under the caret, composed from `lib/richText.ts`'s own exports — see
-// `readSelectedPassage`. It lives in `lib/aiVerbs.ts` rather than in the document model because it
-// is a verb's idea of a source passage, not the editor's idea of a selection.
 import { selectedPassage } from "@/lib/aiVerbs";
 import { fetchMediaRow } from "@/lib/mediaRows";
 import { uploadMediaBatch } from "@/lib/media";
@@ -252,34 +126,9 @@ import {
 } from "@/lib/richText";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The class ladders
- *
- * Written as COMPLETE LITERAL STRINGS in this file, never assembled, because Tailwind's content
- * scanner reads `./app`, `./components` and `./lib` as text: a class built by concatenation is
- * purged from the stylesheet and the editor renders as unstyled prose in production while looking
- * perfect in development. Every neutral goes through the themed ladders, so the surface inverts
- * with the rest of the app when a designer switches the theme in a dim room at the end of a
- * workshop day — which is exactly when a report gets written.
- * ──────────────────────────────────────────────────────────────────────────── */
-
 const PARAGRAPH_CLASS = "text-sm leading-6 text-ink-900";
 const QUOTE_CLASS = "border-l-2 border-purple-300 pl-3 text-sm italic leading-6 text-ink-700";
 
-/**
- * The four heading levels, scaled and coloured as the REPORT draws them.
- *
- * The previous scale was 20/18/16/14px — four steps of two pixels, all in the same colour, which
- * a designer reads as one heading style with a rounding error. They could not tell an H1 from an
- * H2 on screen, and the document they were writing has a very visible difference between them.
- *
- * The .docx sets headings at 18/14/12/11pt over a 10.5pt body, and colours them accent, accent,
- * accent-soft, muted — a hierarchy you can see from across a desk. These classes are that same
- * hierarchy in the editor's own units: a big drop from H1 to H2, then two smaller ones, with the
- * colour carrying the last two levels apart rather than the size alone. H1 also takes the rule
- * beneath it that `.rp-h1` has in the preview, because that rule is most of what makes an H1 read
- * as a section break rather than as a large sentence.
- */
 const HEADING_CLASS: Record<number, string> = {
   1: "font-display text-3xl font-bold leading-9 text-purple-800 dark:text-purple-300 border-b border-line-300 pb-1 mt-4",
   2: "font-display text-xl font-bold leading-7 text-purple-800 dark:text-purple-300 mt-3",
@@ -294,7 +143,6 @@ const ALIGN_CLASS: Record<RichAlign, string> = {
   JUSTIFY: "text-justify"
 };
 
-/** Nesting depth as margin. Four literal strings, one per legal `level`. */
 const LEVEL_CLASS: Record<number, string> = {
   0: "",
   1: "ml-6",
@@ -302,17 +150,8 @@ const LEVEL_CLASS: Record<number, string> = {
   3: "ml-18"
 };
 
-/**
- * The inline figure, in complete literal strings like everything else in this file.
- *
- * `CAPTION_EMPTY_CLASS` draws a dashed box where the caption will go. Without it an un-captioned
- * photograph has an empty italic line under it that is invisible on screen, so a designer has no
- * way of knowing there is anywhere to type — and the caption is the only text a photograph
- * contributes to the report, to a search index, or to a collection row's title.
- */
 const FIGURE_CLASS = "my-3 grid gap-1";
 const FIGURE_IMAGE_CLASS = "max-w-full rounded-md border border-line-200 object-contain";
-/** Before the media id has been exchanged for a URL, or when it cannot be — see `ensureMediaUrls`. */
 const FIGURE_IMAGE_PENDING_CLASS =
   "block h-28 max-w-full rounded-md border border-dashed border-line-300 bg-surface-50";
 const CAPTION_CLASS = "text-xs italic leading-5 text-ink-600";
@@ -320,22 +159,11 @@ const CAPTION_EMPTY_CLASS =
   "rounded-sm border border-dashed border-line-300 px-2 py-1 text-xs italic leading-5 text-ink-600";
 
 const MARK_CLASS: Partial<Record<RichMark, string>> = {
-  // Preflight strips the default decoration from neither `u` nor `s`, but stating them means the
-  // mark still reads correctly if a future reset does.
   UNDERLINE: "underline",
   STRIKETHROUGH: "line-through",
   CODE: "rounded-sm bg-field-100 px-1 py-0.5 font-mono text-[0.9em] text-ink-900",
-  // `<sup>` and `<sub>` already raise and lower; what the browser does NOT do is shrink to the
-  // 62% both file writers draw (`report_pdf.VERTICAL_SCALE`). Stating it here is what stops the
-  // editor showing a raised character that is larger on screen than in the .docx — and the
-  // zero line-height is what stops a footnote marker opening up the line, which neither writer
-  // does either.
   SUPERSCRIPT: "align-super text-[0.62em] leading-none",
   SUBSCRIPT: "align-sub text-[0.62em] leading-none",
-  // The ink is forced BLACK rather than left on the themed ladder. Every other class in this file
-  // inverts with the theme, and this one must not: the fill is a fixed #FFFF00 in all four
-  // renderers (Word's own `w:highlight w:val="yellow"`), so a light ink on it in dark mode would be
-  // unreadable on screen while printing perfectly legibly in the file.
   HIGHLIGHT: "rounded-sm bg-[#FFFF00] px-0.5 text-black"
 };
 
@@ -350,16 +178,6 @@ const MARK_TAG: Record<RichMark, string> = {
   HIGHLIGHT: "mark"
 };
 
-/**
- * Tag to mark, for reading the DOM back.
- *
- * Deliberately generous on the way IN and strict on the way OUT: the surface only ever emits the
- * five tags above, but a browser's own "insert replacement text", a drag inside the field or an
- * assistive tool can leave a `<b>` or a `<del>` behind, and reading those as the mark they mean is
- * better than dropping the formatting. Anything NOT in this table — a `<span style>`, a `<font>`,
- * a `<div class="MsoNormal">` — contributes its text and nothing else, which is the whole
- * sanitisation policy in one line.
- */
 const TAG_MARK: Record<string, RichMark> = {
   STRONG: "BOLD",
   B: "BOLD",
@@ -378,34 +196,18 @@ const TAG_MARK: Record<string, RichMark> = {
   MARK: "HIGHLIGHT"
 };
 
-/**
- * Outermost first. Fixed, so the same document always produces the same DOM and the same diff.
- *
- * SUPERSCRIPT and SUBSCRIPT are INNERMOST, and that ordering is load-bearing rather than
- * arbitrary: the class on them sets a font size relative to its parent (`text-[0.62em]`), so a
- * `<sup>` wrapped around a `<code>` would compound the two reductions and print a marker at 56% of
- * the body size in one place and 62% in another, depending only on which mark the designer applied
- * first.
- */
 const NEST_ORDER: readonly RichMark[] = [
   "BOLD",
   "ITALIC",
   "UNDERLINE",
   "STRIKETHROUGH",
   "CODE",
-  // Outside the two vertical marks for the same reason they are innermost: a `<mark>` inside a
-  // `<sup>` would take the superscript's reduced size as its own font context, so a highlighted
-  // footnote marker would be padded and rounded at 62% of 62%.
   "HIGHLIGHT",
   "SUPERSCRIPT",
   "SUBSCRIPT"
 ];
 
 const BLOCK_ATTRIBUTE = "data-rte-block";
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Model → DOM
- * ──────────────────────────────────────────────────────────────────────────── */
 
 function spanNode(span: RichSpan): Node {
   let node: Node = document.createTextNode(span.text);
@@ -420,15 +222,6 @@ function spanNode(span: RichSpan): Node {
   return node;
 }
 
-/**
- * Where an inline photograph actually sits on the page.
- *
- * LEFT IS DRAWN CENTRED, and that is not a bug. `rich_text.to_report_blocks` maps a LEFT-aligned
- * IMAGE onto `ImageBlock(align=CENTER)` — a photograph narrower than the text column reads as a
- * plate, and every report template centres one — so an editor that pushed it to the left margin
- * would be showing the designer a layout the generated file does not have. The other three
- * alignments are honoured as typed.
- */
 function imageAlign(align: RichAlign): RichAlign {
   return align === "LEFT" ? "CENTER" : align;
 }
@@ -445,15 +238,8 @@ function blockElement(
   if (isListKind(block.kind)) {
     element = document.createElement("li");
     element.className = cn(PARAGRAPH_CLASS, align, LEVEL_CLASS[block.level] ?? "");
-    // The number is set explicitly rather than left to the browser's own count, so the editor
-    // prints the same ordinal the .docx will — see `orderedNumbers`.
     if (ordinal !== null) (element as HTMLLIElement).value = ordinal;
   } else if (block.kind === "HEADING") {
-    // A `<p>` carrying `role="heading"`, not an `<h1>`. The page already owns h1 (the page header)
-    // and h2 (the entity panel), and a real `<h1>` inside a narrative field would put a workshop's
-    // prose above the page's own title in every screen reader's document outline. `aria-level` is
-    // offset by two so a heading typed inside a field is announced as subordinate to the section
-    // that contains it, which is what it is.
     element = document.createElement("p");
     element.setAttribute("role", "heading");
     element.setAttribute("aria-level", String(Math.min(6, block.level + 2)));
@@ -462,49 +248,15 @@ function blockElement(
     element = document.createElement("blockquote");
     element.className = cn(QUOTE_CLASS, align);
   } else if (block.kind === "TABLE") {
-    /*
-      A REAL `<table>`, edited BY THE BROWSER.
-
-      Every other block in this editor is edited by the model: `beforeinput` cancels the browser's
-      attempt and applies a pure function instead, because three engines disagree about what Enter
-      does in a heading. A table is the one place that trade goes the other way. The model's caret
-      is a `{block, offset}` pair, which cannot address a CELL — so routing a keystroke typed in
-      the third cell of the second row through `insertText` would append it to the block's
-      concatenated text and the character would land somewhere else entirely.
-
-      Rather than extend the selection model everywhere for one block kind, table cells are left to
-      the browser's own (perfectly good) cell editing and read back through `readDocFrom` on the
-      next `input`. The keystroke handler below therefore lets an edit inside a table fall through
-      untouched, and the marks a designer applies inside a cell still work because `collectSpans`
-      reads `<strong>`/`<em>` back the same way it does in a paragraph.
-    */
-    /*
-      STYLED AS THE .docx DRAWS IT, not as a bare HTML table.
-
-      `report_docx` gives every TableBlock a solid header row filled with `theme.table_header_fill`
-      and set in `theme.table_header_text`, a hairline border on every cell, and `zebra` shading on
-      alternate body rows. A designer who builds a grid here and then opens the file should not
-      find a different-looking object; the editor is the only place they can judge whether the
-      table reads well before it is submitted.
-
-      The colours are the app's own tokens rather than the report theme's, because a field editor
-      does not know which template — or which accent — the report will eventually be generated
-      under. The SHAPE is what has to match, and it does.
-    */
     const table = document.createElement("table");
     table.className = "my-2 w-full table-fixed border-collapse overflow-hidden rounded-md text-sm";
     const body = document.createElement("tbody");
     const width = tableColumnCount(block);
     block.rows.forEach((row, rowIndex) => {
       const tr = document.createElement("tr");
-      // Zebra on alternate BODY rows — row 0 is the header, so the striping starts at row 2.
       if (rowIndex > 0 && rowIndex % 2 === 0) tr.className = "bg-surface-50";
       for (let column = 0; column < width; column += 1) {
-        // The first row is the header — the same reading the server and the phone give it.
         const cell = document.createElement(rowIndex === 0 ? "th" : "td");
-        // `bg-field-200` and `line-200` are real rungs of the palette. This read `bg-ink-800 … text-white`
-        // and `border-line-300` until 2026-10-17 — neither exists, so neither compiled, and the header
-        // row drew white text on the card: a table whose column names nobody could read.
         cell.className = cn(
           "border border-line-200 px-2 py-1 align-top",
           rowIndex === 0 ? "bg-field-200 text-left font-semibold text-ink-900" : ""
@@ -519,29 +271,11 @@ function blockElement(
     table.appendChild(body);
     element = table;
   } else if (block.kind === "IMAGE") {
-    /*
-      A REAL `<figure>`: the picture, then the caption, which is the block's own spans.
-
-      THE CAPTION IS EDITED THROUGH THE MODEL like any other prose, unlike a table's cells. That
-      falls straight out of the shape: `blockText` on an IMAGE returns the caption, so a
-      `{block, offset}` point addresses a position in it, and every command below — insertText,
-      the marks, the selection arithmetic — works on it unchanged. The ONE requirement that buys
-      is that this element must contain NO text node outside the `<figcaption>`, or `docPointToDom`
-      (which walks the block's text nodes in order) would resolve offset 0 into that other text and
-      put the caret somewhere the designer did not click. Hence the placeholder below is an empty
-      element carrying an `aria-label`, and never a word of visible text.
-
-      The `<img>` is `contenteditable="false"` and undraggable so no engine offers its own resize
-      handles or lets the picture be dragged into the middle of a paragraph — both produce markup
-      this file's reader does not understand, and the mark would be dropped at the next sync.
-    */
     const figure = document.createElement("figure");
     figure.className = FIGURE_CLASS;
 
     const effective = imageAlign(block.align);
     const image = document.createElement("img");
-    // Carried on the IMG as well as on the figure so `ensureMediaUrls` can patch the src in place
-    // when the id resolves, rather than re-rendering the surface and moving the caret.
     image.setAttribute("data-media", block.media);
     image.setAttribute("contenteditable", "false");
     image.draggable = false;
@@ -558,11 +292,6 @@ function blockElement(
       image.className = FIGURE_IMAGE_CLASS;
       image.src = url;
     } else {
-      // `undefined` is "not looked up yet" and `null` is "looked up and there is no URL" — a media
-      // row this browser is not entitled to the bytes of, or one deleted since it was placed. Both
-      // draw the same dashed box, because both mean the same thing to the designer standing here:
-      // the picture is not on screen. The label says which. The FILE is unaffected either way —
-      // the server resolves the id itself when the report is generated.
       image.className = FIGURE_IMAGE_PENDING_CLASS;
       image.setAttribute(
         "aria-label",
@@ -593,16 +322,8 @@ function blockElement(
   element.setAttribute("data-align", block.align);
   element.setAttribute("data-level", String(block.level));
 
-  // A table's content is already in its rows. Falling through would append the empty-block `<br>`
-  // below INSIDE the `<table>`, where the HTML parser hoists it out to sit before the table — so
-  // the surface would grow one stray blank line per table, and `readDocFrom` would read it back as
-  // a paragraph the designer never typed.
   if (block.kind === "TABLE") return element;
 
-  // A figure's content is already its picture and its caption, and the two attributes below are
-  // how `readImageElement` gets them back: the media id and the printed width live nowhere in the
-  // element's text, so losing them here would turn a photograph into a bare caption on the next
-  // sync — silently, because the caption still reads correctly.
   if (block.kind === "IMAGE") {
     element.setAttribute("data-media", block.media);
     element.setAttribute("data-width", String(block.widthPct));
@@ -610,8 +331,6 @@ function blockElement(
   }
 
   if (!block.spans.length) {
-    // An empty block with no `<br>` has zero height and no place to put a caret, so the designer
-    // sees the paragraph they just created collapse to nothing and the keyboard appears dead.
     element.appendChild(document.createElement("br"));
     return element;
   }
@@ -619,15 +338,6 @@ function blockElement(
   return element;
 }
 
-/**
- * Replace the whole surface with `doc`.
- *
- * Wholesale, not reconciled. A diffing renderer here would save nothing measurable (a narrative
- * field is tens of blocks, and this only runs on a STRUCTURAL command — never on a keystroke) and
- * would cost the one guarantee that makes the rest of this file tractable: after this call the DOM
- * is exactly what the model says, so `readDocFrom` reading it back is the identity function and a
- * model point maps to a DOM point without a stale-node case to reason about.
- */
 function renderDocInto(
   host: HTMLElement,
   doc: RichDoc,
@@ -655,18 +365,6 @@ function renderDocInto(
   host.replaceChildren(fragment);
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * DOM → model
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * A DOM text node's contents as model text.
- *
- * The non-breaking space is converted back to an ordinary space. Browsers insert U+00A0 for a
- * trailing space inside `contenteditable` to stop it collapsing, and storing that character would
- * put a non-breaking space into the .docx at the end of every line a designer paused on — invisible
- * on screen, and a line that refuses to wrap in the printed report.
- */
 function nodeText(node: Node): string {
   return cleanText((node.textContent ?? "").replace(/ /g, " ").replace(/[\r\n]/g, " "));
 }
@@ -690,17 +388,6 @@ function readAlign(element: HTMLElement): RichAlign {
   return raw === "CENTER" || raw === "RIGHT" || raw === "JUSTIFY" ? raw : "LEFT";
 }
 
-/**
- * A `<table>` in the surface, read back into a TABLE block.
- *
- * Reads the CELLS rather than the element's concatenated text — `collectSpans` over the whole
- * table would return one long run and the grid would be gone. Marks inside a cell survive because
- * `collectSpans` is the same walker a paragraph uses, so a designer who bolds a total in a cell
- * keeps the bold all the way to the .docx.
- *
- * Rows are read as they are, ragged or not. Squaring them off is the renderer's job, and doing it
- * here would silently add cells the designer never made.
- */
 function readTableElement(element: HTMLElement): RichBlock {
   const rows: RichRow[] = [];
   for (const tr of Array.from(element.querySelectorAll("tr"))) {
@@ -717,20 +404,6 @@ function readTableElement(element: HTMLElement): RichBlock {
   return makeBlock({ kind: "TABLE", rows });
 }
 
-/**
- * A `<figure>` in the surface, read back into an IMAGE block.
- *
- * ONLY THE `<figcaption>` IS READ FOR TEXT. Running `collectSpans` over the whole figure would be
- * harmless today (the picture contributes no text node — see `blockElement`) and would silently
- * start swallowing whatever a future placeholder put there, which is the kind of coupling that
- * only shows up as a caption nobody typed.
- *
- * A FIGURE THAT HAS LOST ITS MEDIA ID BECOMES A PARAGRAPH, keeping the caption. That happens when
- * an engine rebuilds the element around a drag, and the alternative is worse in both directions:
- * an IMAGE block with no id is dropped outright by `fromStored` and by the server's `from_json`,
- * so keeping the kind would throw the words away as well as the picture. Degrading to prose loses
- * the photograph — which was already lost — and keeps the sentence.
- */
 function readImageElement(element: HTMLElement): RichBlock {
   const spans: RichSpan[] = [];
   const caption = element.querySelector("figcaption");
@@ -774,15 +447,8 @@ function kindOf(element: HTMLElement): RichBlockKind {
   ) {
     return declared;
   }
-  // A `<table>` that lost its attribute — pasted from Word, or rebuilt by the engine after a drag
-  // — is still a table, and reading it as a paragraph would flatten the grid into one line.
   if (element.tagName === "TABLE") return "TABLE";
-  // Same reasoning for a `<figure>`: reading it as a paragraph would keep the caption and drop the
-  // photograph, and the designer would see a caption under nothing.
   if (element.tagName === "FIGURE") return "IMAGE";
-  // No `data-kind` means the element was not written by `renderDocInto` — a wrapper the engine
-  // invented during a drag or a spell-check replacement. Reading it as a paragraph keeps the words
-  // and loses only a formatting the model may not have been able to express anyway.
   if (element.tagName === "BLOCKQUOTE") return "QUOTE";
   return "PARAGRAPH";
 }
@@ -790,9 +456,6 @@ function kindOf(element: HTMLElement): RichBlockKind {
 function collectBlocks(node: Node, out: RichBlock[]): void {
   if (node.nodeType === Node.TEXT_NODE) {
     const text = nodeText(node);
-    // A bare text node directly under the host: some engines leave one behind after a deletion
-    // that emptied the surface. Promoting it to a paragraph is what stops the next keystroke
-    // building a document with no blocks in it.
     if (text) out.push(makeBlock({ spans: [makeSpan(text)] }));
     return;
   }
@@ -815,15 +478,6 @@ function readDocFrom(host: HTMLElement): RichDoc {
   return { blocks };
 }
 
-/**
- * Keep each caption's outline in step with whether anything has been typed into it.
- *
- * The dashed box is the only thing that says "there is somewhere to type here" under a picture
- * with no caption yet, and it must go away the moment there is one — but typing does NOT re-render
- * the surface (that is the third layer of the caret fix, and it is what makes the editor feel
- * responsive), so nothing else would ever take it off. Called from the read-back path, where the
- * text has just changed. Changing a class does not move the caret.
- */
 function paintCaptionStates(host: HTMLElement): void {
   for (const node of Array.from(host.querySelectorAll("figcaption"))) {
     if (!(node instanceof HTMLElement)) continue;
@@ -836,16 +490,11 @@ function paintCaptionStates(host: HTMLElement): void {
   }
 }
 
-/** At least one block, and never more than the server will store. */
 function normaliseForEditing(doc: RichDoc): RichDoc {
   if (!doc.blocks.length) return emptyDoc();
   if (doc.blocks.length <= MAX_BLOCKS) return doc;
   return { blocks: doc.blocks.slice(0, MAX_BLOCKS) };
 }
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Selection mapping — model point ⇄ DOM point
- * ──────────────────────────────────────────────────────────────────────────── */
 
 function blockElementAt(host: HTMLElement, index: number): HTMLElement | null {
   return host.querySelector<HTMLElement>(`[${BLOCK_ATTRIBUTE}="${index}"]`);
@@ -854,16 +503,6 @@ function blockElementAt(host: HTMLElement, index: number): HTMLElement | null {
 function docPointToDom(host: HTMLElement, point: DocPoint): { node: Node; offset: number } | null {
   const block = blockElementAt(host, point.block);
   if (!block) return null;
-  /*
-    A FIGURE'S TEXT IS ITS CAPTION, AND THE CARET MUST LAND INSIDE THE `<figcaption>`.
-
-    Without this scope the walker below finds no text node in an un-captioned figure and falls back
-    to `{ node: <figure>, offset: 0 }` — which is the position BEFORE the `<img>`. The browser then
-    happily inserts the caption the designer types as a text node that is a direct child of the
-    figure, `readImageElement` (which reads only the figcaption) does not see it, and the whole
-    caption is discarded at the next sync. That is the very first thing anyone does after placing a
-    picture, so it is silent data loss on the feature's main path.
-  */
   const element =
     block.tagName === "FIGURE" ? (block.querySelector("figcaption") ?? block) : block;
   const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
@@ -911,8 +550,6 @@ function domPointToDoc(host: HTMLElement, node: Node, offset: number): DocPoint 
     return { block, offset: total + offset };
   }
 
-  // An element container: `offset` is a CHILD INDEX, not a character offset. This is the shape a
-  // selection takes in an empty block (the block itself, index 0) and after a triple click.
   let total = textLengthBefore(element, node);
   const children = Array.from(node.childNodes).slice(0, offset);
   for (const child of children) total += (child.textContent ?? "").length;
@@ -940,9 +577,6 @@ function writeSelection(host: HTMLElement, range: DocRange): void {
   try {
     selection.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset);
   } catch {
-    // `setBaseAndExtent` throws on a detached node — which can only happen if a render raced this
-    // call. Swallowing it leaves the caret where the browser had it, which is survivable; letting
-    // it escape into a native event handler is not, because the whole keystroke is lost.
   }
 }
 
@@ -955,26 +589,11 @@ function rangesEqual(a: DocRange, b: DocRange): boolean {
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * History
- * ──────────────────────────────────────────────────────────────────────────── */
-
 type HistoryEntry = { doc: RichDoc; selection: DocRange };
 type HistoryState = { entries: HistoryEntry[]; index: number; lastAt: number; lastLabel: string };
 
-/**
- * How long a run of typing stays one undo step.
- *
- * 600ms of quiet closes the step. A designer who presses Ctrl+Z expects to lose a phrase, not one
- * letter — an undo stack with one entry per keystroke means forty presses to remove a sentence, and
- * everybody who meets one gives up and retypes the paragraph instead.
- */
 const HISTORY_COALESCE_MS = 600;
 const HISTORY_LIMIT = 200;
-
-/* ────────────────────────────────────────────────────────────────────────────
- * The toolbar
- * ──────────────────────────────────────────────────────────────────────────── */
 
 type ToolItem =
   | {
@@ -994,7 +613,6 @@ const TOOL_BUTTON_BASE =
 const TOOL_BUTTON_IDLE = "border-transparent hover:border-purple-300 hover:bg-purple-50 hover:text-ink-900";
 const TOOL_BUTTON_ACTIVE = "border-purple-300 bg-purple-50 text-purple-700";
 
-/** Do two toolbar states light exactly the same buttons? */
 function sameToolbarState(a: RichToolbarState, b: RichToolbarState): boolean {
   return (
     a.kind === b.kind &&
@@ -1007,16 +625,6 @@ function sameToolbarState(a: RichToolbarState, b: RichToolbarState): boolean {
   );
 }
 
-/**
- * The contextual bar.
- *
- * `role="toolbar"` comes with an obligation — ARIA's own pattern says a toolbar is ONE tab stop and
- * its controls are reached with the arrow keys — and claiming the role without honouring it is
- * worse than not claiming it, because a screen-reader user is told to press an arrow key that does
- * nothing. So a roving `tabIndex` is implemented here: exactly one button is tabbable at a time,
- * Left/Right move between them, Home/End jump to the ends. Twenty-five separate tab stops between
- * a narrative field and the next form control would otherwise be the alternative.
- */
 function Toolbar({
   items,
   editorId,
@@ -1032,8 +640,6 @@ function Toolbar({
   const [focusIndex, setFocusIndex] = useState(0);
   const nodes = useRef<Record<string, HTMLButtonElement | null>>({});
 
-  // The set of buttons never changes shape, but a disabled one must not be the tab stop or the
-  // toolbar becomes unreachable from the keyboard the moment the caret leaves a list.
   const enabled = buttons.filter((button) => !button.disabled);
   const activeId = enabled[Math.min(focusIndex, Math.max(0, enabled.length - 1))]?.id ?? "";
 
@@ -1051,9 +657,6 @@ function Toolbar({
       aria-label="Text formatting"
       aria-controls={editorId}
       aria-orientation="horizontal"
-      // THE LINE THAT MAKES THE TOOLBAR WORK AT ALL. Cancelling mousedown on the container as well
-      // as on each button means a press that lands on the padding between two buttons also cannot
-      // move focus out of the editor and collapse the selection the next press needs.
       onMouseDown={(event) => event.preventDefault()}
       onKeyDown={(event) => {
         if (event.key === "ArrowRight") {
@@ -1075,9 +678,6 @@ function Toolbar({
           onDismiss();
         }
       }}
-      // `w-full` and `justify-between`: the bar sits directly above the editing surface and is
-      // exactly as wide as it, so the controls spread across the whole text column instead of
-      // huddling at the left with two thirds of the row empty.
       className="flex w-full flex-wrap items-center justify-between gap-0.5 rounded-md border border-line-200 bg-card p-1 shadow-md"
     >
       {items.map((item) =>
@@ -1090,9 +690,6 @@ function Toolbar({
               nodes.current[item.id] = node;
             }}
             type="button"
-            // `aria-pressed` and not `aria-checked`: these are toggles, not radios. The active
-            // state is also carried by the border and the fill, so it does not depend on colour
-            // alone — the same rule every status chip in this app follows.
             aria-pressed={item.active ?? undefined}
             aria-label={item.label}
             title={item.hint ? `${item.label} — ${item.hint}` : item.label}
@@ -1114,89 +711,19 @@ function Toolbar({
   );
 }
 
-/** The bar, skipped on a keystroke that changes no button — see `sameToolbarState`. */
 const MemoToolbar = memo(Toolbar);
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The component
- * ──────────────────────────────────────────────────────────────────────────── */
-
 export type RichTextEditorProps = {
-  /** The stored value, in any shape `rich_text.from_json` accepts — including a plain string. */
   value: unknown;
-  /** Called with exactly what should be written into the field: the document, or null when empty. */
   onChange: (value: StoredRichDoc | null) => void;
   disabled?: boolean;
-  /** The id of the element naming this editor — the `field-label` span, in a registry form. */
   ariaLabelledBy?: string;
   ariaLabel?: string;
-  /**
-   * Let the dictation button draw its own "this browser cannot dictate" sentence, or not.
-   *
-   * FORWARDED, NOT DECIDED HERE — added 2026-08-28. `OnDeviceDictationButton` says once, under
-   * itself, that the browser has no recogniser, which is right for a lone control and wrong for a
-   * form that mounts ten of them: a page whose every row repeats the same grey paragraph is a page
-   * where the paragraph stops being read. Every record form now renders
-   * `DictationUnavailableNotice` once at the top and passes `false` to each control below it — and
-   * this editor was the one control that could not be told, so on a browser with no recogniser
-   * (Firefox, today) `ProductForm` printed the form-level notice PLUS one copy under each of its
-   * four rich-text boxes.
-   *
-   * DEFAULTS TO UNDEFINED, which the button reads as its own default of true, so a caller that says
-   * nothing behaves exactly as it did before this prop existed.
-   */
   explainWhenUnavailable?: boolean;
-  /**
-   * The workshop whose recorded consent governs a clip dictated into this editor — or ABSENT, which
-   * selects the on-device-only microphone.
-   *
-   * THIS EDITOR HAS NO DATA LAYER AND DELIBERATELY WANTS NONE — it is a general-purpose control, used
-   * in previews and on record forms as well as in registry forms. So the id is threaded as a prop
-   * rather than reached for. It used to be REQUIRED, and the reason was sound: the dictation button
-   * inside this editor could otherwise fall back to `POST /design-workshops/dictate`, which takes no
-   * workshop id, consults no `dictationConsent` column, and sends an artisan's voice to a
-   * third-party provider regardless of what was recorded.
-   *
-   * IT IS NOW OPTIONAL, AND THAT DOOR IS STILL SHUT — because omitting it does not weaken the
-   * dictation, it swaps the control for a different component. With an id: `DictationButton`, whose
-   * server rung posts to the consent-gated per-workshop route exactly as before. Without one:
-   * `OnDeviceDictationButton`, which has no `fetch`, no `MediaRecorder` and no code path that can
-   * produce a network request at all. A record form has no workshop whose consent could govern a
-   * recording, so it gets the transport that needs no consent because nothing leaves the handset.
-   *
-   * WHAT A FORGETFUL CALL SITE NOW LOSES is the Firefox fallback, not the gate: a stage form that
-   * omitted the id would offer on-device dictation and no server rung, which is a degradation a
-   * researcher can see and complain about. It cannot leak a voice recording. That is the property
-   * that made an optional prop acceptable here where a DEFAULT VALUE on `DictationButton` itself
-   * would still not be — a default there would make "the call site that forgot" indistinguishable
-   * from "the call site that meant it" on the button that actually uploads.
-   */
   workshopId?: string;
   placeholder?: string;
-  /** The registry's `maxLength`, shown beside the live count. Advisory — see the note on it below. */
   maxLength?: number;
-  /**
-   * Start this field as a list of the given kind.
-   *
-   * Set for the registry's `report_role=BULLETS` fields — the ones whose help says "One deliverable
-   * per line" — so the designer is inside a list the moment the field opens and Enter starts the
-   * next item. It seeds the FIRST block only; everything after that is ordinary editing, because
-   * `splitBlock` already carries a list kind across an Enter and already leaves the list on an
-   * empty item. See `seedListDocument` for what it refuses to touch.
-   */
   listKind?: RichBlockKind;
-  /**
-   * Where a photograph placed inside this prose is filed — the record it is linked to.
-   *
-   * WITHOUT IT THERE IS NO PICTURE BUTTON, and that is the honest degradation rather than a
-   * missing feature: `uploadMediaBatch` links every upload to a record, and a file with no record
-   * is an orphan object that `GET /media` cannot list and the report resolver cannot find. An
-   * editor mounted somewhere that cannot say which record it belongs to must not offer to upload.
-   *
-   * Passed as a pair rather than as a workshop id so that this component knows nothing about
-   * design workshops — and, more practically, so it does not have to import a constant from
-   * `FieldInput`, which imports this file.
-   */
   upload?: { recordType: string; recordId: string };
 };
 
@@ -1223,33 +750,10 @@ export function RichTextEditor({
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  /**
-   * Media id → something an `<img>` can load; `null` once it is known there is nothing to load.
-   *
-   * A REF AND NOT STATE, deliberately. The surface's children are not managed by React (see the
-   * file header), so a resolved URL does not need a render — it needs one `src` attribute set, on
-   * an element that already exists. Holding this in state would re-render the component on every
-   * photograph resolved, and the useful version of that render would still have to reach into the
-   * DOM to do the same thing. The map also has to survive `commit`, which rebuilds every node from
-   * the model: a re-render must NOT cost a second round trip per picture, or scrolling a report
-   * field with a dozen photographs in it re-fetches all of them.
-   */
   const mediaUrlsRef = useRef<Map<string, string | null>>(new Map());
-  /** Ids with a lookup in flight, so a re-render mid-fetch cannot fire a second request for one. */
   const mediaPendingRef = useRef<Set<string>>(new Set());
-  /** Where the picture being uploaded will land — see `runImagePick` for why it is captured early. */
   const imageAnchorRef = useRef<DocRange | null>(null);
 
-  /**
-   * The document, the caret and the signature this editor starts life with, parsed exactly once.
-   *
-   * Held in lazy STATE rather than computed inline for each ref, and that is not decoration: the
-   * refs below and the chrome state all need the same starting document, and reading one ref to
-   * seed another is what `react-hooks/refs` refuses — correctly, because a ref read during render
-   * is a read of whatever the last committed render left behind, which under concurrent rendering
-   * is not necessarily the render being prepared. A lazy `useState` initialiser runs once per
-   * mount, before any of it exists, and its result is a plain value everything else can share.
-   */
   const [seed] = useState(() => ({
     doc: normaliseForEditing(listKind ? seedListDocument(value, listKind) : fromStored(value)),
     selection: collapsedAt({ block: 0, offset: 0 }),
@@ -1258,13 +762,6 @@ export function RichTextEditor({
 
   const docRef = useRef<RichDoc>(seed.doc);
   const selectionRef = useRef<DocRange>(seed.selection);
-  /**
-   * The marks the NEXT typed character should carry, set by pressing Bold with nothing selected.
-   *
-   * Null means "inherit from the character before the caret". A separate slot is needed because a
-   * collapsed selection cannot carry a mark in the document — there is no text to mark yet — and
-   * without it Ctrl+B before typing would do nothing at all, which is how most people bold a word.
-   */
   const pendingMarksRef = useRef<RichMark[] | null>(null);
   const composingRef = useRef(false);
   const pendingExternalRef = useRef<{ value: unknown } | null>(null);
@@ -1277,14 +774,6 @@ export function RichTextEditor({
     lastLabel: ""
   });
 
-  /**
-   * Props read from inside native event listeners, refreshed through an effect with NO dependency
-   * array — the house pattern (`useLeaveGuard`).
-   *
-   * A ref written during render would be written on a render React is free to discard under
-   * concurrent rendering, leaving the listeners calling an `onChange` that belongs to a commit
-   * that never happened. An effect only runs for a render that committed.
-   */
   const propsRef = useRef({ onChange, disabled: !!disabled, maxLength, upload, ariaLabel });
   useEffect(() => {
     propsRef.current = { onChange, disabled: !!disabled, maxLength, upload, ariaLabel };
@@ -1297,22 +786,10 @@ export function RichTextEditor({
     canUndo: boolean;
     canRedo: boolean;
     showPlaceholder: boolean;
-    /**
-     * How many characters are selected, for the AI verb menu below the surface.
-     *
-     * THE LENGTH TRAVELS AND THE TEXT DOES NOT, and that split is the whole design. The menu has to
-     * enable and disable in step with the selection — on a `contenteditable`, a control that changes
-     * a render late reads as broken — so the number joins the signature. The PASSAGE itself is read
-     * lazily at the moment of the press through `readSelectedPassage`: a 20,000-character string
-     * rebuilt on every arrow key is exactly the stutter the signature exists to prevent.
-     */
     selectionChars: number;
   };
 
   const [chrome, setChrome] = useState<ChromeState>(() => ({
-    // Deliberately "" rather than the real signature: the first `refreshChrome` after mount must
-    // find a mismatch and commit the true state, or an editor loaded with existing prose would draw
-    // a toolbar describing an empty document until the designer clicked into it.
     signature: "",
     bar: toolbarState(seed.doc, seed.selection, null),
     counts: countDoc(seed.doc),
@@ -1325,21 +802,11 @@ export function RichTextEditor({
   const [active, setActive] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  /** A transfer is in flight; the picture button says so and refuses a second one meanwhile. */
   const [uploading, setUploading] = useState(false);
   const [savedPanelOpen, setSavedPanelOpen] = useState(false);
 
-  /**
-   * Where the editing surface sat in the viewport just before something above it appeared or went
-   * away, or null when nothing is expected to move. Spent by the layout effect below.
-   *
-   * Measured in the handler that CAUSES the change rather than in an effect, because a viewport
-   * rectangle remembered across two renders is stale the moment the designer scrolls between them,
-   * and compensating by a stale delta would throw the page somewhere nobody asked for.
-   */
   const surfaceTop = useRef<number | null>(null);
 
-  /** Call immediately BEFORE anything that adds or removes a band above the writing surface. */
   const holdSurfaceStill = useCallback(() => {
     surfaceTop.current = hostRef.current?.getBoundingClientRect().top ?? null;
   }, []);
@@ -1358,27 +825,14 @@ export function RichTextEditor({
     findRef.current = find;
   });
 
-  /**
-   * Pay back, as scroll, whatever the docking bar or the find card just moved.
-   *
-   * Both sit ABOVE the surface, so gaining or losing one shifts the words the designer is looking
-   * at by its height. Compensating means the paragraph stays under the cursor: the toolbar arrives
-   * and nothing being read has moved. This is what replaced the old floating bar's one merit —
-   * appearing at no layout cost — which it bought by covering the field's own title and help text.
-   */
   useLayoutEffect(() => {
     const expected = surfaceTop.current;
     surfaceTop.current = null;
     const host = hostRef.current;
-    // Full screen is its own scroll container and lifts the surface out of the page entirely, so
-    // there is no page scroll that could hold it still and nothing to repay.
     if (expected === null || !host || fullscreen) return;
     const shift = host.getBoundingClientRect().top - expected;
-    // Sub-pixel differences are ignored: a fractional layout is not a jump.
     if (Math.abs(shift) >= 1) window.scrollBy({ top: shift, behavior: "instant" as ScrollBehavior });
   }, [active, find.open, fullscreen]);
-
-  /* ── Chrome refresh ─────────────────────────────────────────────────────── */
 
   const refreshChrome = useCallback(() => {
     const doc = docRef.current;
@@ -1389,22 +843,7 @@ export function RichTextEditor({
     const canUndo = history.index > 0;
     const canRedo = history.index < history.entries.length - 1;
     const showPlaceholder = isEmptyDoc(doc);
-    /*
-      Computed here rather than in the menu because this is the one function that runs on every
-      selection change; the menu is a child and cannot see the caret at all.
-
-      IT COSTS STRICTLY LESS THAN WHAT THIS FUNCTION ALREADY DOES, which is why building a string on
-      every keystroke is acceptable here and would not be in the render path: `countDoc` two lines up
-      calls `blockText` on EVERY block of the document, while `selectedPassage` walks only the blocks
-      between the two ends of the selection. What must not happen is the passage travelling through
-      the signature and into `setChrome` — a 20,000-character string rebuilt and compared on every
-      arrow key is exactly the stutter the signature exists to prevent, so only its LENGTH goes, and
-      the menu reads the words lazily through `readSelectedPassage` when somebody presses something.
-    */
     const selectionChars = selectedPassage(doc, range).length;
-    // One string decides whether React re-renders at all. Without it every arrow-key press through
-    // a paragraph would re-render the toolbar, and on a stage with a dozen narrative fields that is
-    // a measurable stutter on the field laptops this runs on.
     const signature = [
       bar.marks.join(","),
       bar.kind ?? "-",
@@ -1418,10 +857,6 @@ export function RichTextEditor({
       canUndo ? "1" : "0",
       canRedo ? "1" : "0",
       showPlaceholder ? "1" : "0",
-      // WITHOUT THIS THE MENU WOULD ENABLE AND DISABLE A RENDER LATE. Selecting a passage changes
-      // neither the marks, the block kind nor any count — every other member of this signature is
-      // identical before and after — so the state would be skipped and the control would only catch
-      // up on the next unrelated edit.
       selectionChars
     ].join("|");
     setChrome((current) =>
@@ -1429,9 +864,6 @@ export function RichTextEditor({
         ? current
         : {
             signature,
-            // THE TOOLBAR'S OWN STATE KEEPS ITS IDENTITY WHEN ONLY A COUNT MOVED. Every keystroke changes
-            // the character count, so the chrome is replaced on every key; a fresh `bar` object with the
-            // same marks and kind would then rebuild every toolbar button and its icon for nothing.
             bar: sameToolbarState(current.bar, bar) ? current.bar : bar,
             counts,
             canUndo,
@@ -1441,9 +873,6 @@ export function RichTextEditor({
           }
     );
 
-    // The find bar's tally has to follow the document, not just the query: replacing one of six
-    // occurrences must leave "5" on screen, and a stale count is a control that says there is
-    // something left to replace when there is not.
     const search = findRef.current;
     if (search.open && search.query) {
       const matches = findMatches(doc, search.query, { caseSensitive: search.caseSensitive, wholeWord: search.wholeWord });
@@ -1451,44 +880,12 @@ export function RichTextEditor({
     }
   }, []);
 
-  /**
-   * The selected text, built once, at the moment somebody asks for it.
-   *
-   * READ THROUGH THE REFS RATHER THAN FROM STATE, deliberately: `docRef` and `selectionRef` are the
-   * live document and the live caret, while a render's copy is whatever was true when the toolbar
-   * last re-rendered. The signature holds only the LENGTH (see `ChromeState.selectionChars`), so
-   * this is the one thing that has to be current, and refs are the only thing here that always are.
-   *
-   * `selectedPassage` composes it from `lib/richText.ts`'s existing exports and adds nothing to that
-   * module — another lane is editing it, and a helper added there for one caller here would be a
-   * second definition of "what is selected".
-   */
   const readSelectedPassage = useCallback(() => selectedPassage(docRef.current, selectionRef.current), []);
 
-  /* ── Resolving the photographs placed in the prose ──────────────────────── */
-
-  /**
-   * Exchange every media id the document holds for a URL, and patch the `<img>` where it sits.
-   *
-   * THE ID IS NOT A URL AND CANNOT BE ONE. Every media route is bearer-authenticated and an `<img>`
-   * sends no Authorization header, so the id is traded for `MediaFile.url` (presigned or public)
-   * first — the same exchange `useReportMediaUrls` makes for the report preview, and for the same
-   * reason. `url` is gated server-side and may legitimately be absent, which is why the failure
-   * here is a stated placeholder rather than a broken frame: THE FILE IS UNAFFECTED. The server
-   * resolves the id itself when the report is generated, so a photograph this browser cannot fetch
-   * is still embedded in the .docx.
-   *
-   * Patched in place rather than re-rendered. `commit` rebuilds the whole surface from the model
-   * and re-applies the caret; doing that again a few hundred milliseconds later, when a fetch
-   * happens to land, would move the caret out from under whatever the designer had started typing.
-   */
   const ensureMediaUrls = useCallback((doc: RichDoc) => {
     const paint = (id: string, url: string | null) => {
       const host = hostRef.current;
       if (!host) return;
-      // Compared attribute by attribute rather than through a `[data-media="…"]` selector, so an id
-      // holding a quote cannot break the selector — a media id is server-issued, but a value read
-      // back out of the DOM is not something to build a query string from on trust.
       for (const node of Array.from(host.querySelectorAll("img[data-media]"))) {
         if (!(node instanceof HTMLImageElement) || node.getAttribute("data-media") !== id) continue;
         if (url) {
@@ -1509,8 +906,6 @@ export function RichTextEditor({
       const id = block.media;
       if (mediaPendingRef.current.has(id)) continue;
       if (mediaUrlsRef.current.has(id)) {
-        // Already known, but the surface may have just been rebuilt from the model with the id
-        // still unresolved in this render — paint it now rather than waiting for the next edit.
         paint(id, mediaUrlsRef.current.get(id) ?? null);
         continue;
       }
@@ -1520,9 +915,6 @@ export function RichTextEditor({
         try {
           url = (await fetchMediaRow(id)).url ?? null;
         } catch {
-          // Not entitled to it, deleted since it was placed, or simply no connection. All three
-          // are the same answer to the designer standing here, and none of them is a reason to
-          // rewrite the document: the id stays exactly where they put it.
           url = null;
         }
         mediaPendingRef.current.delete(id);
@@ -1532,22 +924,6 @@ export function RichTextEditor({
     }
   }, []);
 
-  /* ── Emitting ───────────────────────────────────────────────────────────── */
-
-  /**
-   * Hand the document to the form — but ONLY when it is actually a different document.
-   *
-   * The guard is not an optimisation. The stage page marks itself dirty on every `onChange` it
-   * receives and arms the unsaved-changes prompt on the strength of it, so an `onChange` fired by
-   * pressing Indent on a paragraph (which cannot indent), or by re-applying a mark that is already
-   * there, would tell a designer they have unsaved work before they have typed anything — and a
-   * guard that cries wolf on a blank form is a guard people learn to click through, which it must
-   * still mean something an hour later when there IS a report in the form.
-   *
-   * The signature is remembered BEFORE the callback runs: `onChange` synchronously sets the
-   * parent's state, which re-renders this component with the new prop, and the value effect has to
-   * already know that this value is its own.
-   */
   const emit = useCallback((doc: RichDoc): boolean => {
     const stored = toStoredValue(doc);
     const signature = storedSignature(stored);
@@ -1573,13 +949,6 @@ export function RichTextEditor({
     history.lastLabel = label;
   }, []);
 
-  /**
-   * Apply the result of a command: adopt the document, redraw the surface, put the caret back,
-   * bank an undo step and tell the form.
-   *
-   * The composition guard is the first line and is not negotiable: redrawing the surface while an
-   * input method is mid-word destroys the node it is composing into.
-   */
   const commit = useCallback(
     (result: EditResult, label: string) => {
       if (composingRef.current) return;
@@ -1592,15 +961,9 @@ export function RichTextEditor({
         renderDocInto(host, doc, mediaUrlsRef.current);
         ensureMediaUrls(doc);
         const activeElement = document.activeElement;
-        // Focus is only reclaimed when it was already here. A keyboard user driving the toolbar
-        // must keep their place in it; a mouse user never lost focus, because the bar cancels
-        // mousedown.
         if (activeElement === document.body || host.contains(activeElement)) host.focus({ preventScroll: true });
         writeSelection(host, selection);
       }
-      // History follows the emit: a command that produced the same document — Indent on a
-      // paragraph, Bold on text that is already bold across the whole selection — must not bank an
-      // undo step, or Ctrl+Z spends three presses undoing three things that never happened.
       if (emit(doc)) pushHistory(doc, selection, label);
       refreshChrome();
     },
@@ -1629,8 +992,6 @@ export function RichTextEditor({
     const history = historyRef.current;
     if (history.index <= 0) return;
     history.index -= 1;
-    // Closing the coalescing window stops the next keystroke folding itself into the entry that
-    // has just been restored, which would make a second Ctrl+Z appear to do nothing.
     history.lastLabel = "";
     applyHistoryEntry(history.entries[history.index]);
   }, [applyHistoryEntry]);
@@ -1643,8 +1004,6 @@ export function RichTextEditor({
     applyHistoryEntry(history.entries[history.index]);
   }, [applyHistoryEntry]);
 
-  /* ── Reading the surface back ───────────────────────────────────────────── */
-
   const syncFromDom = useCallback(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -1653,13 +1012,8 @@ export function RichTextEditor({
     const range = readSelection(host);
     if (range) selectionRef.current = clampRange(doc, range);
     pendingMarksRef.current = null;
-    // Only when there is a figure on the surface — this runs on every keystroke, and a narrative
-    // field with no picture in it must not pay a DOM query for one.
     if (doc.blocks.some((block) => block.kind === "IMAGE")) paintCaptionStates(host);
 
-    // Markdown input rules fire ONLY on the space that completed a prefix. Running them on every
-    // input would convert "## " into a heading when a designer BACKSPACED into that state, which
-    // is a document rewriting itself under a key that is supposed to undo things.
     const last = lastInputRef.current;
     if (last.type === "insertText" && last.data === " ") {
       const rule = applyInputRule(doc, selectionRef.current);
@@ -1672,8 +1026,6 @@ export function RichTextEditor({
     if (emit(doc)) pushHistory(doc, selectionRef.current, "type");
     refreshChrome();
   }, [commit, emit, pushHistory, refreshChrome]);
-
-  /* ── The controlled value ───────────────────────────────────────────────── */
 
   const seedFrom = useCallback(
     (incoming: unknown) => {
@@ -1688,8 +1040,6 @@ export function RichTextEditor({
       if (host) {
         renderDocInto(host, doc, mediaUrlsRef.current);
         ensureMediaUrls(doc);
-        // Only re-assert the caret if this editor is where the caret actually is. Writing a
-        // selection into an unfocused editor steals it from whatever the designer is typing in.
         if (host.contains(document.activeElement)) writeSelection(host, selectionRef.current);
       }
       historyRef.current = { entries: [{ doc, selection: selectionRef.current }], index: 0, lastAt: 0, lastLabel: "" };
@@ -1698,8 +1048,6 @@ export function RichTextEditor({
     [ensureMediaUrls, refreshChrome, listKind]
   );
 
-  // Draw the initial document once. Not in the value effect: that one exists to react to CHANGES,
-  // and it deliberately does nothing on the first pass because the signature already matches.
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -1708,34 +1056,18 @@ export function RichTextEditor({
     refreshChrome();
   }, [ensureMediaUrls, refreshChrome]);
 
-  /**
-   * THE CARET FIX. See point 5 of the file header.
-   *
-   * The whole of the controlled-contenteditable problem reduces to this comparison. A debounced
-   * save, a sibling field's keystroke, a re-render from any of the dozen pieces of state on the
-   * stage page — all of them hand this component a `value` prop again, and all but one of those
-   * times the document inside it is identical to the one already on screen. Re-seeding on prop
-   * identity, or on a shallow compare of a freshly parsed object, would redraw the surface and
-   * throw the caret to the start of the field in the middle of a sentence.
-   */
   useEffect(() => {
     const incoming = storedSignature(value);
     if (incoming === emittedSignatureRef.current) return;
     if (composingRef.current) {
-      // Never mid-word. Parked and applied by the compositionend handler.
       pendingExternalRef.current = { value };
       return;
     }
     seedFrom(value);
   }, [value, seedFrom]);
 
-  /* ── Commands the toolbar and the keyboard share ────────────────────────── */
-
   const currentRange = useCallback((): DocRange => {
     const host = hostRef.current;
-    // Preferring the live DOM selection matters after a click: `selectionchange` is asynchronous in
-    // some engines, so a toolbar press in the same gesture as the click would otherwise act on the
-    // selection as it was before the click landed.
     const fromDom = host ? readSelection(host) : null;
     if (fromDom) return clampRange(docRef.current, fromDom);
     return clampRange(docRef.current, selectionRef.current);
@@ -1749,9 +1081,6 @@ export function RichTextEditor({
       if (isCollapsed(range)) {
         const block = docRef.current.blocks[range.focus.block];
         const current = pendingMarksRef.current ?? (block ? marksAt(block, range.focus.offset) : []);
-        // The same displacement `applyMark` performs on a real selection: pressing Superscript
-        // with nothing selected must not leave a pending set claiming both, or the next character
-        // typed would be a span the renderers have to tie-break.
         const excluded = markExcludes(mark);
         pendingMarksRef.current = current.includes(mark)
           ? current.filter((item) => item !== mark)
@@ -1770,8 +1099,6 @@ export function RichTextEditor({
       const range = currentRange();
       selectionRef.current = range;
       const state = toolbarState(docRef.current, range, null);
-      // Pressing the kind a block already is returns it to a paragraph, so every one of these
-      // buttons is its own off switch and nobody has to hunt for the ¶ to undo a heading.
       const alreadyThis = state.kind === kind && (kind !== "HEADING" || state.level === level);
       commit(setBlockKind(docRef.current, range, alreadyThis ? "PARAGRAPH" : kind, level), "block");
     },
@@ -1798,15 +1125,6 @@ export function RichTextEditor({
     [commit, currentRange]
   );
 
-  /**
-   * Insert a table, in the same shape as every other toolbar action.
-   *
-   * Written as its own callback rather than an inline `commit(...)` in the items list so that
-   * `commit` stays out of that `useMemo`'s dependency array. Adding it there would rebuild every
-   * toolbar item on each edit — `commit` changes identity when the document does — and the file
-   * header is explicit that papering over the exhaustive-deps rule is how a dependency array stops
-   * meaning anything.
-   */
   const runTable = useCallback(() => {
     if (propsRef.current.disabled) return;
     const range = currentRange();
@@ -1814,13 +1132,6 @@ export function RichTextEditor({
     commit(insertTable(docRef.current, range), "table");
   }, [commit, currentRange]);
 
-  /**
-   * Where the caret is inside a table: which block, which row, which column.
-   *
-   * Read from the DOM because that is where a table caret lives — see the note in
-   * `onBeforeInput`. Returns null when the caret is not in a table, which is what makes the
-   * structure buttons inert everywhere else rather than acting on the wrong table.
-   */
   const tableCursor = useCallback((): { block: number; row: number; column: number } | null => {
     const host = hostRef.current;
     const node = window.getSelection()?.focusNode;
@@ -1839,13 +1150,6 @@ export function RichTextEditor({
     };
   }, []);
 
-  /**
-   * Apply a structural table edit at the caret.
-   *
-   * `commit` re-renders the whole surface from the model, which throws the caret away — so the
-   * cell to land in is worked out here and restored afterwards. Without that, adding a row moves
-   * the designer's caret to the top of the field and they lose their place on every click.
-   */
   const runTableEdit = useCallback(
     (
       edit: (doc: RichDoc, block: number, index: number) => EditResult,
@@ -1858,8 +1162,6 @@ export function RichTextEditor({
       const index = (axis === "row" ? cursor.row : cursor.column) + offset;
       commit(edit(docRef.current, cursor.block, index), "table-structure");
 
-      // Put the caret back into a cell of the same table, on the next frame — the surface is
-      // rebuilt synchronously inside `commit`, but focus has to follow the new nodes.
       requestAnimationFrame(() => {
         const host = hostRef.current;
         const table = host?.querySelector<HTMLElement>(`table[${BLOCK_ATTRIBUTE}="${cursor.block}"]`);
@@ -1880,30 +1182,12 @@ export function RichTextEditor({
     [commit, tableCursor]
   );
 
-  /* ── Dictation ──────────────────────────────────────────────────────────── */
-
-  /**
-   * A finished spoken phrase, inserted where the caret is.
-   *
-   * LIFTED OUT OF THE JSX so that the two dictation buttons — the workshop one with its server rung,
-   * the on-device one without — share one insertion path. If they did not, the next fix to caret
-   * handling or mark inheritance would land on whichever surface the person making it happened to be
-   * looking at, and the other would drift.
-   *
-   * It is the same `insertText` an ordinary keystroke goes through, with the same mark inheritance
-   * and the same history entry, so a dictated phrase behaves exactly like a typed one: it lands
-   * where the caret is rather than at the end, it can be undone in one step, and it picks up the
-   * run's marks instead of arriving unstyled in the middle of a bolded sentence.
-   */
   const commitDictated = useCallback(
     (text: string) => {
       const phrase = text.trim();
       if (!phrase) return;
       const range = selectionRef.current;
       const block = docRef.current.blocks[range.focus.block];
-      // A space before the phrase unless the caret already follows one or begins the block — the
-      // recogniser is stopped and started across a long answer, and without this a paragraph
-      // dictated in five goes comes out as "…the warpis sized…".
       const before = block ? blockText(block).slice(0, range.focus.offset) : "";
       const joiner = !before || /\s$/.test(before) ? "" : " ";
       const marks = pendingMarksRef.current ?? (block ? marksAt(block, range.focus.offset) : []);
@@ -1912,44 +1196,18 @@ export function RichTextEditor({
     [commit]
   );
 
-  /* ── Inline photographs ─────────────────────────────────────────────────── */
-
-  /**
-   * Open the file picker, having first pinned down where the picture will go.
-   *
-   * The caret is captured HERE and not when the upload finishes, and that is the whole reason this
-   * is two functions. Choosing a file takes the focus out of the document — on some platforms it
-   * opens a modal window and the page loses the selection entirely — and an upload over a rural
-   * link takes long enough that the designer will have clicked somewhere else by the time it
-   * lands. Reading the caret then would drop the photograph into whichever paragraph they had
-   * wandered to.
-   */
   const runImagePick = useCallback(() => {
     if (propsRef.current.disabled || !propsRef.current.upload) return;
     imageAnchorRef.current = currentRange();
     selectionRef.current = imageAnchorRef.current;
-    // Reset first: choosing the SAME file twice in a row fires no `change` event otherwise, and
-    // the designer would press the button and watch nothing happen.
     if (fileRef.current) fileRef.current.value = "";
     fileRef.current?.click();
   }, [currentRange]);
 
-  /**
-   * Push the chosen file through the app's OWN media pipeline and place the block that references it.
-   *
-   * `uploadMediaBatch` IS THE UPLOAD PATH, not a convenience: it links the file to the record, so
-   * the photograph is a real `MediaFile` row that `GET /media` lists, that the report's
-   * `MediaResolver` can load, and that the orphan sweeper will not delete. A second upload
-   * implementation here — or a data URI in the JSON column — would produce a picture that renders
-   * in this editor and is missing from the file a ministry receives, which is the failure this
-   * whole feature is arranged to avoid.
-   */
   const runImageFile = useCallback(
     async (file: File) => {
       const target = propsRef.current.upload;
       if (!target || propsRef.current.disabled) return;
-      // No renderer of this document can draw a video or a PDF inline, and `ImageBlock` takes an
-      // `ImageRef`. Refusing here is the only place the designer finds out before the upload.
       if (!file.type.startsWith("image/")) {
         setNotice(`“${file.name}” isn't an image. Add other files in the stage's media fields.`);
         return;
@@ -1961,8 +1219,6 @@ export function RichTextEditor({
           files: [file],
           linkedRecordType: target.recordType,
           linkedRecordId: target.recordId,
-          // The field's own name is what a media list will show beside the row, and "Acknowledgement"
-          // says far more about where this picture belongs than the camera's file name does.
           caption: propsRef.current.ariaLabel ?? undefined
         });
         const media = uploaded[0];
@@ -1974,21 +1230,14 @@ export function RichTextEditor({
           );
           return;
         }
-        // Seeded from the upload's own answer, so a picture just placed draws immediately instead
-        // of costing a second round trip to learn a URL this response already carried.
         mediaUrlsRef.current.set(media.id, media.url ?? null);
         const range = imageAnchorRef.current ?? selectionRef.current;
-        // Taken back BEFORE the commit, because `commit` only reclaims focus when it already had
-        // it — and choosing a file left it on the toolbar button, or on nothing at all. Without
-        // this the caret is written into the caption of an editor that is not focused, so the
-        // designer's next keystroke goes wherever the browser thinks focus is.
         hostRef.current?.focus({ preventScroll: true });
         commit(insertImage(docRef.current, range, media.id), "image");
         setNotice(
           "Photo placed. Type a caption below it."
         );
       } catch (error) {
-        // `uploadMediaBatch` throws only when NOTHING landed, so this is the whole-batch failure.
         setNotice(
           error instanceof Error
             ? `That photograph did not upload: ${error.message}`
@@ -2001,13 +1250,6 @@ export function RichTextEditor({
     [commit]
   );
 
-  /**
-   * A structural edit on the photograph the caret is in — remove it, or step its printed width.
-   *
-   * The block index comes straight off the model selection, unlike the table's, which has to be
-   * dug out of the DOM. A caption is ordinary prose in this model, so the caret really is at
-   * `{block, offset}` inside the IMAGE block, and there is nothing to reconstruct.
-   */
   const runImageEdit = useCallback(
     (edit: (doc: RichDoc, block: number) => EditResult) => {
       if (propsRef.current.disabled) return;
@@ -2037,8 +1279,6 @@ export function RichTextEditor({
     pendingMarksRef.current = null;
     commit(clearFormatting(docRef.current, range), "clear");
   }, [commit, currentRange]);
-
-  /* ── Find and replace ───────────────────────────────────────────────────── */
 
   const revealMatchAt = useCallback((position: number, matches: ReturnType<typeof findMatches>) => {
     const host = hostRef.current;
@@ -2092,20 +1332,9 @@ export function RichTextEditor({
     if (!result.count) return;
     commit({ doc: result.doc, selection: clampRange(result.doc, selectionRef.current) }, "replace-all");
     setFind((current) => ({ ...current, count: 0, index: 0 }));
-    // Stated, not silent: a replace-all that reports nothing leaves the designer to scroll the
-    // document looking for evidence that the button did anything.
     setNotice(`Replaced ${result.count} occurrence${result.count === 1 ? "" : "s"}.`);
   }, [commit]);
 
-  /**
-   * Recount when the QUERY or its options change.
-   *
-   * Recounting after an EDIT is done inside {@link refreshChrome} instead, reading the query
-   * through `findRef`. Doing it here as well would mean listing a document-changed signal in this
-   * dependency array, and the only honest one available is a piece of state this effect does not
-   * read — which the exhaustive-deps rule correctly calls out, and papering over that warning is
-   * how a dependency array stops meaning anything.
-   */
   useEffect(() => {
     if (!find.open || !find.query) return;
     const matches = findMatches(docRef.current, find.query, {
@@ -2114,8 +1343,6 @@ export function RichTextEditor({
     });
     setFind((current) => (current.count === matches.length ? current : { ...current, count: matches.length, index: 0 }));
   }, [find.open, find.query, find.caseSensitive, find.wholeWord]);
-
-  /* ── Native listeners: one effect, installed once ───────────────────────── */
 
   useEffect(() => {
     const host = hostRef.current;
@@ -2133,34 +1360,11 @@ export function RichTextEditor({
       const current = selectionRef.current;
       lastInputRef.current = { type: event.inputType, data: event.data };
 
-      /*
-        INSIDE A TABLE, THE BROWSER EDITS AND THE MODEL READS BACK.
-
-        This is the one inversion of the rule the rest of this handler follows, and it is forced by
-        the selection model rather than chosen: a `DocPoint` is `{block, offset}` and cannot name a
-        CELL. Every branch below resolves `current.focus.offset` against the block's concatenated
-        text, so a character typed into the third cell of the second row would be inserted at that
-        offset of the whole table's text — which lands in a different cell, or between two of them.
-        Deleting and splitting are worse: `splitBlock` on a table would cut the grid in half.
-
-        So the browser's own cell editing is allowed to run, and `onInput` -> `syncFromDom` ->
-        `readTableElement` reads the result back. What is lost is the model-side undo granularity
-        inside a cell; what is kept is that typing in a table does the obvious thing in all three
-        engines. Marks still work, because `collectSpans` reads `<strong>`/`<em>` out of a cell
-        exactly as it does out of a paragraph.
-
-        Enter is the one keystroke still taken away — see `onKeyDown`, which moves to the next cell
-        instead of letting the engine nest a `<div>` or a second paragraph inside a `<td>`.
-      */
       if (docRef.current.blocks[current.focus.block]?.kind === "TABLE") return;
 
       switch (event.inputType) {
         case "insertText": {
           if (composingRef.current) return;
-          // The browser is left to type INSIDE a block: that is the path a spell-checker, an
-          // autocorrect and a soft keyboard all take, and interrupting it is what makes a
-          // hand-rolled editor feel wrong on a phone. It is taken away only when the model has to
-          // decide something the browser cannot know — a selection to replace, or a pending mark.
           if (isCollapsed(current) && pendingMarksRef.current === null) return;
           event.preventDefault();
           const block = docRef.current.blocks[current.focus.block];
@@ -2176,9 +1380,6 @@ export function RichTextEditor({
 
         case "insertParagraph":
         case "insertLineBreak":
-          // Shift+Enter lands here too and produces a new BLOCK, because the model has no soft
-          // line break: `RichSpan` text with a "\n" in it is repaired by `from_json` on the server
-          // and would render as a space in the .docx. A new paragraph is the honest equivalent.
           event.preventDefault();
           commit(splitBlock(docRef.current, current), "split");
           return;
@@ -2188,8 +1389,6 @@ export function RichTextEditor({
         case "deleteSoftLineBackward":
         case "deleteHardLineBackward": {
           if (composingRef.current) return;
-          // With text before the caret in this block, the deletion cannot escape the block, so the
-          // browser's own word- and line-wise deletes are used as-is and read back afterwards.
           if (isCollapsed(current) && current.focus.offset > 0) return;
           event.preventDefault();
           commit(isCollapsed(current) ? deleteBackward(docRef.current, current) : deleteRange(docRef.current, current), "delete");
@@ -2210,8 +1409,6 @@ export function RichTextEditor({
 
         case "deleteByCut":
         case "deleteByDrag":
-          // The clipboard was already written by the `cut` event, which fires first; only the
-          // removal is taken over, so the model decides how the two ends of the cut join up.
           event.preventDefault();
           commit(deleteRange(docRef.current, current), "delete");
           return;
@@ -2243,12 +1440,6 @@ export function RichTextEditor({
           return;
 
         default:
-          // Everything else a browser can send — formatFontColor and formatBackColor from a
-          // context menu, insertOrderedList from a native command, insertFromPaste if the paste
-          // listener somehow did not fire — is REFUSED. Accepting it would put markup into the
-          // surface that this file's reader does not understand, and the mark would be dropped at
-          // the next keystroke with nothing on screen saying so. A refusal is visible; a silent
-          // drop is not.
           if (event.inputType.startsWith("format") || event.inputType.startsWith("insert")) event.preventDefault();
       }
     }
@@ -2268,9 +1459,6 @@ export function RichTextEditor({
       const parked = pendingExternalRef.current;
       if (parked) {
         pendingExternalRef.current = null;
-        // An external value that arrived mid-word is applied now — but only if it is still
-        // different from what the designer has just finished composing, or the word they typed
-        // would be replaced by the value that was in flight before they typed it.
         if (storedSignature(parked.value) !== emittedSignatureRef.current) seedFrom(parked.value);
       }
     }
@@ -2287,10 +1475,6 @@ export function RichTextEditor({
         const html = data.getData("text/html");
         if (html) {
           hadMarkup = true;
-          // Parsed into a DETACHED document and read for its text only. Nothing from this parse is
-          // ever attached to the page, no script in it can run, and no style in it can reach the
-          // stylesheet — which is why reading `text/html` at all is safe here and inserting it
-          // would not be.
           text = new DOMParser().parseFromString(html, "text/html").body.textContent ?? "";
         }
       } else if (data.types.includes("text/html")) {
@@ -2306,9 +1490,6 @@ export function RichTextEditor({
       const result = insertDoc(docRef.current, range, incoming);
       const size = countDoc(result.doc);
       if (size.characters > MAX_DOCUMENT_CHARS || result.doc.blocks.length > MAX_BLOCKS) {
-        // Refused rather than truncated. A truncated paste is a document that looks complete on
-        // screen and is missing its last twenty pages in the file, and the designer has no way of
-        // knowing which.
         setNotice(
           `Too long to paste — ${size.characters.toLocaleString()} of ${MAX_DOCUMENT_CHARS.toLocaleString()} characters. Nothing was inserted.`
         );
@@ -2333,28 +1514,12 @@ export function RichTextEditor({
           hostRef.current?.focus({ preventScroll: true });
           return;
         }
-        // Escape is the keyboard route OUT of the editing surface and into the toolbar, which is
-        // what makes Tab safe to use for list indentation below. Without a documented way out, a
-        // keyboard user who indents a bullet is trapped in the field.
         event.preventDefault();
         const firstButton = toolbarRef.current?.querySelector<HTMLButtonElement>('button[tabindex="0"], button:not([disabled])');
         firstButton?.focus();
         return;
       }
 
-      /*
-        TAB AND ENTER INSIDE A TABLE MOVE BETWEEN CELLS.
-
-        Both are taken from the browser here rather than in `onBeforeInput`, because neither
-        produces an `input` event that could be read back usefully. Left alone, Enter inside a
-        `<td>` makes the engine nest a `<div>` or a `<p>` inside the cell — which
-        `readTableElement` then flattens on the next sync, so the designer watches their line break
-        vanish — and Tab moves focus out of the editor entirely, which is the wrong answer in a
-        grid and the right one everywhere else.
-
-        Moving the caret is done against the DOM rather than the model for the same reason the
-        editing is: a `DocPoint` cannot name a cell, so there is nothing in the model to move to.
-      */
       const tableCell = (() => {
         const selection = window.getSelection();
         const node = selection?.focusNode;
@@ -2367,7 +1532,6 @@ export function RichTextEditor({
         event.preventDefault();
         const cells = Array.from(tableCell.closest("table")?.querySelectorAll("td, th") ?? []);
         const position = cells.indexOf(tableCell);
-        // Enter goes DOWN a row, Tab goes ACROSS — the two things a person means in a grid.
         const width = tableCell.closest("tr")?.children.length ?? 1;
         const step = event.key === "Enter" ? width : 1;
         const next = cells[position + (event.shiftKey ? -step : step)];
@@ -2388,9 +1552,6 @@ export function RichTextEditor({
       if (event.key === "Tab" && !modifier) {
         const range = currentRange();
         const block = docRef.current.blocks[range.focus.block];
-        // Tab only means "indent" inside a list. Everywhere else it must move focus to the next
-        // form control, because a rich-text field is one field among forty on a stage and a
-        // control that eats Tab is a form nobody can fill in from the keyboard.
         if (!block || !isListKind(block.kind)) return;
         event.preventDefault();
         runIndent(event.shiftKey ? -1 : 1);
@@ -2425,9 +1586,6 @@ export function RichTextEditor({
         event.preventDefault();
         redo();
       } else if (key === "f") {
-        // The browser's own find cannot reach a match that is scrolled out of a long field's box
-        // and cannot replace anything, so inside a focused editor Ctrl+F is this one. Escape closes
-        // it and the browser's own find is one press away again.
         event.preventDefault();
         holdSurfaceStill();
         setFind((current) => ({ ...current, open: true }));
@@ -2444,9 +1602,6 @@ export function RichTextEditor({
       if (!next) return;
       const moved = !rangesEqual(next, selectionRef.current);
       selectionRef.current = next;
-      // A pending mark belongs to the caret it was set at. Moving the caret abandons it — which is
-      // what every editor does, and what stops Bold-then-click-elsewhere bolding the wrong word.
-      // Toggling a mark does NOT move the caret, so the pending set survives its own toggle.
       if (moved) pendingMarksRef.current = null;
       refreshChrome();
     }
@@ -2469,26 +1624,16 @@ export function RichTextEditor({
     };
   }, [commit, currentRange, holdSurfaceStill, redo, refreshChrome, runClear, runIndent, runList, runMark, seedFrom, syncFromDom, undo]);
 
-  /* ── Focus tracking: which editor owns the toolbar ──────────────────────── */
-
   useEffect(() => {
     function evaluate() {
       const element = document.activeElement;
       const inside = !!element && (hostRef.current?.contains(element) === true || toolbarRef.current?.contains(element) === true);
       setActive((current) => {
-        // Measured HERE, before the bar mounts or unmounts, so the layout effect below has a
-        // rectangle from the same tick rather than one remembered across an unknown amount of
-        // scrolling. Only when the answer actually changes: an unchanged `active` renders nothing
-        // new, the layout effect would not fire, and a stored rectangle would sit there stale
-        // waiting to be spent on the next unrelated change.
         if (current !== inside) holdSurfaceStill();
         return inside;
       });
     }
     function onFocusOut() {
-      // `focusout` fires BEFORE the next element takes focus, when `document.activeElement` is
-      // still `<body>`. Deferring by a frame is what lets a click on a toolbar button — or a Tab
-      // from the surface into the bar — be seen as staying inside rather than as leaving.
       window.requestAnimationFrame(evaluate);
     }
     document.addEventListener("focusin", evaluate);
@@ -2499,20 +1644,8 @@ export function RichTextEditor({
     };
   }, [holdSurfaceStill]);
 
-  /* ── Full screen ────────────────────────────────────────────────────────── */
-
   useEffect(() => {
     if (!fullscreen) return;
-    // The same scroll lock the navigation sheet and every dialog use, and now literally the same
-    // code: `lib/scrollLock.ts`. It lives on <html> because iOS Safari ignores `overflow: hidden`
-    // on the body and keeps panning the page underneath, and the vanished scrollbar's width is
-    // paid back through `--nav-scroll-gutter` so nothing behind the overlay jumps sideways.
-    //
-    // The refcount is what this effect gains by giving the class up. Toggling the class here meant
-    // any dialog that happened to close while a designer was writing full screen — an autosave
-    // confirm, the app-update prompt mounted in the protected layout — removed it, and the document
-    // behind the editor started scrolling again mid-sentence. The lock now comes off only when the
-    // LAST holder lets go.
     lockPageScroll();
     return unlockPageScroll;
   }, [fullscreen]);
@@ -2521,15 +1654,12 @@ export function RichTextEditor({
     if (!fullscreen) return;
     function onKey(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
-      // Only when the surface is not handling Escape itself (it moves focus to the toolbar).
       if (hostRef.current?.contains(document.activeElement)) return;
       setFullscreen(false);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreen]);
-
-  /* ── The toolbar's contents ─────────────────────────────────────────────── */
 
   const bar = chrome.bar;
   const items: ToolItem[] = useMemo(() => {
@@ -2565,14 +1695,8 @@ export function RichTextEditor({
       markButton("UNDERLINE", "Underline", "Ctrl+U", <Underline className={ICON} aria-hidden />),
       markButton("STRIKETHROUGH", "Strikethrough", "Ctrl+Shift+X", <Strikethrough className={ICON} aria-hidden />),
       markButton("CODE", "Inline code", "prints in the body face in the .docx", <Code className={ICON} aria-hidden />),
-      // Raised and lowered text survives INTACT into every one of the five renderers — a single
-      // `<w:vertAlign>` in the .docx, a smaller glyph off the baseline in both PDF writers — which
-      // is the whole test a control has to pass to appear on this bar. Applying one clears the
-      // other, because a character cannot be both.
       markButton("SUPERSCRIPT", "Superscript", "m², a footnote marker", <Superscript className={ICON} aria-hidden />),
       markButton("SUBSCRIPT", "Subscript", "H₂O", <Subscript className={ICON} aria-hidden />),
-      // One colour and no picker: `w:highlight` is a closed vocabulary of named colours rather
-      // than an RGB value, so a palette here would store something Word cannot express.
       markButton("HIGHLIGHT", "Highlight", "yellow, the one Word draws", <Highlighter className={ICON} aria-hidden />),
       { kind: "separator", id: "sep-1" },
       {
@@ -2599,30 +1723,17 @@ export function RichTextEditor({
         kind: "button",
         id: "insert-table",
         label: "Insert table",
-        // Says what the designer gets, because a table is the one control here whose result cannot
-        // be undone by pressing the same button again — it is an insertion, not a toggle.
         hint: "3×3, first row is the header",
         icon: <Table className={ICON} aria-hidden />,
         active: bar.kind === "TABLE",
         run: () => runTable()
       },
-      /*
-        THE PICTURE BUTTON, PRESENT ONLY WHERE THERE IS A RECORD TO FILE THE UPLOAD AGAINST.
-
-        `upload` is absent for any caller that cannot name one, and an editor that cannot say which
-        record a photograph belongs to must not offer to upload: `uploadMediaBatch` would leave an
-        orphan object that `GET /media` cannot list and the report's resolver cannot find. Absent
-        rather than disabled, for the same reason the table structure controls are absent outside a
-        table — the bar's width is the scarce resource here.
-      */
       ...(upload
         ? ([
             {
               kind: "button",
               id: "insert-image",
               label: uploading ? "Placing the photograph…" : "Place a photograph",
-              // Says where it lands and what the line under it is, because this is an insertion and
-              // not a toggle: pressing the button again does not undo it.
               hint: "with a caption",
               icon: <ImagePlus className={ICON} aria-hidden />,
               disabled: uploading,
@@ -2630,14 +1741,6 @@ export function RichTextEditor({
             }
           ] as ToolItem[])
         : []),
-      /*
-        THE PHOTOGRAPH'S OWN CONTROLS, SHOWN ONLY WHILE THE CARET IS IN ONE.
-
-        The width is stepped rather than typed: `widthPct` is a percentage of a text column the
-        designer cannot see, so a box asking for a number is a question nobody can answer, while
-        two buttons and the picture in front of them is a question anybody can. The bounds are the
-        model's own (10-100), so the editor cannot show a width the file will not print.
-      */
       ...(bar.kind === "IMAGE"
         ? ([
             { kind: "separator", id: "sep-image" },
@@ -2665,17 +1768,6 @@ export function RichTextEditor({
             }
           ] as ToolItem[])
         : []),
-      /*
-        THE STRUCTURE CONTROLS, SHOWN ONLY INSIDE A TABLE.
-
-        They appear when the caret is in a cell and are absent otherwise, rather than being present
-        and disabled. A toolbar that carries six permanently greyed buttons for a block type most
-        fields never contain spends its width on nothing — and width is the scarce resource here,
-        because this bar has to fit a narrow field without wrapping to three rows.
-
-        Every one of them acts at the CARET's row or column, which is what makes them predictable:
-        "add a row" means "below this one", not "at the end of the table".
-      */
       ...(bar.kind === "TABLE"
         ? ([
             { kind: "separator", id: "sep-table" },
@@ -2816,8 +1908,6 @@ export function RichTextEditor({
       <MemoToolbar items={items} editorId={editorId} onDismiss={dismissToolbar} containerRef={toolbarRef} />
     );
 
-  /* ── Render ─────────────────────────────────────────────────────────────── */
-
   const overLimit = typeof maxLength === "number" && maxLength > 0 && chrome.counts.characters > maxLength;
 
   return (
@@ -2827,8 +1917,6 @@ export function RichTextEditor({
           ? "fixed inset-0 z-100 flex flex-col gap-2 overflow-y-auto bg-bg-0 p-4 sm:p-6"
           : "grid min-w-0 gap-2"
       }
-      // A fixed overlay cannot inherit the body padding the scroll lock adds, so it repays the
-      // vanished scrollbar itself — the same obligation `.nav-island-frame` carries.
       style={fullscreen ? { paddingRight: "calc(1rem + var(--nav-scroll-gutter, 0px))" } : undefined}
     >
       {fullscreen ? (
@@ -2841,19 +1929,6 @@ export function RichTextEditor({
         </div>
       ) : null}
 
-      {/*
-        DOCKED, NOT FLOATING, and it is the first thing in this grid.
-
-        It used to be portalled to <body> and positioned at the editor's top edge minus its own
-        height — which put it on top of whatever the form had drawn immediately above the box: the
-        field's title and its help text, both unreadable behind it exactly when a designer is being
-        told what to write. There is no free space over a form for an overlay to occupy. Sitting in
-        the flow, it can only ever push, never cover; being first here puts it under the title and
-        above the find bar, which is the order the two are read in.
-
-        The old arrangement's one merit was that appearing cost no layout shift. That is repaid by
-        `holdSurfaceStill` below rather than by covering the labels.
-      */}
       {toolbar}
 
       {find.open ? (
@@ -2866,9 +1941,6 @@ export function RichTextEditor({
             value={find.query}
             onChange={(event) => setFind((current) => ({ ...current, query: event.target.value, index: 0 }))}
             onKeyDown={(event) => {
-              // Enter walks the matches. This input sits inside the stage form, whose own Enter
-              // handler walks to the next FIELD — so the event is stopped here as well as
-              // defaulted, exactly as the tag box does.
               if (event.key !== "Enter") return;
               event.preventDefault();
               event.stopPropagation();
@@ -2937,8 +2009,6 @@ export function RichTextEditor({
               checked={find.wholeWord}
               onChange={(next) => setFind((current) => ({ ...current, wholeWord: next, index: 0 }))}
             />
-            {/* A live region, because the count is the only answer to "did that find anything" and
-                it changes without anything moving on screen. */}
             <span aria-live="polite">
               {find.query ? (find.count ? `${Math.min(find.index + 1, find.count)} of ${find.count}` : "No matches") : ""}
             </span>
@@ -2955,9 +2025,6 @@ export function RichTextEditor({
         <div
           id={editorId}
           ref={hostRef}
-          // `role="textbox"` with `aria-multiline` is what tells a screen reader this is a place to
-          // type rather than a region to read. The label comes from the form's own `field-label`
-          // span through `aria-labelledby`, so there is exactly one accessible name.
           role="textbox"
           aria-multiline="true"
           aria-label={ariaLabelledBy ? undefined : ariaLabel}
@@ -2976,15 +2043,6 @@ export function RichTextEditor({
         />
       </div>
 
-      {/*
-        The file picker for an inline photograph, driven entirely from the toolbar button.
-
-        `hidden` and not a visually-hidden input: this is never tabbed to, because the toolbar
-        button IS the control and a second tab stop for a `<input type="file">` that looks like
-        nothing would be a keyboard trap with no label a screen reader could read out. It sits
-        OUTSIDE the contenteditable — a form control inside one is edited by the engine rather than
-        operated, and `readDocFrom` would then read its shadow content back as prose.
-      */}
       {upload ? (
         <input
           ref={fileRef}
@@ -2992,10 +2050,6 @@ export function RichTextEditor({
           accept="image/*"
           hidden
           tabIndex={-1}
-          // Named so a test can hand it a file directly: clicking the button opens the operating
-          // system's chooser, which no browser automation can drive. A stage carries several other
-          // file inputs (every media field has one), so the marker has to be specific to this
-          // control or a test picks up whichever input happens to be first in the document.
           data-rte-image-input=""
           onChange={(event) => {
             const file = event.target.files?.[0];
@@ -3010,30 +2064,10 @@ export function RichTextEditor({
           {chrome.counts.characters.toLocaleString()} character{chrome.counts.characters === 1 ? "" : "s"}
           {typeof maxLength === "number" && maxLength > 0 ? ` of ${maxLength.toLocaleString()} suggested` : ""}
         </p>
-        {/*
-          DICTATION LIVES INSIDE THE EDITOR, and it has to.
-
-          `FieldInput` carries a dictation button for every other prose field, and it deliberately
-          did NOT carry one here: its handler commits a STRING, and a string written into a
-          RICH_TEXT field is read by the server as unformatted prose — so one dictated sentence
-          would have flattened every heading, list and bold run already in the field. The note in
-          that file said the fix was to insert into the document model at the caret and that doing
-          so was the editor's job. This is that job — `commitDictated`, defined above.
-        */}
         {!disabled ? (
-          /*
-            TWO COMPONENTS, ONE INSERTION. Which button is drawn is decided by whether this editor
-            was told a workshop (see the prop's note): with one, the button that may fall back to the
-            consent-gated server route; without one, the button that cannot reach a network at all.
-            The `onCommit` below is IDENTICAL for both and is written once, because how a phrase
-            enters the document has nothing to do with how it was heard.
-          */
           workshopId ? (
             <DictationButton fieldLabel={ariaLabel ?? "this field"} workshopId={workshopId} onCommit={commitDictated} />
           ) : (
-            // One line, and it has to stay one: `record-form-dictation-unit.spec.ts` pins
-            // `<OnDeviceDictationButton fieldLabel=` as a single string, because what it holds is
-            // that the button this editor draws is the one carrying this field's own name.
             <OnDeviceDictationButton fieldLabel={ariaLabel ?? "this field"} explainWhenUnavailable={explainWhenUnavailable} onCommit={commitDictated} />
           )
         ) : null}
@@ -3049,35 +2083,6 @@ export function RichTextEditor({
         </button>
       </div>
 
-      {/*
-        THE THREE TEXT VERBS, IN A BAND OF THEIR OWN UNDER THE COUNTS ROW.
-
-        `workshopId` guards it for the same reason it decides which microphone is drawn above: a
-        record form has no workshop whose consent could govern a send, so it gets no verb menu at
-        all. That is the honest degradation for the NO-WORKSHOP case, and it cannot leak anything,
-        because with no workshop there is no route to call.
-
-        ⚠ IT IS NOT, AND NEVER WAS, A GUARD AGAINST A 404, and this comment claimed it was. A stage
-        form always has a workshop id, and on an unsynced draft that id is `dwlocal-…` — a perfectly
-        good string that satisfies this ternary and that `load_workshop_or_404` answers 404 to. The
-        menu shipped offering all three verbs into that. The gate that actually closes it is inside
-        the menu, where it can say WHY: `WORKSHOP_NOT_ON_SERVER_YET`, ahead of the consent rung
-        because the consent rung reads the local draft and cannot see the difference. It is deliberately
-        NOT a fourth condition here — a control that disappears from the toolbar for a fortnight and
-        comes back is the "greyed control with no sentence" failure in its worst form.
-
-        A ROW OF ITS OWN RATHER THAN A THIRD ITEM IN THE FLEX ROW ABOVE, because four of this menu's
-        five pre-press states are a SENTENCE and not a chip: "select the words you want worked on
-        first", the passage-too-long refusal with its length in it, the consent refusal with a link to
-        the workshop's own screen, and the not-yet-synced refusal above. Squeezed between the word
-        count and the microphone each of
-        them would wrap to four lines in a 12rem column, which is how a stated reason becomes
-        something nobody reads.
-
-        Nothing here writes into the document. See `AiVerbReviewDialog`'s header for why, at length;
-        the short form is that the server cannot express a write into a stage field, and this side
-        keeps that true by having nothing to press.
-      */}
       {!disabled && workshopId ? (
         <div className="mt-2">
           <AiVerbSelectionMenu
@@ -3088,12 +2093,6 @@ export function RichTextEditor({
         </div>
       ) : null}
 
-      {/*
-        THE VISIBLE DEGRADATION CHANNEL. Everything this editor can do that does not survive intact
-        into the .docx, the .pdf and the on-device renderers is named here, in one place, in the
-        designer's own words. The alternative — a tooltip per control — is twenty-five places to
-        keep in step and none of them readable before the control is pressed.
-      */}
       {savedPanelOpen ? (
         <div id={`${editorId}-saved`} className="rounded-md border border-line-200 bg-surface-50 p-3 text-xs leading-5 text-ink-700">
           <p className="font-medium text-ink-900">What prints in the report</p>

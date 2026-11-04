@@ -19,18 +19,11 @@ import retrofit2.HttpException
 import retrofit2.Response
 import java.io.File
 
-/**
- * The deferrals of the 2026-10-16 offline review, built: idempotent creates, corrections sent as
- * changed fields under a version precondition with "Review changes" when the record moved, and
- * questionnaire authoring under temporary ids. See `docs/ANDROID_OFFLINE_AUDIT.md`.
- */
 class OfflineDeferralsTest {
     @get:Rule
     val folder = TemporaryFolder()
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-
-    // ── Idempotency keys ───────────────────────────────────────────────────────────────────────
 
     @Test
     fun every_create_carries_a_key_and_no_correction_does() {
@@ -72,8 +65,6 @@ class OfflineDeferralsTest {
         assertNull(entry.tempId)
     }
 
-    // ── Corrections: only what changed, under the base version ─────────────────────────────────
-
     @Test
     fun only_the_fields_a_person_changed_count_as_changed() {
         val record = buildJsonObject {
@@ -91,7 +82,6 @@ class OfflineDeferralsTest {
             put("place", JsonPrimitive("Bhuj"))
             put("craftIds", kotlinx.serialization.json.JsonArray(emptyList()))
         }
-        // phone moved; notes "" = null; 12.5 as text = 12.5; place is new; an empty list is nothing.
         assertEquals(setOf("phone", "place"), correctionChangedKeys(request, record))
     }
 
@@ -105,7 +95,6 @@ class OfflineDeferralsTest {
         val narrowed = restrictCorrectionBody(body, setOf("phone"), "2026-10-16T08:00:00.000Z")
         assertEquals(setOf("phone", "expectedUpdatedAt"), narrowed.keys)
         assertEquals("2026-10-16T08:00:00.000Z", narrowed["expectedUpdatedAt"]!!.jsonPrimitive.content)
-        // An entry from an earlier build: the whole body, no precondition — exactly as before.
         assertEquals(body, restrictCorrectionBody(body, null, null))
     }
 
@@ -122,7 +111,6 @@ class OfflineDeferralsTest {
     fun the_error_body_can_be_peeked_without_consuming_it() {
         val error = http(409, body = """{"detail":{"code":"record_changed","currentUpdatedAt":"t"}}""")
         assertEquals("t", staleCorrectionCurrentVersion(409, peekErrorBody(error)))
-        // Still readable afterwards by the classification that follows.
         assertTrue(error.response()!!.errorBody()!!.string().contains("record_changed"))
     }
 
@@ -154,8 +142,6 @@ class OfflineDeferralsTest {
         assertTrue(row.stale)
         assertTrue(row.reason.contains("Review changes"))
     }
-
-    // ── Questionnaire authoring under temporary ids ────────────────────────────────────────────
 
     @Test
     fun temporary_ids_are_recognised_and_resolved_once_known() {
@@ -230,7 +216,6 @@ class OfflineDeferralsTest {
                 )),
             ),
         )
-        // Two sections with one title: the newest one no earlier temporary id has claimed.
         assertEquals("s2", createdSectionId(result, "Dyes", claimed = emptyList()))
         assertEquals("s1", createdSectionId(result, "Dyes", claimed = listOf("s2")))
         assertEquals("x7", createdQuestionId(result, "s2", "Which dyes?", claimed = emptyList()))
@@ -243,8 +228,6 @@ class OfflineDeferralsTest {
         assertEquals(op, json.decodeFromString(QFormOp.serializer(), json.encodeToString(QFormOp.serializer(), op)))
         assertEquals("Questionnaire change", outboxKindLabel(OFFLINE_QFORM_OP, isUpdate = false))
     }
-
-    // ── Release-review follow-ups (2026-10-16) ─────────────────────────────────────────────────
 
     @Test
     fun a_landed_correction_rebases_only_the_same_records_waiting_corrections() {

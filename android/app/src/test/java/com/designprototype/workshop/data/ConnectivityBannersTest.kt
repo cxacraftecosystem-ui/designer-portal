@@ -6,11 +6,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The release smoke test of 2026-10-17 (dp/59-61): no offline line, no "can't reach the server"
- * line, a queued upload the banner could not open, and an upload that said "check your connection"
- * and kept nothing when storage was down. The words and decisions behind each fix, pinned.
- */
 class ConnectivityBannersTest {
 
     @Test

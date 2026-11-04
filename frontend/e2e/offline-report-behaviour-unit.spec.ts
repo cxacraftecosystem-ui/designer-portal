@@ -7,15 +7,6 @@ import { draftReportInput, droppedWarnings, reportFileName, type DraftLike } fro
 import { MAX_AGE_MS, MEDIA_BUDGET_BYTES, planEviction, sourcesAreUsable } from "@/lib/offlineReport/reportCache";
 import { allReportAssetUrls } from "@/lib/offlineReport/offlineAssets";
 
-/**
- * HOW THE WEB BEHAVES WITH NO CONNECTION, pinned where it can be checked without one.
- *
- * Every rule below is only ever reached in conditions nobody develops in — a laptop in a courtyard,
- * a tab that lost its signal an hour ago, a shared machine after one designer signs out — so they
- * are pinned as pure functions and, where the rule lives in a file a unit spec cannot run (the
- * service worker, the report screen), on that file's source.
- */
-
 const FRONTEND = join(__dirname, "..");
 const read = (...parts: string[]) => readFileSync(join(FRONTEND, ...parts), "utf8");
 const DAY = 24 * 60 * 60 * 1000;

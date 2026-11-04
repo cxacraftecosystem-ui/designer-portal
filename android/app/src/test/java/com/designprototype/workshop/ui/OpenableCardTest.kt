@@ -10,15 +10,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * A TAP ANYWHERE ON A CARD OPENS IT (owner, 2026-10-17), as documentation-portal does.
- *
- * WHY THE FIRST PASS DID NOT TAKE: the 2026-10-16 change put whole-card taps on the record ROWS and
- * pinned them in `RecordOpenTest`, but never on `DashboardActionCard` — the tiles a designer meets
- * first — whose Column carried padding and no click. Nothing asserted the tile, so a tap on its icon
- * or label did nothing and the owner read every card as dead. These assertions read the source, for
- * the reason `RecordOpenTest` gives: the cards are file-private composables.
- */
 class OpenableCardTest {
 
     private val main by lazy { mainSource("MainActivity.kt") }
@@ -66,7 +57,6 @@ class OpenableCardTest {
 
     @Test
     fun noCardPutsAnUnlabelledClickOnItsOuterModifier() {
-        // The shape that loses the ripple's corner, the role and the label at once.
         val pattern = Regex("""modifier = Modifier\.fillMaxWidth\(\)\.clickable\(onClick = onOpen\)""")
         for (path in listOf("MainActivity.kt", "ui/DataBrowserScreen.kt", "ui/designworkshop/InspectionListScreen.kt", "ui/designworkshop/StageIndexScreen.kt")) {
             assertFalse(path, pattern.containsMatchIn(mainSource(path)))
@@ -88,14 +78,12 @@ class OpenableCardTest {
         }
         assertEquals(1, dashboardMegaColumns(411))
         assertEquals(2, dashboardMegaColumns(840))
-        // 360dp: 328dp mega card less 2x14 padding = 300dp, which holds two 140dp tiles and a 12dp gap.
         assertTrue(300 >= 2 * DASH_MIN_CARD_DP + 12)
         val label = body("private fun CardButtonLabel(")
         assertTrue("button words wrap rather than clip", label.contains("maxLines = 2"))
     }
 }
 
-/** A main-source file, found from wherever Gradle runs the tests, with CRLF folded to LF. */
 internal fun mainSource(relative: String): String {
     val tails = listOf(
         "src/main/java/com/designprototype/workshop/$relative",

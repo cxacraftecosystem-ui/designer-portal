@@ -1,47 +1,3 @@
-"""REPORTS TO APPROVE: the approving authority's surface — the queue, the waiting count, one report
-read for a decision, its report file, and the three decisions: approve, send back or withdraw
-(``/revise``), and hand on to the office.
-
-The owner's requirement ends: *"This iterative review loop continues until the sanctioning authority
-is satisfied and clicks 'approve'."* Until 2026-10-10 the edges this router owns — ``DECISION_EDGES``
-in ``schemas/design_workshop_review_loop`` — named it and nothing answered, so APPROVED and SUBMITTED
-were unreachable. WHO may decide is ``deps.APPROVAL_AUTHORITY_ROLES`` (the Ministry Admin and the
-master admin, estate-wide; ``services/design_workshop_approvals`` carries the product's evidence) and,
-on one workshop, rule 7 of ``services/design_workshop_posts``. WHAT each decision writes is planned in
-``schemas/design_workshop_approvals``.
-
-=======================================================================================
-WHY THIS IS ITS OWN ROUTER ON ITS OWN PREFIX
-=======================================================================================
-
-For the deciding reason every sibling gives in ``app/api/router.py``: its callers are very often
-somebody ``load_workshop_or_404`` turns away — a Ministry Admin who neither opened the workshop nor
-holds designer access to it — and a route sharing ``/design-workshops`` invites widening that loader,
-which grants STAGE WRITES rather than a read. Reading every report here is not a widening: the
-Ministry Admin and the master admin already read every workshop's stage data on View Data and the
-ministry register. The read carries no photographs, recordings or transcripts — the oversight read's
-boundary — and the report route renders the same document the designer's report route does.
-
-=======================================================================================
-EACH DECISION IS ONE TRANSACTION, AND THE GUARD IS ON THE WRITE
-=======================================================================================
-
-Read the workshop; refuse (403) an account rule 7 bars; refuse (422) a state the decision cannot be
-taken from; build the plans (422 for the text); then, in one transaction, the compare-and-set update
-— its WHERE carries the state the decision was taken against, and for an approval the round and the
-``updatedAt`` the approver read — then the correction row the send-back decisions file, then the
-``ReviewLog`` row. A compare-and-set that matches nothing is somebody else's decision, or a designer's
-save, landing in between: the transaction raises, nothing is written, and the answer is a 409 — except
-two approvals of one report, where the second is told it is already approved (a no-op is never a
-refusal). Each decision e-mails the workshop's designers afterwards (never inside the transaction).
-``/hand-on`` RECORDS who handed the report on, when, to which office and which exported file;
-``/approve-and-hand-on`` (2026-10-18) also makes the file and e-mails the office an expiring link to it,
-at the addresses an administrator set (``services/report_delivery``).
-
-**REGISTRATION ORDER IS LOAD-BEARING.** ``GET /awaiting-count`` is declared before ``GET
-/{workshop_id}``, which would otherwise swallow it and answer 404.
-"""
-
 import asyncio
 import hashlib
 import logging
@@ -50,11 +6,6 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
-# THE STAGE SERIALISERS AND THE REPORT HELPERS ARE IMPORTED RATHER THAN COPIED — private names in
-# another route module, the smell ``design_workshop_inspections`` states out loud above its identical
-# import and argues is the smaller problem: a second implementation of the registry-aware serialiser,
-# or of the report's inputs, is a second document. The approver must read and hand on the SAME report
-# the designer generates.
 from app.api.routes.design_workshops import (
     _MIME,
     _content_disposition,
@@ -108,13 +59,6 @@ def _handed_on(record: Any) -> bool:
 
 
 async def _read_for_decision(record: Any, user: Any) -> dict[str, Any]:
-    """One report as the approving authority reads it, with what THIS reader may decide on it.
-
-    The oversight read's payload — every stage, its completeness, who wrote each field, who supervises
-    it — plus the correction register, the decision history, the inspectors, the sign-off names, and
-    the decision view the client draws its buttons from and from nothing else: who may decide turns on
-    rows the client cannot see.
-    """
     workshop_id = record.id
     (
         entries,
@@ -143,49 +87,33 @@ async def _read_for_decision(record: Any, user: Any) -> dict[str, Any]:
     )
     summary = workshop_summary(record)
     summary["stages"] = _stages_payload(entries)
-    # RESOLVED PER ROUTE, never inside the shared serialiser — `test_entry_provenance_readers.py`
-    # asserts it of this route by name: a report whose fields all read "set by (unknown)" is one the
-    # authority cannot judge.
     await resolve_display_names(_provenance_maps(summary["stages"]))
     summary["completeness"] = workshop_completeness(entries, definition=definition)
     summary["schemaVersion"] = registry_version()
     summary["customSchemaVersion"] = definition.version
     summary["oversight"] = supervisors
-    # C5: each inspector with their "Checked, no corrections" on the current round (or null).
     cycle = int(getattr(record, "submissionRound", 0) or 0)
     summary["inspectors"] = review_aids.with_verdicts(inspectors, clearances, cycle)
     summary["clearances"] = clearances
-    # A19: each note says whether the stage it names was edited after it was filed.
     rows, cut = feedback
     edits = await review_aids.stage_edit_times(workshop_id, entries)
     summary["inspectionFeedback"] = review_aids.annotate_freshness(rows, edits)
     summary["inspectionFeedbackTruncated"] = cut
-    # C13: the rounds whose hand-in copy was kept, for "Changed since round N".
     summary["roundSnapshots"] = snapshots
     summary["decisions"] = decisions
     summary.update(names)
     summary.update(approvals.decision_view(record, refusal=refusal))
     summary["handOnDefaultTo"] = approvals.hand_on_default_to(entries)
     summary["latestExport"] = latest
-    # "Approve and hand on" (2026-10-18): whether the office's addresses are set, and the newest
-    # e-mailed delivery with its link's state and each e-mail's.
     summary["delivery"] = await report_delivery.delivery_view(workshop_id)
-    # The content of this report is not writable from this surface, said on the wire as both sibling
-    # reads say it, so a screen that renders it never offers a Save.
     summary["readOnly"] = True
     summary["mayRecordFeedback"] = False
     return summary
 
 
-# --------------------------------------------------------------------------------------
-# The reads. The literal path FIRST.
-# --------------------------------------------------------------------------------------
-
 
 @router.get("/awaiting-count")
 async def awaiting_count(_: Any = Depends(require_approving_authority)) -> dict[str, int]:
-    """``{awaiting, toHandOn}``: the badge on the desk row and the nav entry — this product's only
-    shape for a notification, the one ``GET /sanction-orders/awaiting-count`` set."""
     return await approvals.awaiting_counts()
 
 
@@ -199,15 +127,6 @@ async def list_reports_to_approve(
     cleared: str | None = Query(None),
     _: Any = Depends(require_approving_authority),
 ) -> dict[str, Any]:
-    """One tab of the queue — awaiting, approved, handedOn or returned — estate-wide, over the index
-    ``schema.prisma`` built for exactly this predicate. Each row carries the two sign-off names,
-    resolved for the page in one query, and its ``readiness`` (B4: completeness, this round's notes,
-    inspectors cleared).
-
-    ``sort``: ``oldest`` / ``newest`` by the tab's own date, or ``complete`` (most complete first).
-    ``cleared``: ``all`` / ``some`` / ``none`` of the assigned inspectors marked "Checked, no
-    corrections" on the current round (C5). Absent, both leave the tab's order and rows unchanged.
-    """
     chosen_sort = review_aids.check_sort(sort)
     wanted = review_aids.check_cleared(cleared)
     where = approvals.queue_where(state, search)
@@ -250,7 +169,6 @@ async def list_reports_to_approve(
 async def read_report_to_approve(
     workshop_id: str, current_user: Any = Depends(require_approving_authority)
 ) -> dict[str, Any]:
-    """One report, read for a decision. 404 for an unknown or deleted workshop."""
     record = await approvals.load_approvable_workshop_or_404(workshop_id)
     return await _read_for_decision(record, current_user)
 
@@ -259,8 +177,6 @@ async def read_report_to_approve(
 async def read_report_media_for_approval(
     workshop_id: str, current_user: Any = Depends(require_approving_authority)
 ) -> dict[str, Any]:
-    """The workshop's photographs, recordings and attachments, signed and read-only (A23) — the
-    inspector's and the supervisor's media read, behind this surface's own loader."""
     await approvals.load_approvable_workshop_or_404(workshop_id)
     return await workshop_media_for_reader(workshop_id, current_user)
 
@@ -269,7 +185,6 @@ async def read_report_media_for_approval(
 async def read_round_snapshot_for_approval(
     workshop_id: str, round: int, _: Any = Depends(require_approving_authority)
 ) -> dict[str, Any]:
-    """The stage data as handed in for ``round`` — what "Changed since round N" compares (C13)."""
     await approvals.load_approvable_workshop_or_404(workshop_id)
     return await review_aids.snapshot_payload(workshop_id, round)
 
@@ -280,15 +195,8 @@ async def generate_report_for_approval(
     payload: ReportGenerateIn,
     current_user: Any = Depends(require_approving_authority),
 ) -> Response:
-    """The report file, rendered exactly as ``POST /design-workshops/{id}/report`` renders it, for an
-    approver who may not open the designer's workshop. With ``record`` it writes the export ledger row
-    a hand-on can then pin, generated by the approver."""
     record = await approvals.load_approvable_workshop_or_404(workshop_id)
     fmt = payload.formats[0]
-    # A22: AN UNCHANGED REPORT IS SERVED AGAIN, NOT REBUILT. The fingerprint covers the header, every
-    # stage row, the workshop's files, its own questions and this request's options; a stored file
-    # built from the same fingerprint in the last fortnight is read back and answered with
-    # `x-report-reused-from`. `fresh` rebuilds regardless. No new ledger row is written for a reuse.
     options = payload.model_dump(exclude={"record", "fresh"})
     fingerprint = await review_aids.report_fingerprint(
         record, fmt=fmt, options=options, viewer=current_user
@@ -321,8 +229,6 @@ async def generate_report_for_approval(
 
 
 async def _render(record: Any, user: Any, payload: ReportGenerateIn) -> tuple[bytes, list[str], Any, str, str]:
-    """``(blob, warnings, page_count, file_name, template_id)`` — the report exactly as the designer's
-    report route renders it."""
     fmt = payload.formats[0]
     data, resolver, load_warnings, template_id = await _report_inputs(
         record.id,
@@ -371,20 +277,17 @@ async def _record_export(
 
 
 async def _store_report(workshop_id: str, export_id: str, fmt: str, blob: bytes) -> None:
-    """Keep the file so an unchanged report can be served again. A failure only costs the reuse."""
     key = review_aids.report_object_key(workshop_id, export_id, fmt)
     try:
         await asyncio.to_thread(s3.put_object_bytes, key, blob, mime_type=_MIME[fmt])
         await db.dwreportexport.update(where={"id": export_id}, data={"storageKey": key})
-    except Exception:  # the download itself has succeeded
+    except Exception:
         logger.warning("could not store report %s for reuse", export_id, exc_info=True)
         return
-    # One stored file per workshop and format: the older ones can never be served again.
     await review_aids.drop_superseded_reports(workshop_id, fmt, export_id)
 
 
 async def _stored_report(workshop_id: str, fingerprint: str) -> Response | None:
-    """The stored file of an identical earlier build, as the download's answer, or None."""
     prior = await review_aids.reusable_export(workshop_id, fingerprint)
     if prior is None:
         return None
@@ -392,7 +295,7 @@ async def _stored_report(workshop_id: str, fingerprint: str) -> Response | None:
         blob = await asyncio.to_thread(
             s3.get_object_bytes, prior.storageKey, max_bytes=review_aids.REUSE_MAX_BYTES
         )
-    except Exception:  # fall back to building it
+    except Exception:
         logger.warning("stored report %s could not be read back", prior.id, exc_info=True)
         return None
     warnings = [line for line in (prior.warnings or "").split("\n") if line.strip()]
@@ -408,14 +311,9 @@ async def _stored_report(workshop_id: str, fingerprint: str) -> Response | None:
     )
 
 
-# --------------------------------------------------------------------------------------
-# The three decisions
-# --------------------------------------------------------------------------------------
-
 
 class _LostTheRace(Exception):
-    """Raised inside a decision's transaction when its compare-and-set matched nothing — which rolls
-    the transaction back before anything was inserted. Caught outside it, to answer."""
+    pass
 
 
 async def _refuse_by_rule_seven(workshop_id: str, user: Any) -> None:
@@ -434,7 +332,6 @@ def _plan_or_422(build: Any) -> Any:
 
 
 async def _apply_in(tx: Any, decision: plans.DecisionPlans) -> None:
-    """One decision's writes inside an open transaction, the guarded update first."""
     written = await tx.designworkshop.update_many(
         where=dict(decision.workshop.where or {}), data=dict(decision.workshop.data)
     )
@@ -448,13 +345,11 @@ async def _apply_in(tx: Any, decision: plans.DecisionPlans) -> None:
 
 
 async def _apply(decision: plans.DecisionPlans) -> None:
-    """The decision's writes, in one transaction, the guarded update first."""
     async with db.tx() as tx:
         await _apply_in(tx, decision)
 
 
 def _parse_read_at(value: str) -> datetime:
-    """The ``updatedAt`` the approver read, or a 422 naming the field. A naive moment is read as UTC."""
     try:
         moment = datetime.fromisoformat(value.strip())
     except ValueError:
@@ -471,11 +366,6 @@ async def approve_report(
     payload: plans.DwApproveIn,
     current_user: Any = Depends(require_approving_authority),
 ) -> dict[str, Any]:
-    """PRE_SUBMISSION -> APPROVED, for exactly the round and the content the approver read.
-
-    403 for rule 7; 422 when the report is not in a state that can be approved; 409 when the round or
-    the read stamp are no longer the report's. Already approved is a 200 with ``alreadyApproved``.
-    """
     record = await approvals.load_approvable_workshop_or_404(workshop_id)
     await _refuse_by_rule_seven(workshop_id, current_user)
     current = _status(record)
@@ -511,7 +401,6 @@ async def approve_report(
             status_code=status.HTTP_409_CONFLICT, detail=plans.CHANGED_AFTER_OPENED
         ) from None
     updated = await approvals.load_approvable_workshop_or_404(workshop_id)
-    # After the transaction, so a rolled-back approval e-mails nobody. Never raises.
     await email_outbox.notify_workshop_designers(
         updated, mailer.REPORT_APPROVED, actor=current_user, extra={"note": (payload.note or "").strip()}
     )
@@ -524,13 +413,6 @@ async def revise_report(
     payload: plans.DwReviseIn,
     current_user: Any = Depends(require_approving_authority),
 ) -> dict[str, Any]:
-    """Back to the designers, with a mandatory sentence: sent back without approval (from
-    Pre-submission), an approval withdrawn (from Approved), or a handed-on report returned (R1).
-
-    The path is ``/revise`` because ``DECISION_EDGES`` and every refusal a header edit gives have
-    named it so since 2026-09-13. The sentence lands in the register the designers work from, as the
-    one that sent the report back, and in the audit row.
-    """
     record = await approvals.load_approvable_workshop_or_404(workshop_id)
     await _refuse_by_rule_seven(workshop_id, current_user)
     current = _status(record)
@@ -559,9 +441,6 @@ async def revise_report(
             status_code=status.HTTP_409_CONFLICT, detail=plans.CHANGED_AFTER_OPENED
         ) from None
     updated = await approvals.load_approvable_workshop_or_404(workshop_id)
-    # THE SAME NOTICE AN INSPECTOR'S SEND-BACK QUEUES, after the transaction so a rolled-back decision
-    # e-mails nobody: the report is back on its designers' desk, with the sentence to act on. Never
-    # raises — the decision stands whether or not the notice is queued. A batch is one e-mail.
     await email_outbox.notify_review_note(
         updated,
         actor=current_user,
@@ -578,14 +457,6 @@ async def hand_on_report(
     payload: plans.DwHandOnIn,
     current_user: Any = Depends(require_approving_authority),
 ) -> dict[str, Any]:
-    """APPROVED -> SUBMITTED: the approved report recorded as handed on to the office.
-
-    Records who, when, to which office (stage 20's "Submitted to", else the Office of the Development
-    Commissioner (Handicrafts)) and — when ``exportId`` names one generated since the approval — which
-    file went. Nothing is sent from here (``/approve-and-hand-on`` is the route that e-mails the office).
-    After it the report is frozen and loses every header edge; only
-    the approving authority's ``/revise`` returns it.
-    """
     record = await approvals.load_approvable_workshop_or_404(workshop_id)
     await _refuse_by_rule_seven(workshop_id, current_user)
     refused = plans.hand_on_refusal(_status(record), handed_on=_handed_on(record))
@@ -621,10 +492,6 @@ async def hand_on_report(
     return await _read_for_decision(updated, current_user)
 
 
-# --------------------------------------------------------------------------------------
-# "Approve and hand on" — the report e-mailed to the office (2026-10-18)
-# --------------------------------------------------------------------------------------
-
 STORAGE_FAILED = "The report could not be stored for sending. Nothing was changed; try again."
 
 
@@ -634,13 +501,6 @@ async def approve_and_hand_on(
     payload: plans.DwApproveAndHandOnIn,
     current_user: Any = Depends(require_approving_authority),
 ) -> dict[str, Any]:
-    """One action: approve (when still waiting), make the report file, hand it on to the office and
-    e-mail the office a link that expires in seven days.
-
-    409 with :data:`report_delivery.NOT_CONFIGURED` when no office addresses are set (or mail is
-    off): the client then offers the ordinary hand-on. The file is generated and stored BEFORE any
-    decision is written, so a storage failure (503) changes nothing.
-    """
     record = await approvals.load_approvable_workshop_or_404(workshop_id)
     await _refuse_by_rule_seven(workshop_id, current_user)
     office = await report_delivery.office_settings()
@@ -697,11 +557,8 @@ async def approve_and_hand_on(
             export_id=export_id,
         )
 
-    _plan_or_422(lambda: hand_on(None))  # refuse a bad note before anything is written
+    _plan_or_422(lambda: hand_on(None))
 
-    # ONE transaction: the approval (when this route makes it), the export row and the hand-on. A
-    # race lost at either step rolls back all three, so a 409 never leaves the report approved but
-    # not handed on; the file already stored is removed again.
     try:
         async with db.tx() as tx:
             if approval is not None:
@@ -726,8 +583,6 @@ async def approve_and_hand_on(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from None
 
     updated = await approvals.load_approvable_workshop_or_404(workshop_id)
-    # The hand-on has committed, so nothing after this turns the answer into a failure: a delivery
-    # that could not be written is said in the answer (``deliveryFailed``) and is re-sent from there.
     delivered = True
     try:
         await report_delivery.send(
@@ -740,7 +595,7 @@ async def approve_and_hand_on(
             office_name=office["officeName"],
             sanction_order_no=await report_delivery.sanction_number(workshop_id),
         )
-    except Exception:  # logged; the committed hand-on still answers 200
+    except Exception:
         delivered = False
         logger.exception("report delivery failed after the hand-on of workshop %s", workshop_id)
     if approval is not None:
@@ -763,7 +618,6 @@ async def approve_and_hand_on(
 
 
 async def _discard_stored(storage_key: str) -> None:
-    """Best-effort removal of a report file whose hand-on rolled back."""
     try:
         await asyncio.to_thread(s3.delete_object, storage_key)
     except Exception:  # noqa: BLE001 - an orphan in the bucket is harmless; the answer is the 409
@@ -774,8 +628,6 @@ async def _discard_stored(storage_key: str) -> None:
 async def resend_delivery(
     workshop_id: str, current_user: Any = Depends(require_approving_authority)
 ) -> dict[str, Any]:
-    """Re-issue the office's link: the old one stops working and a new one, valid for seven days, is
-    e-mailed to the addresses set now. 409 when this report was never e-mailed or none are set."""
     record = await approvals.load_approvable_workshop_or_404(workshop_id)
     await _refuse_by_rule_seven(workshop_id, current_user)
     if not mailer.mail_configured():

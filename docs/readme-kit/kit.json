@@ -1,0 +1,89 @@
+{
+  "hero": {
+    "eyebrow": "AI CoE · IIT Kharagpur · Ministry of Textiles",
+    "name": "Design Prototype Workshop",
+    "titleWrap": 17,
+    "tagline": "Capture every stage of a craft design workshop on a phone or in the browser, hear every interview in English, and leave with the finished report, even where there is no signal.",
+    "chips": ["Next.js 16", "FastAPI", "Kotlin + Compose", "Scribe v2 + Gemini", "Offline-first"],
+    "motifCaption": "warp · weft · record",
+    "label": "Design Prototype Workshop: capture every stage of a craft design workshop, hear every interview in English, and leave with the finished report"
+  },
+  "cards": {
+    "label": "What the portal does: capture, offline, reports, interviews, questionnaires, AI help, data, the Ministry and security",
+    "columns": 3,
+    "items": [
+      { "icon": "smartphone", "tag": "Capture", "title": "Every stage, one form", "body": "The stage set is declared once, as data, and drives the capture form, the completeness gate and the report." },
+      { "icon": "wifi-off", "tag": "Offline", "title": "No signal, no problem", "body": "The Android app records, queues and writes the finished report on the phone, then syncs when it can." },
+      { "icon": "file-text", "tag": "Reports", "title": ".docx and PDF", "body": "One document model renders prose, tables, maps and photographs to Word and PDF, on the server and on the phone." },
+      { "icon": "mic", "tag": "Interviews", "title": "Heard, then read in English", "body": "Scribe v2 writes speaker turns, Gemini 3.8 Flash translates them, and the viewer plays them word by word." },
+      { "icon": "notebook-pen", "tag": "Questionnaires", "title": "One engine, four clients", "body": "Forms, sessions, takes and answers share one engine and one parity registry across both portals." },
+      { "icon": "sparkles", "tag": "AI help", "title": "Ask, draft, quote", "body": "Ask an interview, draft answers from it, make quote cards and grow a craft glossary, inside a monthly budget." },
+      { "icon": "database", "tag": "Data", "title": "Browse and export", "body": "A data browser, Excel and CSV reports, streamed datasets and transcripts in every export." },
+      { "icon": "landmark", "tag": "Ministry", "title": "Plans, orders, inspections", "body": "Sanction orders, the annual plan, inspections, ratings and the dashboard, on the web." },
+      { "icon": "shield-check", "tag": "Security", "title": "Who may do what", "body": "Eleven roles, two-factor sign-in, consent before any send and scoped grants on every route." }
+    ]
+  },
+  "cards:ai": {
+    "label": "The AI suite: transcription, translation, Ask, drafts, quote cards, glossary, measurement and reading, on-device models, and the budget",
+    "columns": 3,
+    "items": [
+      { "icon": "mic", "tag": "Speech", "title": "Scribe v2", "body": "ElevenLabs speech-to-text with speaker turns, word timings and key terms from the craft. USD 0.22 an hour." },
+      { "icon": "languages", "tag": "Language", "title": "Gemini 3.8 Flash", "body": "One structured pass per transcript: English for every turn, a summary, quotes and craft terms." },
+      { "icon": "search", "tag": "Ask", "title": "Ask this interview", "body": "Answers come only from the transcript, with the moments they came from. Otherwise it says so." },
+      { "icon": "pen-tool", "tag": "Draft", "title": "Autodraft and refine", "body": "Draft questionnaire answers from a recording, or refine a transcript, and approve before anything is saved." },
+      { "icon": "camera", "tag": "Vision", "title": "Measure and read", "body": "Grid measurement, photo captions and identity-card OCR, with on-device text recognition on Android." },
+      { "icon": "cpu", "tag": "On device", "title": "Models on the phone", "body": "On-device dictation, sherpa-onnx speech and Gemma 4 on LiteRT, so help works with the radio off." }
+    ]
+  },
+  "pipeline": {
+    "label": "How a workshop flows: capture, sync, transcribe, review, report, archive",
+    "hop": 1.2,
+    "stages": [
+      { "icon": "camera", "title": "Capture", "sub": "Stages, photos, video and voice" },
+      { "icon": "cloud", "title": "Sync", "sub": "Resumable uploads when a signal returns" },
+      { "icon": "languages", "title": "Transcribe", "sub": "Scribe v2, then English by Gemini" },
+      { "icon": "badge-check", "title": "Review", "sub": "Rounds, ratings and clearance" },
+      { "icon": "file-text", "title": "Report", "sub": "Word and PDF from one model" },
+      { "icon": "landmark", "title": "Archive", "sub": "Exports for the Ministry" }
+    ]
+  },
+  "pipeline:transcript": {
+    "label": "How a recording becomes an English transcript: upload, consent, Scribe v2, turns, Gemini 3.8 Flash, the viewer",
+    "hop": 1.2,
+    "stages": [
+      { "icon": "send", "title": "Upload", "sub": "Ticked per file, or an admin switch" },
+      { "icon": "shield-check", "title": "Consent", "sub": "Re-read before every send" },
+      { "icon": "mic", "title": "Scribe v2", "sub": "Words, speakers, timings" },
+      { "icon": "layers", "title": "Turns", "sub": "Versioned, editable, cited" },
+      { "icon": "sparkles", "title": "Gemini", "sub": "English, summary, quotes, terms" },
+      { "icon": "book-open", "title": "Read", "sub": "Karaoke, reading mode, exports" }
+    ]
+  },
+  "stats": {
+    "label": "At a glance: three capture tiers, two clients on one API, two report formats, and the report built offline",
+    "tiles": [
+      { "icon": "layers", "kicker": "Tiers", "value": "3", "label": "Basic, Standard and Advanced" },
+      { "icon": "smartphone", "kicker": "Clients", "value": "2", "label": "Web and Android, one API" },
+      { "icon": "file-text", "kicker": "Formats", "value": "2", "label": "Word and PDF reports" },
+      { "icon": "wifi-off", "kicker": "Offline", "value": "100", "unit": "%", "label": "Report built on the phone" }
+    ]
+  },
+  "timeline": {
+    "label": "Releases: 0.0.3 one questionnaire engine, 0.0.4 the transcript pipeline, 0.0.6 the viewer, 0.0.7 latest runtimes, 0.0.9 old transcripts and the Data page, 0.0.10 video and the upload choice",
+    "items": [
+      { "date": "23 Oct", "title": "0.0.3", "sub": "One questionnaire engine" },
+      { "date": "31 Oct", "title": "0.0.4", "sub": "Scribe v2 and Gemini" },
+      { "date": "1 Nov", "title": "0.0.6", "sub": "Viewer, marks, reading mode" },
+      { "date": "1 Nov", "title": "0.0.7", "sub": "Python 3.15, Node 26" },
+      { "date": "3 Nov", "title": "0.0.9", "sub": "Old transcripts, Data page" },
+      { "date": "Nov", "title": "0.0.10", "sub": "Video, upload choice", "now": true }
+    ]
+  },
+  "divider": { "label": "Section divider" },
+  "footer": {
+    "title": "Made for the people who make things by hand.",
+    "sub": "AI CoE · IIT Kharagpur · Ministry of Textiles",
+    "label": "Made for the people who make things by hand. AI CoE, IIT Kharagpur, Ministry of Textiles."
+  },
+  "icons": "all"
+}

@@ -1,14 +1,3 @@
-"""C14 and C15 — an actionable Ministry dashboard, and its masked background stage-data export.
-
-C14 (owner decision, 2026-10-17): clickable cards (awaiting approval, returned, overdue, setup
-incomplete), a state breakdown and the sanctioned rupees, each counted over the caller's scope and
-each narrowing the SAME list. C15: one spreadsheet with a sheet per record type, identity numbers
-masked, built by the queue worker.
-
-The pure half needs no database; the rest follows ``tests/test_sanction_orders.py``'s convention —
-database calls only in private ``asyncio.run`` loops while no ``TestClient`` is alive.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -31,10 +20,6 @@ from prisma import Json
 
 ROUTES = Path(__file__).resolve().parents[1] / "app" / "api" / "routes"
 
-
-# --------------------------------------------------------------------------------------
-# Pure
-# --------------------------------------------------------------------------------------
 
 
 def test_every_attention_word_but_setup_is_a_query() -> None:
@@ -93,7 +78,6 @@ def test_the_workbook_masks_identity_numbers_and_withholds_custom_questions() ->
 
 
 def test_the_workbook_built_in_batches_matches_the_one_built_at_once() -> None:
-    """The job reads and flattens one batch of workshops at a time; the file must not change."""
     first = SimpleNamespace(id="w1", title="Ajrakh", state="Gujarat", status="IN_PROGRESS")
     second = SimpleNamespace(id="w2", title="Ikat", state="Odisha", status="IN_PROGRESS")
     pairs = [
@@ -118,7 +102,6 @@ def test_the_workbook_built_in_batches_matches_the_one_built_at_once() -> None:
 
 
 def test_the_job_list_never_reads_the_stored_file_and_the_build_is_off_the_loop() -> None:
-    """The list is polled while a job runs; each stored workbook is megabytes."""
     assert '"content"' not in exports._LIST_SQL
     service = (ROUTES.parents[1] / "services" / "ministry_export.py").read_text(encoding="utf-8")
     body = service[service.index("async def run_export(") : service.index("async def recover_and_purge(")]
@@ -158,10 +141,6 @@ def test_the_export_routes_are_their_own_module_and_the_register_stays_read_only
     export_source = (ROUTES / "ministry_stage_data_exports.py").read_text(encoding="utf-8")
     assert export_source.count("Depends(require_ministry_dashboard_reader)") == 3
 
-
-# --------------------------------------------------------------------------------------
-# Against Postgres
-# --------------------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
@@ -319,7 +298,6 @@ def test_each_card_opens_the_list_it_counted(world: Any) -> None:
     assert _titles(world["list_returned"]) == {f"C14 returned {stamp}"}
     assert _titles(world["list_overdue"]) == {f"C14 overdue {stamp}"}
     assert _titles(world["list_state"]) == {f"C14 returned {stamp}", f"C14 overdue {stamp}"}
-    # Neither open workshop has filled Workshop setup; the handed-in one is not "open".
     assert _titles(world["list_setup"]) == {f"C14 returned {stamp}", f"C14 overdue {stamp}"}
 
 
@@ -339,7 +317,6 @@ def test_the_export_is_built_in_the_background_and_masked(world: Any) -> None:
     )
     assert item["status"] == exports.READY, item
     assert item["workshopCount"] == 1
-    # Read without the file (a raw select): the dates and the filters still come through.
     assert item["createdAt"] and item["finishedAt"] and item["expiresAt"]
     assert item["filters"].get("attention") == "overdue"
     assert world["download"].status_code == 200, world["download"].text

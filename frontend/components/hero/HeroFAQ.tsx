@@ -8,43 +8,8 @@ import { TIER_COUNT_WORD } from "@/components/hero/AccessLadder";
 import { useHeroReducedMotion } from "@/components/hero/useHeroMotion";
 import { STAGE_COUNT_WORD_LOWER } from "@/components/hero/workshopArc";
 
-/**
- * The tier count, mid-sentence.
- *
- * TWO OF THESE ANSWERS TYPED "eight-tier" BY HAND while the badge at the top of the page and the
- * ladder's own heading interpolated the derived constant — so a ninth role would have moved two of
- * the four and left this section contradicting the section it is describing, on one page, to one
- * reader. That is the identical defect `AccessLadder` carries a paragraph about and the identical
- * one `permissions.ts:220` records costing twenty-two hand-kept copies of the ladder a correction
- * when INSPECTOR landed. The constant already existed and was already exported for exactly this.
- *
- * `.toLowerCase()` rather than a second export, matching what `AccessLadder.tsx:168` does for its
- * own `aria-label`: the word is capitalised where it opens a heading and lower-cased where it sits
- * inside a sentence, and one constant with a call site's own casing beats two constants that can
- * disagree.
- */
 const TIER_COUNT_WORD_LOWER = TIER_COUNT_WORD.toLowerCase();
 
-/**
- * THE THREE WORKSHOP ANSWERS ARE NEW, and they are here because this list is where a reader goes
- * with the objection a marketing section cannot answer without becoming defensive. All three were
- * checked against the code rather than written from the brief:
- *
- *  - who may start one: `DESIGN_WORKSHOP_CREATOR_ROLES` is `["ADMIN", "MASTER_ADMIN"]` and
- *    `DESIGN_WORKSHOP_ROLES` is `["DESIGNER", "ADMIN", "MASTER_ADMIN"]` in `lib/permissions.ts`,
- *    mirroring `deps.py`. The wording follows `DESIGN_WORKSHOP_CREATE_REFUSAL` in that file, which
- *    is the sentence a designer actually reads when they try — a FAQ that answered this differently
- *    from the product would be the more expensive kind of wrong.
- *  - what "offline" means for a workshop: `lib/designWorkshopStore.ts` (drafts and media blobs in
- *    IndexedDB, "all 22 stages … in a shape the app can READ BACK") and `WorkshopDraftStore.kt`;
- *    the report half is `android/…/report/ReportExport.kt` ("entirely offline") against the browser,
- *    whose preview and download are both API calls.
- *  - what refuses a submit: `api/routes/design_workshops.py`'s `submit=true` refuses ONE stage, and
- *    `app/(protected)/design-workshops/[id]/readiness/page.tsx` states in as many words that
- *    unfilled Basic fields "do NOT refuse the workshop's status".
- *
- * The existing eight answers are untouched.
- */
 const FAQS = [
   {
     q: "Who can sign in?",
@@ -83,36 +48,6 @@ const FAQS = [
     a: "No. You submit when you're ready; a readiness screen lists what's still missing, even offline."
   },
   {
-    // AMENDED, and the amendment is a correction rather than an addition. The last sentence read
-    // "The web portal complements it for review, browsing, and administration", which implied the
-    // browser needs a connection. It has not since `lib/designWorkshopStore.ts` landed: drafts and
-    // media blobs live in IndexedDB and all the stages render from a cached registry. Leaving the
-    // old sentence beside a new section about offline workshops would have made the page contradict
-    // itself in two places a reader can reach from the same scroll.
-    /*
-      EXTENDED, and every clause is narrower than the obvious version of itself.
-
-      "EDITS AS WELL AS NEW RECORDS" — `lib/offline.ts` types its queue `"POST" | "PATCH"`, so a
-      correction made with no signal is banked like a create. The trade is stated because that file
-      states it: an offline edit replays the whole record, so a colleague's later change to the same
-      row is overwritten. Naming the cost is the difference between a feature and a surprise.
-
-      "THE QUESTIONNAIRE ROW, NOT ITS QUESTIONS" — `questionnaires/page.tsx:201` banks the create
-      through `saveOrQueue`, and its own comment is emphatic that this is a decision rather than a
-      first instalment: a section and a question are separate creates that need the server-minted id
-      this row does not have yet. "The form exists, named, attached to its workshop" is that comment
-      near enough verbatim. Writing "create a questionnaire offline" flat would promise the tree.
-
-      "OPEN … ANSWERING IS STILL REFUSED" — `lib/questionnaireFormCache.ts` is a READ cache and says
-      so in capitals ("DO NOT ADD A WRITE QUEUE TO IT"). The refusal to save answers offline is
-      deliberate and load-bearing: a question can be retired between opening the screen and pressing
-      Save, so a queued batch would be either refused later — losing a sitting the designer believed
-      was recorded — or re-attached to whatever wording replaced it, which fabricates evidence.
-
-      "REFUSED ENTRIES ARE LISTED WITH THEIR REASONS" — the handset's `OfflineOutboxTray.kt`. Before
-      it, a refusal was a one-shot toast, `syncOutbox` skipped that entry forever, and the banner
-      still said "uploading": a permanent dead end that looked like progress.
-    */
     q: "Does it work offline?",
     a: "Yes. The Android app and the web portal both record workshops and build reports offline, and sync when you're back online. Recording questionnaire answers needs a connection."
   },
@@ -122,10 +57,6 @@ const FAQS = [
   }
 ];
 
-/**
- * Marketing FAQ — native <details>/<summary> accordion styled to the tokens,
- * so it works with zero JavaScript and no extra dependencies.
- */
 export default function HeroFAQ() {
   const reduce = useHeroReducedMotion();
 

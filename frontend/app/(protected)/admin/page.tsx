@@ -64,31 +64,11 @@ type Tile = {
   href: string;
   icon: LucideIcon;
   visible?: boolean;
-  /**
-   * A server-derived number worth acting on, drawn on the tile itself.
-   *
-   * THE FIRST ONE OF THESE IN THE HUB, and it exists because this product has no other way to tell
-   * an administrator that something is waiting for them: there is no email sender and no push
-   * transport anywhere in the codebase, so a notification has to be a number on a screen they
-   * already open. Absent (null) means either "nothing is waiting" or "we could not ask" — both of
-   * which must render as no badge rather than as a zero, because a confident "0" over a queue we
-   * failed to read is a lie an admin would act on by not opening it.
-   */
   badge?: number | null;
 };
 
-/** /media/orphans returns the whole recovery list, so the table pages client-side. */
 const PAGE_SIZE = 20;
 
-/**
- * /admin — the hub, ADMIN and MASTER ADMIN.
- *
- * Two gates sit above this page and neither lives here. `require_admin` is mirrored by ROUTE_GUARDS
- * and by the `permitted` check below, and admin view is mirrored by ADMIN_CHROME_ROUTES: the whole
- * hub is admin chrome, so an admin browsing with admin view off gets AppShell's "hidden while admin
- * view is off" panel and this component never mounts — no /media/orphans call, no flash of tiles.
- * Both gates keep their role check, so the toggle can only ever subtract.
- */
 export default function AdminHubPage() {
   const { user, loading: authLoading } = useAuth();
   const permitted = isAdmin(user);
@@ -97,17 +77,8 @@ export default function AdminHubPage() {
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * How many people are waiting to be let into the application — the tile below wears it as a badge.
-   *
-   * Shared with the nav's own badge through one module-level store, so the two cannot show different
-   * numbers; and NOT fetched at all for an account that could not read it, because the endpoint is
-   * `require_access_manager` and a guaranteed 403 per page load is a request spent to be refused.
-   * Its failure is silent: a missing badge is a nicety lost, not a screen broken.
-   */
   const pendingAccess = usePendingAccessCount(permitted && canManageAccessRoster(user));
 
-  /** Likely-duplicate artisans waiting for a decision. No badge when it cannot be read. */
   const [openDuplicates, setOpenDuplicates] = useState<number | null>(null);
   useEffect(() => {
     if (authLoading || !permitted) return;
@@ -122,14 +93,6 @@ export default function AdminHubPage() {
     };
   }, [authLoading, permitted]);
 
-  /**
-   * A RECOVERED FILE OF A WORKSHOP THE READER INSPECTS OR SUPERVISES IS READ-ONLY TO THEM, a relink
-   * included: the server refuses a post holder a relink out of that workshop or into it
-   * (2026-10-09). So a row whose own columns name such a workshop (`mediaWorkshopIds`) has its relink
-   * control held, with a word on the row and the server's sentence once above the table. Every reader
-   * of this hub may appoint, so the answer is asked of everyone who sees it; a relink refused anyway
-   * prints the server's sentence where it was attempted.
-   */
   const heldFor = useHeldPostRefusals((orphans ?? []).flatMap(mediaWorkshopIds));
   const heldNoticeId = useId();
 
@@ -195,26 +158,12 @@ export default function AdminHubPage() {
       icon: AudioLines
     },
     {
-      // The other half of the design workshop's soft delete. The delete confirmation promises that
-      // an admin can restore a deleted workshop; until the list route grew `deletedOnly` nothing on
-      // any surface would name one, so the promise pointed at a screen that did not exist.
       label: "Deleted workshops",
       description: "Restore deleted workshops.",
       href: "#deleted-workshops",
-      // NOT Trash2, which is the bin every delete control in this app wears, the danger-tone confirm
-      // dialog included: the tile leads to the screen that UNDOES a deletion, and a bin on it reads
-      // as "delete something". Undo2 is the same mark the Restore button in the card itself carries.
       icon: Undo2
     },
     {
-      // THIS TILE POINTED AT A LIST THIS ACCOUNT COULD NOT READ, for as long as it has existed. It
-      // is ungated (every ADMIN sees it) and `/feedback`'s only list was `require_master_admin` on
-      // the server and `isMasterAdmin` on the client, so an admin who followed it arrived at the
-      // feedback FORM with no inbox under it and no explanation. The grievance register behind it
-      // is `require_admin`, which is what finally makes the tile true — and the description now
-      // names what an admin will actually be able to act on there, rather than promising "the
-      // feedback users sent" and delivering the half of it they still cannot see (the satisfaction
-      // ratings remain master-admin, deliberately; see routes/feedback.py).
       label: "User feedback",
       description: "Read and answer feedback.",
       href: "/feedback",
@@ -227,10 +176,6 @@ export default function AdminHubPage() {
       icon: Wrench
     },
     {
-      // Replaces the old "Workshop assignments" tile, which pointed at /workshops and only told an
-      // admin to go and open a record. Everything it hinted at — the request queue, each roster and
-      // its access levels — is done properly on /workshop-access/manage, the tile below. Two doors
-      // onto one job, one of which was a signpost rather than a page, is worse than one door.
       label: "Task assignment",
       description: "Assign and track documentation work.",
       href: "/settings/tasks",
@@ -239,17 +184,11 @@ export default function AdminHubPage() {
     {
       label: "Workshop access",
       description: "Requests, rosters and access levels.",
-      // Straight to the console: this hub is admin-only, so the fork at /workshop-access would ask
-      // an admin a question it already knows the answer to.
       href: "/workshop-access/manage",
       icon: ShieldCheck
     },
     {
       label: "Cross-workshop analytics",
-      // Says what the page COMPARES rather than promising numbers, because on an archive whose
-      // follow-up is still thin it mostly reports what it cannot yet say — and a tile that
-      // promised "adoption rates" would send an admin looking for a figure the page withholds
-      // on purpose.
       description: "Compare outcomes across workshops.",
       href: "/admin/analytics",
       icon: ChartNoAxesCombined
@@ -262,32 +201,14 @@ export default function AdminHubPage() {
     },
     {
       label: "Who may sign in",
-      // Says what the LIST is, not what the screen does — an admin who reads this as "user
-      // management" will go to /users and wonder why the person they let in still cannot get in.
-      // The pending count rides on the tile because this is the surface an admin opens anyway;
-      // see `usePendingAccessCount` for why there is no timer behind it.
       description:
         "Who may sign in, and who is waiting.",
       href: "/admin/access",
-      // NOT ShieldCheck — "Workshop access" above already wears it, and two shields on one grid of
-      // twelve tiles is how an admin ends up on the wrong screen twice before reading the labels.
       icon: ShieldUser,
       visible: canManageAccessRoster(user),
       badge: pendingAccess?.pending || null
     },
     {
-      // THE VOCABULARY BEHIND THE FIRST OF THE TWO DROPDOWNS ON EVERY RECORD FORM.
-      //
-      // A TILE AND DELIBERATELY NO NAV ENTRY, which is the same ruling the designer roster above
-      // gets and for the same reason: `DynamicIslandNav`'s note is that nav entries are for
-      // DESTINATIONS, not for configuration. An admin comes here twice a year to rename a programme
-      // or add one; a researcher never comes here at all and meets the result of it on every form.
-      //
-      // NO NEW `ROUTE_GUARDS` ROW EITHER, and that is argued rather than skipped: `routeMatches`
-      // compares whole segments, so the `/admin` row (`isAdmin`, mirroring `require_admin`) already
-      // covers this path, and this route's SERVER gate IS `require_admin` — the identical predicate
-      // that row mirrors. /admin/analytics, /admin/designers and /admin/access carry their own rows
-      // only because their server gates are different predicates that could drift from it.
       label: "Types of workshop",
       description:
         "The “Type of workshop” options.",
@@ -297,9 +218,6 @@ export default function AdminHubPage() {
     },
     {
       label: "Designer roster",
-      // Says what the roster IS rather than what the screen does, because the thing admins get
-      // wrong about it is thinking it is a view of the Designer role. It is not: the role says what
-      // somebody may do, the roster says whether the institution still recognises them at all.
       description: "Empanel, suspend and restore designers.",
       href: "/admin/designers",
       icon: BadgeCheck,
@@ -307,20 +225,10 @@ export default function AdminHubPage() {
     },
     {
       label: "Annual plan",
-      // Says what the DIRECTORY is rather than what the screen does, because the thing an admin
-      // gets wrong about it is reading it as a list of workshops. It is a list of INTENTIONS: two
-      // hundred to three hundred rows a year, none of which is a workshop until somebody opens it.
       description:
         "This year's planned workshops. Upload the sheet; open workshops from it.",
       href: "/annual-plan",
-      // NOT ClipboardList ("Craft" above wears it) and not FileSpreadsheet — the icon-collision
-      // note on "Who may sign in" records what two identical icons on one grid of twelve cost.
       icon: CalendarRange,
-      // THE HUB ITSELF IS `isAdmin` (see `permitted` above), so this tile is only ever DRAWN for an
-      // ADMIN or the MASTER ADMIN — a ministry admin never reaches this page and finds the
-      // directory through the nav entry instead. It is gated anyway, and the predicate is the
-      // route's own: the day the floor moves, the tile and the guard move together instead of the
-      // tile outliving the rule it was written under.
       visible: canManageAnnualPlan(user)
     },
     {
@@ -328,29 +236,16 @@ export default function AdminHubPage() {
       description: "Monthly Excel and PDF packs per scheme, and who receives them.",
       href: "/ministry-exports",
       icon: FileArchive,
-      // Hidden while MINISTRY_EXPORTS_ENABLED is off, as the nav entry and the ministry dashboard's
-      // header link are; the predicate is the route's own.
       visible: canManageMinistryExports(user) && ministryExportsEnabled(user)
     },
     {
       label: "API keys",
-      // Admin-visible because the transcription provider ranking lives behind this tile; the key
-      // list itself is still master-admin-only once the page opens.
       description: "Rank transcription providers and manage keys.",
       href: "/settings/api-keys",
       icon: KeyRound,
       visible: isAdmin(user)
     },
     {
-      // This hub had a tile for every other admin destination except this one — the seven others
-      // all appeared here, and `/settings/usage` (wired correctly into permissions.ts,
-      // AdminViewProvider and /settings itself the same day this landed) did not, which left an
-      // admin on THIS hub with no way to discover it short of already knowing about /settings.
-      // NOT "Analytics": that name is already `/admin/analytics`, which compares CRAFT OUTCOMES
-      // across workshops, while this page watches PEOPLE — which screens are reached, how often, how
-      // fast, how often broken. `usage.py`'s own module docstring keeps the two names apart for the
-      // same reason. `isAdmin` mirrors `require_usage_reader` (Admin and above) the same way the
-      // other gated tiles on this hub mirror their own routes' server-side checks.
       label: "Usage",
       description: "Screen usage, speed and errors.",
       href: "/settings/usage",
@@ -388,11 +283,6 @@ export default function AdminHubPage() {
                 <div className="grid h-10 w-10 place-items-center rounded-md bg-purple-800">
                   <tile.icon className="h-5 w-5 text-white" aria-hidden />
                 </div>
-                {/*
-                  The number is never alone. "3" in a corner is decoration an admin learns to ignore;
-                  the visible text says what the three ARE, and the sr-only half says it again for a
-                  screen reader that would otherwise announce a bare digit inside a link.
-                */}
                 {tile.badge ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
                     {tile.badge}
@@ -407,7 +297,6 @@ export default function AdminHubPage() {
           ))}
       </div>
 
-      {/* This month's transcription spend against the portal's budget (shared transcript tree). */}
       <div className="mt-6">
         <BudgetMeterCard />
       </div>
@@ -465,8 +354,6 @@ export default function AdminHubPage() {
                               Open
                             </a>
                           ) : null}
-                          {/* Held, not hidden: the file can be relinked — by somebody who holds no post
-                              on its workshop. Opening it is a read and stays live. */}
                           {writesHeld(hold) ? (
                             <button
                               type="button"
@@ -500,12 +387,6 @@ export default function AdminHubPage() {
         ) : null}
       </section>
 
-      {/*
-        Below the recovered recordings and not beside them: both are "something was deleted and the
-        pieces are still here", and an admin who has just deleted a workshop by mistake reaches this
-        hub from the tile above rather than by scrolling. It owns its own fetch, its own page and its
-        own error, so a failure in one recovery panel cannot blank the other.
-      */}
       <DeletedWorkshopsCard />
     </>
   );

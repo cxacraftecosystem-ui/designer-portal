@@ -10,58 +10,6 @@ import java.time.Instant
 import java.time.OffsetDateTime
 import java.time.temporal.ChronoUnit
 
-/**
- * THE INSPECTOR'S NOTE ON THE HANDSET: correction suggestions, the send-back, the review queue, and
- * the copy of an inspection kept on the phone so the work goes on without signal.
- *
- * ── WHAT THE SERVER ALREADY OFFERED, AND THE HANDSET NOW USES ────────────────────────────────────
- *
- * `POST /design-workshop-inspections/{id}/feedback` files one suggestion and moves nothing;
- * `POST /design-workshop-inspections/{id}/send-back` files one and moves the report to Needs revision.
- * Both take a `recordedAt` — the DEVICE's own moment — precisely so a note written in a courtyard can
- * be sent a fortnight later and still say when it was written. Both answer with the register as it now
- * stands. Nothing about either route was widened for this file: the body is the web's body, the
- * permission is the server's `require_inspector`, and the round is copied off the workshop by the
- * server and never sent.
- *
- * ── THE CONFLICT RULES, AND WHY THEY ARE STRICTER ON A QUEUE THAN IN A BROWSER ───────────────────
- *
- * In a browser the note is filed the moment it is written, so the report it talks about is the report
- * on screen. A queued note is filed LATER, and in between the report may have moved on. So before a
- * queued note leaves, the workshop is read again and [dwInspectionNoteCheck] holds it back, with the
- * reason in words, when:
- *
- *  1. the report is no longer under review (it was withdrawn, or approved) — the server would refuse
- *     it with the same sentence the web shows, and the check says so before spending the request; or
- *  2. the report was handed in again since the note was written — the server would ACCEPT the note,
- *     but against a round its author has not read, so it is held for the inspector to re-file on
- *     purpose rather than landing on somebody's desk as a comment on work that has since changed.
- *
- * A second officer's send-back on a report already sent back in the SAME round is not a conflict: the
- * server takes it as a 200 and a row, exactly as it does from the web, and so does this queue.
- *
- * Whatever the server still refuses ([dwInspectionSendOutcome]) is shown plainly beside the note, and
- * NOTHING IS DELETED BY A REFUSAL. The note stays on the phone until the inspector re-files it, puts it
- * back in the box, or discards it themselves.
- *
- * ── A LOST ANSWER DOES NOT FILE THE NOTE TWICE ───────────────────────────────────────────────────
- *
- * The routes carry no idempotency key, so a request that landed while its answer was lost would be
- * re-sent. [dwInspectionNoteAlreadyFiled] closes that: the register is read before every send, and a
- * row by this account with the same text and the same device moment IS this note.
- *
- * ── THE COPY KEPT ON THE PHONE ───────────────────────────────────────────────────────────────────
- *
- * The last read of each workshop under inspection, and the last page of the list, are kept per
- * account. Two things stop that copy outliving the access it was read under: a read that answers "not
- * open to you" deletes it at once, and a copy written for one account is never shown to another.
- */
-
-// --------------------------------------------------------------------------------------
-// The wire
-// --------------------------------------------------------------------------------------
-
-/** The body of both write routes — the web's `{note, stageKey}` plus the device's own moment. */
 @Serializable
 data class DwInspectionFeedbackBody(
     val note: String,
@@ -70,13 +18,6 @@ data class DwInspectionFeedbackBody(
     val recordedAt: String? = null,
 )
 
-/**
- * What both write routes answer: the workshop header plus the register as the server now holds it.
- *
- * Its own type rather than [DwInspectionDetailDto], because the answer carries no stages and no
- * completeness — decoding it into the read's type and adopting it whole would blank every stage on
- * screen. [DwInspectionDetailDto.withFeedbackAnswer] takes exactly the keys this answer is about.
- */
 @Serializable
 data class DwInspectionFeedbackAnswerDto(
     val id: String = "",
@@ -88,11 +29,9 @@ data class DwInspectionFeedbackAnswerDto(
     val inspectionFeedback: List<DwInspectionFeedbackDto> = emptyList(),
     val inspectionFeedbackTruncated: Boolean = false,
     val mayRecordFeedback: Boolean = false,
-    /** Absent from an older server, which also has no verdicts: null. */
     val myClearedAt: String? = null,
 )
 
-/** The read, with the register and the header replaced by what a write just answered. */
 fun DwInspectionDetailDto.withFeedbackAnswer(answer: DwInspectionFeedbackAnswerDto): DwInspectionDetailDto =
     copy(
         status = answer.status.ifBlank { status },
@@ -106,42 +45,24 @@ fun DwInspectionDetailDto.withFeedbackAnswer(answer: DwInspectionFeedbackAnswerD
         myClearedAt = answer.myClearedAt,
     )
 
-// --------------------------------------------------------------------------------------
-// "Checked, no corrections" (C5, 2026-10-17) — the web's verdict, on the handset
-// --------------------------------------------------------------------------------------
-
-/** The switch's label, word for word the web's. */
 const val DW_CLEARANCE_LABEL = "Checked, no corrections"
 
-/**
- * Whether this inspector may NOT mark the round cleared: they have filed notes on it. The server
- * refuses it then (a note and "no corrections" cannot both stand); already cleared stays switchable
- * so it can be taken back.
- */
 fun dwClearanceBlocked(record: DwInspectionDetailDto, userId: String?): Boolean =
     record.myClearedAt == null &&
         !userId.isNullOrBlank() &&
         record.inspectionFeedback.any { it.actorId == userId && it.round == record.submissionRound }
 
-/** The line under the switch. */
 fun dwClearanceDescription(record: DwInspectionDetailDto, userId: String?): String =
     if (dwClearanceBlocked(record, userId)) "You've filed notes on this round." else "Shown to the approving authority."
 
-/**
- * The switch's status line, "Since 17 Oct 2026" — the web's `Since ${formatDate(...)}`. A stamp this
- * build cannot read prints nothing rather than raw ISO.
- */
 fun dwClearanceStatus(clearedAt: String?): String? = usageDay(clearedAt)?.let { "Since $it" }
 
-/** The server's `MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS`. Over it, the note is refused. */
 const val DW_INSPECTION_NOTE_MAX = 4000
 
-/** `UNDER_REVIEW` on the server: the only two states in which a suggestion may be filed. */
 val DW_UNDER_REVIEW_STATUSES: Set<String> = setOf("PRE_SUBMISSION", "NEEDS_REVISION")
 
 fun dwIsUnderReview(status: String?): Boolean = status?.trim()?.uppercase() in DW_UNDER_REVIEW_STATUSES
 
-/** How each status is spoken in a sentence — the server's `_LABELS`, word for word. */
 fun dwReviewStatusLabel(status: String?): String = when (status?.trim()?.uppercase()) {
     "DRAFT" -> "a draft"
     "IN_PROGRESS" -> "in progress"
@@ -154,14 +75,9 @@ fun dwReviewStatusLabel(status: String?): String = when (status?.trim()?.upperca
     else -> "in a state this app does not recognise"
 }
 
-/**
- * The refusal the server gives a note on a report that is not under review — the web prints the same
- * sentence before the press, and so does this app.
- */
 const val DW_NOT_UNDER_REVIEW_SENTENCE =
     "Not handed in for inspection yet."
 
-/** One round of the register, newest round first; rows keep the server's newest-first order. */
 data class DwFeedbackRound(val round: Int, val rows: List<DwInspectionFeedbackDto>)
 
 fun dwFeedbackRounds(rows: List<DwInspectionFeedbackDto>): List<DwFeedbackRound> =
@@ -169,26 +85,12 @@ fun dwFeedbackRounds(rows: List<DwInspectionFeedbackDto>): List<DwFeedbackRound>
         .toSortedMap(compareByDescending { it })
         .map { (round, inRound) -> DwFeedbackRound(round, inRound) }
 
-/** Who filed a row. Never a guess: a blank name is said as one. */
 fun dwFeedbackAuthor(row: DwInspectionFeedbackDto): String =
     row.actorName?.trim()?.takeIf { it.isNotEmpty() } ?: "An officer no longer named"
 
-// --------------------------------------------------------------------------------------
-// The queued note
-// --------------------------------------------------------------------------------------
-
-/** Two acts and never one with a flag — the server's own rule, "one button per status". */
 @Serializable
 enum class DwInspectionNoteKind { SUGGESTION, SEND_BACK }
 
-/**
- * A correction suggestion, or a send-back, written on this phone and not yet on the record.
- *
- * @property draftedRound / [draftedStatus] the report as the inspector READ it when they wrote this —
- *   what [dwInspectionNoteCheck] compares the workshop against before the note leaves.
- * @property held why the note was held back or refused, in words; null while it is waiting to go.
- *   A held note is never retried on its own and never deleted by anything but its author.
- */
 @Serializable
 data class DwQueuedInspectionNote(
     val id: String,
@@ -210,7 +112,6 @@ data class DwQueuedInspectionNote(
         DwInspectionFeedbackBody(note = note.trim(), stageKey = stageKey, recordedAt = recordedAt)
 }
 
-/** What the box will accept, or the sentence that says why not. Null means it may be queued. */
 fun dwInspectionNoteProblem(note: String): String? {
     val text = note.trim()
     return when {
@@ -221,16 +122,11 @@ fun dwInspectionNoteProblem(note: String): String? {
     }
 }
 
-/** May a queued note go now, or must it be held for its author? */
 sealed interface DwInspectionNoteCheck {
     data object Send : DwInspectionNoteCheck
     data class Hold(val sentence: String) : DwInspectionNoteCheck
 }
 
-/**
- * THE CONFLICT RULE, checked against the workshop as it stands NOW, before a queued note leaves.
- * See the file header for why each arm exists.
- */
 fun dwInspectionNoteCheck(
     note: DwQueuedInspectionNote,
     currentStatus: String,
@@ -250,25 +146,12 @@ fun dwInspectionNoteCheck(
     return DwInspectionNoteCheck.Send
 }
 
-/** What one send attempt came to. */
 sealed interface DwInspectionSendOutcome {
-    /** On the record. */
     data object Sent : DwInspectionSendOutcome
-    /** Not answered, or not answered in a way anybody can act on: the note stays queued as it is. */
     data object Wait : DwInspectionSendOutcome
-    /** A final answer. The note is kept, held, with this sentence beside it. */
     data class Refused(val sentence: String) : DwInspectionSendOutcome
 }
 
-/**
- * A send's failure, sorted into "try again later" and "tell the inspector now".
- *
- * NO SIGNAL, A SIGNED-OUT PHONE AND A FAULT ON THE FAR SIDE ALL WAIT: none of them is an answer about
- * the note, and each clears on its own. Everything else the server said is final and is shown.
- *
- * @param status the HTTP status, or null when nothing answered.
- * @param said the server's own sentence, already unwrapped, or null.
- */
 fun dwInspectionSendOutcome(
     status: Int?,
     said: String?,
@@ -296,12 +179,6 @@ fun dwInspectionSendOutcome(
     }
 }
 
-/**
- * Is [note] already on the record — sent once, with its answer lost on the way back?
- *
- * Matched on this account, the same text and the same DEVICE moment. The moment is compared as an
- * instant to the millisecond, because the server re-spells it (`…Z` goes out, `…+00:00` comes back).
- */
 fun dwInspectionNoteAlreadyFiled(
     note: DwQueuedInspectionNote,
     register: List<DwInspectionFeedbackDto>,
@@ -323,10 +200,8 @@ private fun dwInstantOrNull(text: String?): Instant? {
         ?.truncatedTo(ChronoUnit.MILLIS)
 }
 
-/** Now, as the device's own moment, to the millisecond and in UTC — what `recordedAt` carries. */
 fun dwInspectionNow(): String = Instant.now().truncatedTo(ChronoUnit.MILLIS).toString()
 
-/** The sentence under a note that is waiting to go. */
 fun dwQueuedNoteSentence(note: DwQueuedInspectionNote): String =
     if (note.kind == DwInspectionNoteKind.SEND_BACK) {
         "Queued. Sends back to the designers once online, if the round hasn't changed."
@@ -334,17 +209,6 @@ fun dwQueuedNoteSentence(note: DwQueuedInspectionNote): String =
         "Queued. Files once online, if the round hasn't changed."
     }
 
-// --------------------------------------------------------------------------------------
-// The review queue
-// --------------------------------------------------------------------------------------
-
-/**
- * The workshops assigned to this inspector, sorted by whose move it is.
- *
- * [awaitingYou] is Pre-submission: handed in and waiting for an officer's decision. [withDesigners] is
- * Needs revision: sent back and waiting for its designers. Everything else is [notHandedIn] — counted,
- * because a queue that silently drops a workshop reads as one nobody assigned.
- */
 data class DwInspectionReviewQueue(
     val awaitingYou: List<DesignWorkshopDto>,
     val withDesigners: List<DesignWorkshopDto>,
@@ -365,24 +229,15 @@ fun dwInspectionReviewQueue(rows: List<DesignWorkshopDto>): DwInspectionReviewQu
     return DwInspectionReviewQueue(awaiting, withDesigners, other)
 }
 
-/** The pill beside the queue's title: "3 waiting", or null for none (a zero draws nothing). */
 fun dwInspectionWaitingLabel(count: Int): String? = if (count > 0) "$count waiting" else null
 
-/** What a screen reader hears for the pill — the web badge's sentence, word for word. */
 fun dwInspectionWaitingSentence(count: Int): String =
     if (count == 1) "1 report is waiting for your review" else "$count reports are waiting for your review"
 
-/** The server's page ceiling; the queue walks pages of this size. */
 const val DW_INSPECTION_QUEUE_PAGE_SIZE = 100
 
-/** How many pages the queue reads before it says the rest were not read. */
 const val DW_INSPECTION_QUEUE_MAX_PAGES = 5
 
-// --------------------------------------------------------------------------------------
-// What the phone keeps
-// --------------------------------------------------------------------------------------
-
-/** One workshop's last read, kept for the account it was read for. */
 @Serializable
 data class DwSavedInspection(
     val ownerUserId: String,
@@ -390,7 +245,6 @@ data class DwSavedInspection(
     val detail: DwInspectionDetailDto,
 )
 
-/** The last answer of the assigned list, kept for the account it was read for. */
 @Serializable
 data class DwSavedInspectionList(
     val ownerUserId: String,
@@ -399,17 +253,6 @@ data class DwSavedInspectionList(
     val total: Int = 0,
 )
 
-/**
- * The phone's store for inspections: queued notes, the last read of each workshop, the last list.
- *
- * Plain files under one directory, each replaced as one indivisible step (write, flush to storage,
- * rename) — the arrangement [OfflineOutbox] arrived at after a killed process emptied its queue. A
- * file that will not parse is moved aside rather than treated as empty, so a damaged queue can never
- * be overwritten into nothing.
- *
- * Synchronised on one lock for the whole process, not per instance: two screens and the background
- * pass each build their own handle onto the same directory.
- */
 class DwInspectionStore(private val dir: File) {
 
     private fun outboxFile() = File(dir, "notes.json")
@@ -425,7 +268,6 @@ class DwInspectionStore(private val dir: File) {
 
     fun add(note: DwQueuedInspectionNote) = synchronized(LOCK) { writeNotes(readNotes() + note) }
 
-    /** Replace the queued note carrying [note]'s id; a note no longer queued is not resurrected. */
     fun update(note: DwQueuedInspectionNote) = synchronized(LOCK) {
         val current = readNotes()
         if (current.any { it.id == note.id }) writeNotes(current.map { if (it.id == note.id) note else it })
@@ -441,7 +283,6 @@ class DwInspectionStore(private val dir: File) {
         synchronized(LOCK) { writeText(detailFile(saved.detail.id), json.encodeToString(saved)) }
     }
 
-    /** The kept read of [workshopId], or null — and always null for any account but its own. */
     fun detail(workshopId: String, ownerUserId: String): DwSavedInspection? = synchronized(LOCK) {
         val file = detailFile(workshopId)
         if (!file.exists()) return@synchronized null
@@ -449,7 +290,6 @@ class DwInspectionStore(private val dir: File) {
             ?.takeIf { it.ownerUserId == ownerUserId }
     }
 
-    /** Forget a workshop this account may no longer open — its kept read, and its row in the list. */
     fun forgetWorkshop(workshopId: String) = synchronized(LOCK) {
         detailFile(workshopId).delete()
         val list = readList() ?: return@synchronized
@@ -482,7 +322,6 @@ class DwInspectionStore(private val dir: File) {
         val parsed = text?.takeIf { it.isNotBlank() }
             ?.let { runCatching { json.decodeFromString<List<DwQueuedInspectionNote>>(it) }.getOrNull() }
         if (parsed == null) {
-            // KEPT, NEVER EMPTIED. The bytes move aside under a name a support request can ask for.
             runCatching { file.renameTo(File(dir, "notes.damaged-${System.currentTimeMillis()}.json")) }
             return emptyList()
         }
@@ -501,7 +340,6 @@ class DwInspectionStore(private val dir: File) {
                 out.fd.sync()
             }
             if (!temp.renameTo(target)) {
-                // Windows-hosted JVM tests cannot rename over an existing file; a phone can.
                 target.delete()
                 if (!temp.renameTo(target)) throw IOException("Unable to replace ${target.name}")
             }
@@ -520,16 +358,13 @@ class DwInspectionStore(private val dir: File) {
     }
 }
 
-/** What a pass over the queued notes did, for a sentence on screen. */
 data class DwInspectionSyncReport(
     val sent: Int = 0,
     val held: Int = 0,
     val waiting: Int = 0,
-    /** The freshest read of each workshop touched, keyed by id, so a screen can redraw from it. */
     val refreshed: Map<String, DwInspectionDetailDto> = emptyMap(),
 )
 
-/** How a workshop under inspection was read: live, or from the copy kept on this phone. */
 sealed interface DwInspectionRead {
     val detail: DwInspectionDetailDto
 
@@ -537,7 +372,6 @@ sealed interface DwInspectionRead {
     data class Saved(override val detail: DwInspectionDetailDto, val savedAt: String) : DwInspectionRead
 }
 
-/** The line over a workshop read from the phone's copy. */
 fun dwSavedInspectionSentence(savedAt: String): String {
     val day = savedAt.take(10)
     val time = savedAt.drop(11).take(5)

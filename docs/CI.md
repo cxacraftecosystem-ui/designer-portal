@@ -91,6 +91,7 @@ Three workflows chained into a deploy pipeline, **plus a fourth upstream stage t
 wait on.** One push to `main` walks the whole chain.
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif","fontSize":"15px","primaryColor":"#F2E9FE","primaryTextColor":"#1E1B2E","primaryBorderColor":"#9148D2","secondaryColor":"#FAEECD","secondaryTextColor":"#1E1B2E","secondaryBorderColor":"#CD9200","tertiaryColor":"#F3F1FA","tertiaryTextColor":"#1E1B2E","tertiaryBorderColor":"#A7A3BC","mainBkg":"#F2E9FE","nodeBorder":"#9148D2","nodeTextColor":"#1E1B2E","lineColor":"#AA69E9","textColor":"#857F9E","edgeLabelBackground":"#F9F5FF","clusterBkg":"#F9F5FF","clusterBorder":"#D6B6FB","titleColor":"#762CB1","noteBkgColor":"#FAEECD","noteTextColor":"#1E1B2E","noteBorderColor":"#CD9200","actorBkg":"#F2E9FE","actorBorder":"#9148D2","actorTextColor":"#1E1B2E","actorLineColor":"#AA69E9","signalColor":"#AA69E9","signalTextColor":"#857F9E","labelBoxBkgColor":"#F2E9FE","labelBoxBorderColor":"#9148D2","labelTextColor":"#1E1B2E","loopTextColor":"#857F9E","activationBkgColor":"#E7D5FE","activationBorderColor":"#9148D2","sequenceNumberColor":"#FFFFFF","transitionColor":"#AA69E9","transitionLabelColor":"#857F9E","stateLabelColor":"#1E1B2E","stateBkg":"#F2E9FE","compositeBackground":"#F9F5FF","compositeTitleBackground":"#F2E9FE","attributeBackgroundColorOdd":"#FFFFFF","attributeBackgroundColorEven":"#F9F5FF","relationColor":"#AA69E9","relationLabelBackground":"#F9F5FF","relationLabelColor":"#1E1B2E"}}}%%
 flowchart LR
     P([push to main]) --> C["<b>checks.yml</b><br/>Backend tests · Web typecheck,<br/>lint and unit specs · Docs check"]
     P --> B["<b>deploy-backend.yml</b><br/>Deploy backend to EC2"]
@@ -430,10 +431,9 @@ updated to bake the same paths and limits into the base units, so a **rebuilt** 
 deployed one without this step ever having run; the two are deliberately redundant and are not
 allowed to disagree.
 
-**The memory limits, and why they are asymmetric.** The box running on 2026-10-09 is a **t3.small**
-— 2 GiB of RAM and a 2 GiB swap file — and the Ubuntu 26.04 rebuild declared that day in
-`infra/terraform/main.tf` is a **t3.medium** (4 GiB) with the same limits, kept until they are re-read
-there. The queue runs ffmpeg and AI transcription. Unbounded, the kernel's OOM killer
+**The memory limits, and why they are asymmetric.** The box is a **t3.medium** (4 GiB of RAM and a
+2 GiB swap file, Ubuntu 26.04, live since 2026-10-10; read from the AWS console on 2026-11-04). The
+limits are the ones set for the **t3.small** (2 GiB) it replaced, kept until they are re-read there. The queue runs ffmpeg and AI transcription. Unbounded, the kernel's OOM killer
 picks by badness score, which on this box has meant **uvicorn dying because the queue was hungry**,
 with the API then 502-ing for a reason that appears nowhere in its own logs. So `fieldrepo` gets
 `MemoryHigh=1000M` and deliberately **no** `MemoryMax`: killing the API to save memory is the outcome

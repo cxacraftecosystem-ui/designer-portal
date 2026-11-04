@@ -1,46 +1,5 @@
 "use client";
 
-/**
- * "Which records are not filed under any workshop, and where do they belong?"
- *
- * WHY THIS SCREEN EXISTS. Every control that narrows by workshop reads one column, `workshopId`. A record
- * with that column empty counts towards NO workshop scope — while remaining perfectly visible under "All
- * records". Since the app opens scoped to the most recent workshop, the result reads as "nothing was
- * documented here" rather than as a filter excluding data that is sitting right there. That is exactly what
- * happened: twenty-five questionnaire interviews and nine hundred and twenty-four media files, all recorded
- * at the one workshop in the repository, none of them carrying its id, and a completion matrix showing
- * nothing but the cells an admin had ticked by hand.
- *
- * The column arrived after that fieldwork, so this will keep happening whenever a client is a version
- * behind — hence a button rather than only a migration. `backend/app/services/workshop_inference.py` holds
- * the evidence ladder both this and the migration share.
- *
- * IT IS A PREVIEW FIRST, ALWAYS. The report is a plain read and renders on load; nothing is written until
- * somebody presses the button, and the button says exactly how many rows it will touch. Rows the evidence
- * cannot settle are listed BY NAME with the reason, because "949 of 949" is a fine answer and "947 of 949"
- * needs to say which two and why — that is the difference between a tool an admin can trust and one they
- * have to verify by hand afterwards.
- *
- * AND SINCE 2026-08-28, THOSE ROWS ARE SOMETHING TO PRESS. Naming the person a decision is being handed to
- * is only half a handover. This block used to read "Left alone — open the record and choose its workshop by
- * hand" over a flat `<ul>` of titles with no link, no id and no control on it: the admin had to leave the
- * page, find each record in a twenty-row list somewhere else, and edit it there, and a record that should
- * never have been recorded could not be got rid of from here at all. Each row is now an activatable card
- * (`UnfiledRecordCard`) opening the three acts the owner asked for — open the record, file it under a
- * workshop by hand, or delete it permanently. `POST` / `DELETE /workshops/unmapped/{bucket}/{id}` are the
- * endpoints, both `require_admin`, which is the same gate this whole report already sits behind.
- *
- * A DESIGN WORKSHOP'S OWN RECORDS AND FILES ARE NOT "UNFILED" (2026-10-09). A record filed under a
- * design & prototype workshop, or a photograph tagged to one, is that workshop's content even with no
- * crafts workshop on it, and the server's ladder no longer offers it here — so this report never again
- * invites an admin to delete a workshop's evidence as rubbish. One the ladder still meets (a file that
- * belongs to a workshop only through a stage or the record it hangs off) is refused at the door: the
- * discard with a 409 that sends the admin to the record's own screen, the filing — single or bulk —
- * with the 403 naming the post when the admin inspects or supervises that workshop. Every one of those
- * sentences is printed as the server wrote it — and so is the bulk filing's `heldBackDetail`, its own
- * sentence for the rows it left alone for that reason, said beside the count it filed.
- */
-
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Check, Link2, RefreshCw } from "lucide-react";
 
@@ -79,32 +38,11 @@ type MappingBucket = {
   rows: MappingRow[];
   rowsTruncated: boolean;
   applied: number | null;
-  /**
-   * On the bulk filing's answer: how many of this bucket's rows were LEFT ALONE because the admin who
-   * pressed it inspects or supervises the design workshop they belong to — a filing there is that
-   * workshop's content. Optional, because this client and the API deploy separately: absent is "none
-   * reported", never a zero.
-   */
   heldBack?: number | null;
 };
 
 export type WorkshopMappingPlan = {
-  /**
-   * The WINDOWS the date rung was decided against — dated workshops only, because `build_windows`
-   * skips a workshop with neither `startDate` nor `date`. Rendered as the caption at the foot.
-   */
   workshops: Array<{ id: string; title: string; start: string; end: string }>;
-  /**
-   * EVERY workshop, dated or not, for the hand-assignment picker. A workshop with no dates can never
-   * win the date rung, so it is exactly the kind of workshop whose records land on this report — and
-   * driving the picker off `workshops` above would hide the destination an admin is most likely to
-   * be reaching for.
-   *
-   * OPTIONAL IN THE TYPE ON PURPOSE, the same way `AddressReference.districts` is: this client and
-   * the API deploy separately, so a browser can be a version ahead of the server it is talking to.
-   * Absent means "this server does not send it yet", and the picker falls back to the dated list AND
-   * says on screen that it is short — it must never imply a complete list it does not have.
-   */
   allWorkshops?: Array<{ id: string; title: string }>;
   buckets: MappingBucket[];
   totals: {
@@ -112,31 +50,20 @@ export type WorkshopMappingPlan = {
     resolved: number;
     unresolved: number;
     applied: number | null;
-    /** The buckets' `heldBack`, summed by the server — optional for the same reason. */
     heldBack?: number | null;
   };
-  /** The server's one sentence for those rows, on the bulk filing's answer when there are any. */
   heldBackDetail?: string | null;
 };
 
-/** Type-of noun for the counts sentence. Plural unless the count is exactly one, as everywhere else. */
 function noun(bucket: MappingBucket, count: number): string {
   return count === 1 ? bucket.singular : bucket.plural;
 }
 
-/** One day, in the reader's own locale. An unparseable value is echoed rather than rendered blank. */
 function formatDay(iso: string): string {
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString();
 }
 
-/**
- * The LAST DAY a window covers, from its exclusive end.
- *
- * The server sends `end` as midnight of the day AFTER the workshop's last day (see `build_windows`), so
- * printing it raw would name a day the window does not include — a caption that contradicts the rule it
- * is explaining.
- */
 function formatLastDay(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
@@ -151,34 +78,11 @@ export function WorkshopMappingPanel() {
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applied, setApplied] = useState<number | null>(null);
-  /** Beside `applied`: what the same press left alone for a post the reader holds, in the server's words. */
   const [heldBack, setHeldBack] = useState<string | null>(null);
-  /**
-   * The card whose actions are open, and whether the dialog is showing.
-   *
-   * TWO PIECES OF STATE FOR ONE THING, deliberately: `selected` outlives `dialogOpen` so the exit
-   * animation plays over the real record instead of an empty card. `ConfirmProvider` keeps its
-   * `options` past `open` for exactly this reason.
-   */
   const [selected, setSelected] = useState<UnfiledRecord | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  /**
-   * What the last single-record action did, in words. Kept apart from `applied` (the bulk button's
-   * own sentence) because they report different acts, and one overwriting the other would tell an
-   * admin that the row they just deleted had been filed.
-   */
   const [rowNotice, setRowNotice] = useState<string | null>(null);
 
-  /**
-   * MAY THIS READER ACT? Admin and master admin, mirroring the `require_admin` both endpoints carry.
-   *
-   * The panel is already mounted only for `isAdmin(user)` on `/workshops`, so in practice this is
-   * true whenever the component exists. It is re-asked here anyway, for two reasons that are not
-   * paranoia: this component is exported and a second caller would inherit the parent's gate by
-   * accident rather than by decision, and a control an unentitled reader can press is a refusal
-   * dressed as a feature. The gate that MATTERS is the server's — a client guard alone is not a
-   * guard — and the two are the same predicate on purpose.
-   */
   const canAct = isAdmin(user);
 
   const load = useCallback(async () => {
@@ -203,29 +107,15 @@ export function WorkshopMappingPanel() {
     try {
       const result = await apiFetch<WorkshopMappingPlan>("/workshops/unmapped/map", { method: "POST" });
       setApplied(result.totals.applied ?? 0);
-      // From the APPLY answer, not the re-read below: the plan that follows is the same for every
-      // admin, and only this answer knows what was skipped for the one who pressed.
       setHeldBack(heldBackSentence(result));
-      // RE-READ rather than render the apply response. That response is built from the ladder run the
-      // writes were derived FROM — it is a record of what was done, not a picture of what is left — so
-      // rendering it would leave the tiles reporting the records just filed as still unfiled and the
-      // button offering to file them again. A fresh read is the only thing that can say "nothing left".
       await load();
     } catch (cause) {
-      // The server's sentence, as written — a refusal names its reason, and a 403 names the post.
       setError(cause instanceof Error ? cause.message : "The records could not be mapped.");
     } finally {
       setApplying(false);
     }
   }
 
-  /**
-   * A single record filed or deleted. RE-READS the plan for exactly the reason `apply()` above does:
-   * the response describes what was done to ONE row, not what is left, so patching the row out of
-   * local state would leave every count on this panel — the three tiles, the per-bucket lines, the
-   * bulk button's own "file N records" — describing a repository that no longer exists. It is one
-   * request against an admin screen; the alternative is six numbers quietly drifting.
-   */
   const afterRowAction = useCallback(
     async (notice: string) => {
       setRowNotice(notice);
@@ -235,16 +125,9 @@ export function WorkshopMappingPanel() {
     [load]
   );
 
-  // Only the buckets that have something to say. A panel listing "0 product records" five times over
-  // buries the one line that matters.
   const buckets = (plan?.buckets ?? []).filter((bucket) => bucket.unassigned > 0);
   const totals = plan?.totals;
 
-  /**
-   * The picker's list, sorted by title here rather than trusted from the API — the same rule every
-   * other consumer of a workshop list in this client follows, so the form and this panel cannot
-   * disagree about an order.
-   */
   const pickerWorkshops = useMemo(() => {
     const complete = plan?.allWorkshops;
     const source = complete ?? (plan?.workshops ?? []).map((entry) => ({ id: entry.id, title: entry.title }));
@@ -327,10 +210,6 @@ export function WorkshopMappingPanel() {
                       </p>
                     ) : null}
 
-                    {/* WHICH RULE DECIDED, per row, aggregated. An admin approving a bulk write needs to
-                        know whether 924 files were filed because their parent records said so or because
-                        their timestamps merely fell in a window — those are different levels of certainty
-                        and the panel must not flatten them into one number. */}
                     {bucket.byRung.length ? (
                       <ul className="mt-1.5 grid gap-0.5">
                         {bucket.byRung.map((entry) => (
@@ -346,10 +225,6 @@ export function WorkshopMappingPanel() {
                       (() => {
                         const stuck = bucket.rows.filter((row) => !row.workshopId);
                         return (
-                          /* NOT `overflow-hidden`. The cards inside are full-width buttons and the
-                             global focus ring is an `outline` drawn OUTSIDE the border box at
-                             `outline-offset: 2px` — clipping this block would erase the ring on the
-                             card a keyboard user is standing on. */
                           <div className="mt-2 rounded border border-amber-100 bg-amber-100/40 p-2">
                             <p className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-100">
                               <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -358,9 +233,6 @@ export function WorkshopMappingPanel() {
                                 : "Skipped — file by hand"}
                             </p>
                             {canAct ? (
-                              /* A GRID OF CARDS, one per row. Two columns from `sm` up: these titles
-                                 are filenames and interview names, and a single column of forty of
-                                 them pushes the workshop form on this page below the fold. */
                               <ul className="mt-1.5 grid gap-1.5 sm:grid-cols-2">
                                 {stuck.map((row) => {
                                   const record: UnfiledRecord = {
@@ -382,10 +254,6 @@ export function WorkshopMappingPanel() {
                                 })}
                               </ul>
                             ) : (
-                              /* NOT AN ADMIN: the same rows, as plain text. Rendering the cards
-                                 disabled would be a screen full of controls that refuse — the rule
-                                 this client follows for every gated action is to not render it, and
-                                 the names and reasons are still worth reading. */
                               <ul className="mt-1 grid gap-0.5">
                                 {stuck.map((row) => (
                                   <li key={row.id} className="text-[11px] leading-4 text-ink-700">
@@ -398,16 +266,6 @@ export function WorkshopMappingPanel() {
                                 ))}
                               </ul>
                             )}
-                            {/* Compared against THIS list's own length, not `rowsTruncated`. That flag is
-                                about the bucket's whole row list, which the server caps and fills with
-                                resolved rows too — reading it here reported "the list is capped" on a
-                                complete list of two, which is a false alarm on the one block an admin has
-                                to act on.
-
-                                Still the rule with cards on screen, and more load-bearing than it was:
-                                a grid that stops has no scrollbar and no last row to notice, so an
-                                admin who works through every card on it would otherwise believe the
-                                job finished. */}
                             {stuck.length < bucket.unresolved ? (
                               <p className="mt-1.5 text-[11px] leading-4 text-ink-500">
                                 {bucket.unresolved - stuck.length} more{" "}
@@ -437,10 +295,6 @@ export function WorkshopMappingPanel() {
             </>
           )}
 
-          {/* WHAT THE LAST SINGLE-RECORD ACTION DID, in the words `unfiledRecords` writes for both
-              outcomes. Above the bulk sentence, because it is the more recent act. It survives the
-              re-read that follows the action — the row it names has left the list by then, and
-              "gone from the list" is not a report of what happened to it. */}
           {rowNotice ? (
             <p className="mt-3 flex items-center gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-700">
               <Check className="h-4 w-4 shrink-0 text-success-600 dark:text-emerald-400" aria-hidden />
@@ -458,10 +312,6 @@ export function WorkshopMappingPanel() {
                 : `${applied} record${applied === 1 ? "" : "s"} filed.`}
             </p>
           ) : null}
-          {/* WHAT THE SAME PRESS LEFT ALONE, AND WHY — the server's sentence, said whenever it reports
-              any, because the tiles above still count those rows as "can be filed now" for the next
-              admin who reads them, and a button that keeps offering to file them must not read as one
-              that did nothing. */}
           {applied !== null && heldBack ? (
             <p className="mt-2 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-xs leading-5 text-amber-800">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
@@ -470,10 +320,6 @@ export function WorkshopMappingPanel() {
           ) : null}
 
           {plan.workshops.length ? (
-            /* The WINDOWS, not just the titles. An end date is stored differently by each client — the
-               web form sends the last millisecond of the day, Android sends midnight — so "recorded
-               inside that workshop's dates" is only checkable if the dates the server read are on
-               screen. The end shown is the last day the window covers, not the exclusive bound. */
             <ul className="mt-3 grid gap-0.5 text-[11px] leading-4 text-ink-500">
               {plan.workshops.map((workshop) => (
                 <li key={workshop.id}>
@@ -489,9 +335,6 @@ export function WorkshopMappingPanel() {
         </>
       ) : null}
 
-      {/* OUTSIDE the `plan` branch, so a re-read cannot unmount it mid-exit-animation, and rendered
-          only for a reader who may act — a dialog full of controls the server would 403 is not a
-          feature. `selected` is kept past the close on purpose (see its declaration). */}
       {canAct ? (
         <UnfiledRecordDialog
           open={dialogOpen}

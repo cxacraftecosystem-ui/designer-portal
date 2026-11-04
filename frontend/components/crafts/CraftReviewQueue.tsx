@@ -13,11 +13,9 @@ import { countNoun } from "@/lib/format";
 import { loadFullCraftCatalogue, type CatalogueCraft, type CraftCatalogue } from "@/lib/craftCatalogue";
 import { RECORD_UPDATE_HREF } from "@/lib/recordView";
 
-/** One row of `GET /crafts/review` (content admins): what the mapping would do with it. */
 export type CraftReviewEntry = {
   kind: "craft" | "freeText";
   id: string;
-  /** The Prisma delegate the row lives in: `artisan`, `productdocumentation`, … */
   model: string;
   text: string;
   action: string;
@@ -31,7 +29,6 @@ export type CraftReviewQueueAnswer = { crafts: CraftReviewEntry[]; records: Craf
 
 export const loadCraftReviewQueue = () => apiFetch<CraftReviewQueueAnswer>("/crafts/review");
 
-/** What a record with typed craft text is called, and where its craft is picked. */
 export function reviewRecordTarget(model: string, id: string): { noun: string; href: string } | null {
   switch (model) {
     case "artisan":
@@ -49,11 +46,6 @@ export function reviewRecordTarget(model: string, id: string): { noun: string; h
   }
 }
 
-/**
- * "Needs review" (REQUIREMENTS_2026-10-20 §2.5): crafts that predate the master list and did not
- * map. Each is merged into a craft on the list or added to the list in a sub-category. Nothing here
- * deletes a craft: a merge keeps the old row so old links still resolve.
- */
 export function CraftReviewQueue({ catalogue, onChanged }: { catalogue: CraftCatalogue; onChanged: () => void }) {
   const [full, setFull] = useState<CraftCatalogue | null>(null);
   const [queue, setQueue] = useState<CraftReviewQueueAnswer | null>(null);
@@ -83,7 +75,6 @@ export function CraftReviewQueue({ catalogue, onChanged }: { catalogue: CraftCat
   const plans = useMemo(() => new Map((queue?.crafts ?? []).map((row) => [row.id, row])), [queue]);
   const records = queue?.records ?? [];
   const names = useMemo(() => new Map((full?.crafts ?? []).map((craft) => [craft.id, craft.name])), [full]);
-  /** The suggestion by the craft's name, not the mapping's slug label. */
   const suggested = (row: CraftReviewEntry | null) => (row?.targetId ? (names.get(row.targetId) ?? row.target) : (row?.target ?? null));
 
   if (error) {
@@ -171,7 +162,6 @@ function ReviewRow({
   onDone: () => void;
 }) {
   const [mode, setMode] = useState<"merge" | "adopt" | null>(null);
-  // The mapping's suggestion, if it has one, is where "Merge into…" starts.
   const [intoId, setIntoId] = useState(plan?.targetId ?? "");
   const [subCategoryId, setSubCategoryId] = useState("");
   const [busy, setBusy] = useState(false);

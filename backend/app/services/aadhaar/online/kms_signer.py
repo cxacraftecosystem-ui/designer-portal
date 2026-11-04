@@ -1,23 +1,3 @@
-"""The AUA's request signature made inside AWS KMS, so the private key never leaves an HSM.
-
-UIDAI requires the key that signs authentication requests to live in a FIPS 140-2 hardware security
-module dedicated to the entity (Blocker B4 in docs/aadhaar/GO_LIVE_CHECKLIST.md). An AWS KMS
-asymmetric key (key spec RSA_2048, key usage SIGN_VERIFY) is generated and used only inside KMS's
-validated HSMs and cannot be exported. Whether UIDAI accepts a cloud HSM is Question 7 for UIDAI;
-AWS CloudHSM (a dedicated, single-tenant HSM) is the fallback if it does not, and would slot in
-behind the same :class:`KmsRsaSigner` shape.
-
-HOW IT PLUGS IN. ``xmldsig.sign_enveloped`` calls ``key.sign(data, padding, hash)`` exactly as the
-``cryptography`` library's RSA key does. :class:`KmsRsaSigner` answers that call by hashing the
-canonical SignedInfo locally and asking KMS to sign the DIGEST (``MessageType=DIGEST``), so the
-4 KB raw-message limit never applies and only 32 bytes leave the box.
-
-Selected by ``AADHAAR_SIGNING_KMS_KEY_ID`` in place of the PFX, with the certificate a CA issued for
-that key's public half in ``AADHAAR_AUA_SIGNING_CERT_PATH``. Behind ``AADHAAR_ONLINE_AUTH_ENABLED``
-like everything else online. :func:`check` runs at boot: the key must be RSA_2048 / SIGN_VERIFY,
-its public key must be the certificate's, and a test signature must verify.
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -27,8 +7,6 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-#: KMS signing algorithms by the hash ``sign_enveloped`` asks for. PKCS#1 v1.5 is what XMLDSig's
-#: rsa-sha256 means; UIDAI refuses SHA-1 since 30 June 2026 (Circular 4 of 2026).
 _ALGORITHMS = {
     "sha256": "RSASSA_PKCS1_V1_5_SHA_256",
     "sha384": "RSASSA_PKCS1_V1_5_SHA_384",
@@ -52,13 +30,9 @@ def kms_client(settings: Any) -> Any:
 
 
 class KmsRsaSigner:
-    """Duck-types ``rsa.RSAPrivateKey.sign`` for ``xmldsig.sign_enveloped``. Holds no key material."""
-
     def __init__(self, key_id: str, client: Any) -> None:
         self.key_id = key_id
         self._client = client
-        # The public half never changes for a KMS key id, so it is fetched once (by the boot check)
-        # and kept: no GetPublicKey round trip on each signature or each ``key_size`` read.
         self._public: rsa.RSAPublicKey | None = None
 
     @property
@@ -93,7 +67,6 @@ class KmsRsaSigner:
 
 
 def check(signer: KmsRsaSigner, certificate: x509.Certificate) -> None:
-    """Refuse to start unless the KMS key is the right kind, matches the certificate, and signs."""
     meta = signer._client.describe_key(KeyId=signer.key_id)["KeyMetadata"]
     if meta.get("KeyState") != "Enabled":
         raise KmsSigningError(f"the KMS signing key is {meta.get('KeyState')}, not Enabled")

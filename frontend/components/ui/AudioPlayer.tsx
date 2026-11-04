@@ -11,17 +11,12 @@ function formatTime(seconds: number) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-/**
- * Themed inline audio player (play/pause, seek bar, elapsed/total time) — replaces the
- * grey browser `<audio controls>` everywhere recordings are played back.
- */
 export function AudioPlayer({ src, className }: { src: string; className?: string }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [current, setCurrent] = useState(0);
 
-  // A new src is a new recording: reset the transport.
   useEffect(() => {
     setPlaying(false);
     setCurrent(0);
@@ -49,25 +44,6 @@ export function AudioPlayer({ src, className }: { src: string; className?: strin
 
   const max = duration > 0 ? duration : Math.max(current, 1);
   const pct = Math.min(100, Math.max(0, (current / max) * 100));
-  /**
-   * The unplayed half of the track, THEMED — fixed 2026-09-03.
-   *
-   * This literal was `#e4e2ef`, which is the LIGHT value of `--line-200`, so the unplayed track kept
-   * its pale lavender under `data-theme="dark"` while the border two elements out inverted to
-   * `#342e47`: one control drawn half in each theme. It was a known leak rather than a pattern (the
-   * frontend reference names it as such under `AudioPlayer`), and the reason it survived is that the
-   * value goes into a GRADIENT STRING and looked unthemeable from here.
-   *
-   * It is not. `--line-200` is a bare `R G B` triplet on `:root` and `var()` references inside a
-   * custom property's value are substituted when that property is itself substituted — this string
-   * is assigned to `--audio-range-fill` on the input below, and `globals.css` reads it back through
-   * `background: var(--audio-range-fill, …)`. So the token resolves in the element's own context and
-   * follows the theme, high contrast included (`[data-high-contrast]` re-points this same rung).
-   *
-   * 2026-10-17: both halves now read the `--progress-*` tokens every bar uses. The unplayed half
-   * was `--line-200`, 1.28:1 on this white card (the voice note whose bar "disappears"), and the
-   * purple-700 fill was 2.32:1 on the dark card; the tinted track and the themed fill fix both.
-   */
   const fill =
     `linear-gradient(to right, rgb(var(--progress-fill)) 0%, rgb(var(--progress-fill)) ${pct}%, ` +
     `rgb(var(--progress-track)) ${pct}%, rgb(var(--progress-track)) 100%)`;
@@ -87,7 +63,6 @@ export function AudioPlayer({ src, className }: { src: string; className?: strin
           const audio = audioRef.current;
           if (!audio) return;
           setCurrent(audio.currentTime);
-          // Streams (e.g. fresh WebM recordings) report Infinity until played through.
           if (Number.isFinite(audio.duration)) setDuration(audio.duration);
         }}
         className="hidden"

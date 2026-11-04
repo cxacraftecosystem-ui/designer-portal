@@ -1,37 +1,5 @@
 "use client";
 
-/**
- * The administrator's inbox: every filed report, and the two controls that answer one.
- *
- * ── WHY THIS EXISTS AT ALL: A WRITE PATH WITH NO READER IS A HOLE ──────────────────────────────
- *
- * Before the register landed, `/admin`'s "User feedback" tile was visible to every ADMIN and led to
- * `/feedback`, whose list was gated `isMasterAdmin` on the client and `require_master_admin` on the
- * server. An admin who followed that tile arrived at the feedback FORM and no inbox — the hub
- * advertised a queue that account could not read. This component is what makes that tile true.
- *
- * `GET /feedback/reports` is `require_admin` for the same reason: a redressal mechanism in which
- * exactly one account in the institution can acknowledge anything is a mechanism that will not
- * redress anything. The RATING list beside it stays master-admin — a colleague's standing opinion
- * of the software is a different thing from a complaint that needs answering, and widening who may
- * read it is not this change's to make.
- *
- * ── THE TWO CONTROLS, AND WHY ONE OF THEM INSISTS ON WORDS ─────────────────────────────────────
- *
- * "Mark as seen" writes a NAME and a TIME and promises nothing else, so its note is optional.
- * "Resolve" says the matter is finished, and the server refuses it without a note — an institution
- * that may close a grievance without saying how has a queue-clearing button, not a redressal
- * mechanism. The dialog therefore disables its own submit until something is typed, so the refusal
- * is met before the round trip rather than as a 422 the reader has to interpret.
- *
- * ── AND WHY THE FILTERS ARE A NARROWING, NEVER A DEFAULT ───────────────────────────────────────
- *
- * The list opens UNFILTERED. A queue that opens on "SUBMITTED only" hides the acknowledged reports
- * that have been sitting unanswered for a month, which are exactly the ones a redressal mechanism
- * fails at. `openCount` is drawn beside the heading and counts the whole table, never the page, so
- * narrowing to grievances cannot report the queue as empty while eleven bug reports go unread.
- */
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, Inbox } from "lucide-react";
 
@@ -55,11 +23,8 @@ export function FeedbackReportsInbox({ vocabulary }: { vocabulary: FeedbackVocab
   const [kind, setKind] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
-  /** The report a decision dialog is open for, and which of the two decisions it is. */
   const [deciding, setDeciding] = useState<{ report: FeedbackReport; resolve: boolean } | null>(null);
 
-  // Generation counter, not an abort — `apiFetch` takes no signal and what matters is ignoring the
-  // late answer (§14.5). One counter covers paging AND the two filters, so they cannot race.
   const load = useRef(0);
 
   const read = useCallback(async (wanted: number, wantedKind: string, wantedStatus: string) => {
@@ -73,9 +38,6 @@ export function FeedbackReportsInbox({ vocabulary }: { vocabulary: FeedbackVocab
       setItems(result.items);
       setTotal(result.total);
       setPages(result.pages);
-      // `?? null` and never `?? 0`: absent means "we could not ask", and a confident 0 over a queue
-      // we failed to read is a number an admin would act on by not opening it. Same rule the /admin
-      // hub's badge states for the pending-access count.
       setOpenCount(result.openCount ?? null);
       setError(null);
     } catch (err) {
@@ -93,11 +55,6 @@ export function FeedbackReportsInbox({ vocabulary }: { vocabulary: FeedbackVocab
     <section className="mt-8">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="font-display text-lg font-bold text-ink-900">Grievances, suggestions and recommendations</h2>
-        {/*
-          The number is never alone — the word beside it says what the number IS. A bare digit in a
-          heading is decoration an admin learns to ignore, which is the same rule the /admin hub's
-          badge carries.
-        */}
         {openCount ? <p className="text-xs font-medium text-amber-800 dark:text-amber-100">{openCount} not yet read</p> : null}
       </div>
 
@@ -106,8 +63,6 @@ export function FeedbackReportsInbox({ vocabulary }: { vocabulary: FeedbackVocab
           <Select
             value={kind}
             searchable={false}
-            // The filter narrows the list on the same screen, so focus must NOT jump to the next
-            // control after a pick (§17) — the reader's next act is to read the list, not to type.
             advanceOnSelect={false}
             onChange={(event) => {
               setKind(event.target.value);
@@ -192,11 +147,6 @@ export function FeedbackReportsInbox({ vocabulary }: { vocabulary: FeedbackVocab
               />
             ))}
           </div>
-          {/*
-            Wrapped in a `panel` because `Pagination` draws a bare `border-t` footer meant to sit
-            INSIDE a bordered container — the list pages all mount it as the last child of one. Left
-            loose under a stack of cards it reads as a rule ruled across the page from nowhere.
-          */}
           {pages > 1 ? (
             <div className="panel mt-3">
               <Pagination page={page} pages={pages} total={total} onPage={setPage} />
@@ -220,16 +170,6 @@ export function FeedbackReportsInbox({ vocabulary }: { vocabulary: FeedbackVocab
   );
 }
 
-/**
- * The note dialog for both decisions.
- *
- * ONE DIALOG, TWO MODES, because the parts that must not drift are shared: both write a name and a
- * time, both re-read the list afterwards, and both put the note in front of the administrator with
- * the sentence "the person who filed this reads it" above the box. What differs is whether the box
- * may be left empty, and that is one boolean rather than two components.
- *
- * NOT a `ConfirmProvider` confirm: this needs a text box, and `useConfirm` answers yes/no.
- */
 function DecisionDialog({
   report,
   resolve,
@@ -244,8 +184,6 @@ function DecisionDialog({
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Mirrors the server's rule rather than restating it as a second policy: resolving needs words,
-  // acknowledging does not. The server is still the authority — this only spares the reader a 422.
   const blocked = resolve && note.trim().length === 0;
 
   async function send() {
@@ -268,8 +206,6 @@ function DecisionDialog({
     <FieldDialog
       open
       onClose={onClose}
-      // `busy` is what stops Escape and the backdrop dismissing the dialog mid-write, so the reader
-      // cannot walk away from a request whose answer they still need to see.
       busy={busy}
       title={resolve ? "Resolve this report" : "Mark this report as seen"}
       description={

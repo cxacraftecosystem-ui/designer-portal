@@ -25,11 +25,6 @@ import {
   type DwReviewNote
 } from "@/lib/reviewAids";
 
-/**
- * THE REVIEW AIDS (2026-10-17) — the pure half: "Changed since round N", note labels, the tray's
- * buttons, queue readiness, where a register row opens — and the wire paths held to the server.
- */
-
 const ROOT = join(__dirname, "..", "..");
 const read = (path: string) => readFileSync(join(ROOT, path), "utf8");
 

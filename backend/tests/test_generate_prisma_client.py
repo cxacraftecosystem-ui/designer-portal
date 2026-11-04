@@ -1,10 +1,3 @@
-"""scripts/generate_prisma_client.py: the future import, and the types.py / types.pyi split.
-
-The split is what keeps ~1.4 GB of TypedDicts out of every process that imports the client
-(see the script's docstring). It edits generated code, so these tests hold it to the shape
-prisma-client-py 0.15.0 writes and to refusing any other.
-"""
-
 from __future__ import annotations
 
 import importlib.util
@@ -118,7 +111,6 @@ def test_split_moves_the_declarations_and_keeps_the_runtime_aliases(tmp_path: Pa
 
     for name in gen.PREAMBLE_NAMES:
         assert getattr(module, name) is getattr(_types, name)
-    # Everything else is a TypedDict at type-check time and a dict at run time.
     assert module.UserCreateInput is dict
     assert module.AnyNameAtAll is dict
     with pytest.raises(AttributeError):

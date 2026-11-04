@@ -1,34 +1,3 @@
-"""E-MAIL: the Amazon SES sender and the templates it sends.
-
-This module knows how to turn a message KIND and its parameters into a subject, a plain-text body
-and a small HTML body, and how to hand those to SES. It knows nothing about queues, retries or who
-asked: that is :mod:`app.services.email_outbox`, which is the only caller of :func:`send` and the
-only writer of the send log.
-
-── WHEN MAIL IS ON ───────────────────────────────────────────────────────────────────────────────
-
-Exactly when ``MAIL_FROM_ADDRESS`` is set (:func:`mail_configured`). Unset is a complete, quiet
-product: nothing is queued, ``GET /preferences/notifications`` answers ``available: false``, and
-both clients hide every e-mail control without a sentence about it. There is no half-configured
-state to describe on a screen.
-
-── WHAT IS NEVER WRITTEN DOWN ────────────────────────────────────────────────────────────────────
-
-No body, and no link, ever reaches a log line: the outbox logs the message id, its kind and the
-recipient's ACCOUNT id. The set-password link in particular is a credential
-(``credential_links``): it is rendered into the body in memory, inside the worker, and the
-ciphertext that carried it to the worker is cleared as soon as the message is SENT or FAILED.
-
-── SES, AND WHY SESv2 ────────────────────────────────────────────────────────────────────────────
-
-``boto3.client("sesv2").send_email`` with ``Content.Simple`` — subject, text and HTML parts, UTF-8,
-built by SES into a proper multipart/alternative message. The credentials are the same
-``AWS_ACCESS_KEY_ID``/``AWS_SECRET_ACCESS_KEY`` the media bucket uses; that IAM user needs
-``ses:SendEmail`` on the verified identity (docs/ENVIRONMENT.md lists the owner's steps). A
-throttle or an SES-side fault is TRANSIENT and is retried by the outbox; a rejected message or an
-unverified sender is PERMANENT and is not, because sending it again will be refused again.
-"""
-
 from __future__ import annotations
 
 import html
@@ -42,50 +11,31 @@ from app.core.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
-#: Message kinds. Stored on ``EmailMessage.kind``; renaming one orphans the rows already queued.
 PASSWORD_LINK = "PASSWORD_LINK"
 REVIEW_SUGGESTION = "REVIEW_SUGGESTION"
 REVIEW_SENT_BACK = "REVIEW_SENT_BACK"
-#: Somebody got past the password and then entered too many wrong verification codes. A security
-#: notice: always sent (no opt-out), carries no code and no address, only when the pause ends.
 SECOND_FACTOR_LOCKED = "SECOND_FACTOR_LOCKED"
-#: Security notices about the account's password (2026-10-17). Always sent (no opt-out), to the
-#: account's own address; they carry no password and no link, only what happened and when.
-#: PASSWORD_ADDED: a provider-only account chose its first password. PASSWORD_CHANGED: the password
-#: was changed, set through a link, or replaced by an administrator's temporary one.
 PASSWORD_ADDED = "PASSWORD_ADDED"
 PASSWORD_CHANGED = "PASSWORD_CHANGED"
 PASSWORD_NOTICES = frozenset({PASSWORD_ADDED, PASSWORD_CHANGED})
 
-#: Designers' notices (2026-10-18), governed by ``UserPreference.emailWorkshopUpdates``.
 REPORT_APPROVED = "REPORT_APPROVED"
 REPORT_HANDED_ON = "REPORT_HANDED_ON"
 WORKSHOP_ASSIGNED = "WORKSHOP_ASSIGNED"
 SETUP_REMINDER = "SETUP_REMINDER"
 WORKSHOP_UPDATES = frozenset({REPORT_APPROVED, REPORT_HANDED_ON, WORKSHOP_ASSIGNED, SETUP_REMINDER})
 
-#: Access and comment notices (2026-10-18), governed by ``UserPreference.emailAccessNotices``.
 ACCESS_REQUESTED = "ACCESS_REQUESTED"
 ACCESS_DECIDED = "ACCESS_DECIDED"
 RECORD_COMMENT = "RECORD_COMMENT"
 ACCESS_NOTICES = frozenset({ACCESS_REQUESTED, ACCESS_DECIDED, RECORD_COMMENT})
 
-#: Officials' notices (2026-10-18), governed by ``UserPreference.emailHandInNotices``: one message
-#: per hand-in, or the day's hand-ins gathered into one digest.
 REPORT_HANDED_IN = "REPORT_HANDED_IN"
 HAND_IN_DIGEST = "HAND_IN_DIGEST"
 
-#: An approved report e-mailed to the office under an expiring link (2026-10-18). Not a notification:
-#: it goes to the addresses an administrator set, and the link travels sealed like a password link.
 REPORT_DELIVERY = "REPORT_DELIVERY"
 
-#: The Monday summary for reviewers and officials (services/weekly_digest.py). Opt-out through
-#: ``UserPreference.weeklyDigest``; carries counts, workshop titles and app paths, nothing personal.
 WEEKLY_DIGEST = "WEEKLY_DIGEST"
-#: A month's Ministry export packs are ready (2026-10-18). One digest per subscribed recipient per
-#: period. Not a notification under a preference: subscribing on /ministry-exports is the opt-in and
-#: that page is where one unsubscribes. Carries no presigned link and no attachment — the button opens
-#: the signed-in page, which mints a five-minute link on click.
 MINISTRY_PACKS_READY = "MINISTRY_PACKS_READY"
 
 KINDS = frozenset(
@@ -105,16 +55,12 @@ KINDS = frozenset(
     }
 )
 
-#: The kinds whose sealed secret is a link with an ``expiresAt``: not sent once it has expired.
 EXPIRING_LINK_KINDS = frozenset({PASSWORD_LINK, REPORT_DELIVERY})
 
 PRODUCT_NAME = "Design Prototype Workshop"
 
-#: India Standard Time has no daylight saving, so a fixed offset is exact and needs no tz database
-#: (which a Windows development box does not ship).
 IST = timezone(timedelta(hours=5, minutes=30), "IST")
 
-#: SESv2 error codes after which sending the same message again cannot succeed.
 PERMANENT_ERROR_CODES = frozenset(
     {
         "MessageRejected",
@@ -127,31 +73,19 @@ PERMANENT_ERROR_CODES = frozenset(
 
 
 class SendFailed(Exception):
-    """SES did not accept the message. ``permanent`` says whether trying again could help."""
-
     def __init__(self, code: str, *, permanent: bool) -> None:
         super().__init__(code)
         self.code = code
         self.permanent = permanent
 
 
-#: The reason an outbox row records when it was not sent to a reserved address.
 RESERVED_ADDRESS_REASON = "reserved test address"
 
-#: RFC 2606 / RFC 6761 names that never take mail. A seeded account (``admin@example.com``) or a
-#: test fixture must not reach SES: the message bounces and repeated bounces hurt the sender's
-#: reputation. The second-level names cover their subdomains; the top-level names cover any domain
-#: under them.
 RESERVED_EMAIL_DOMAINS = frozenset({"example.com", "example.org", "example.net"})
 RESERVED_EMAIL_TLDS = frozenset({"test", "example", "invalid", "localhost"})
 
 
 def reserved_email_domain(address: str | None) -> str | None:
-    """The reserved, non-deliverable domain ``address`` is on, lower-cased, or ``None``.
-
-    Case-insensitive, and a trailing dot is ignored. A string with no ``@`` is not judged here: it
-    is not an address, and SES refuses it on its own.
-    """
     text = (address or "").strip()
     if "@" not in text:
         return None
@@ -166,7 +100,6 @@ def reserved_email_domain(address: str | None) -> str | None:
 
 
 def is_reserved_email(address: str | None) -> bool:
-    """True when ``address`` is on a reserved domain that never takes mail (see above)."""
     return reserved_email_domain(address) is not None
 
 
@@ -196,10 +129,6 @@ def _ses_client(region: str, access_key: str | None, secret_key: str | None) -> 
 
 
 def send(*, to: str, subject: str, text: str, html_body: str, settings: Settings | None = None) -> str:
-    """Hand one message to SES and return its message id. Blocking: call it from a thread.
-
-    Raises :class:`SendFailed` for anything SES (or the network in front of it) refused.
-    """
     from botocore.exceptions import BotoCoreError, ClientError
 
     settings = settings or get_settings()
@@ -230,14 +159,10 @@ def send(*, to: str, subject: str, text: str, html_body: str, settings: Settings
     except ClientError as exc:
         code = str(exc.response.get("Error", {}).get("Code") or "ClientError")
         raise SendFailed(code, permanent=code in PERMANENT_ERROR_CODES) from None
-    except BotoCoreError as exc:  # network, endpoint, credentials resolution
+    except BotoCoreError as exc:
         raise SendFailed(type(exc).__name__, permanent=False) from None
     return str(answer.get("MessageId") or "")
 
-
-# --------------------------------------------------------------------------------------
-# Templates
-# --------------------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -253,7 +178,6 @@ def app_url(path: str = "", settings: Settings | None = None) -> str:
 
 
 def format_moment(value: Any) -> str:
-    """"10 October 2026, 2:30 pm IST" from an aware datetime or an ISO string."""
     moment = value
     if isinstance(value, str):
         try:
@@ -271,8 +195,6 @@ def format_moment(value: Any) -> str:
 
 
 def locked_until_words(value: Any) -> str:
-    """When a two-step pause ends, in words: the documentation portal's helper, by name, in this
-    product's own clock (:func:`format_moment`, India Standard Time)."""
     return format_moment(value) if value else "later today"
 
 
@@ -282,10 +204,6 @@ def _greeting(name: Any) -> str:
 
 
 def _html(paragraphs: list[str], *, button: tuple[str, str] | None = None, quote: str | None = None) -> str:
-    """A deliberately plain HTML part: system fonts, one column, one button, no images, no tracking.
-
-    Every interpolated value arrives here already escaped by the caller's use of :func:`_e`.
-    """
     parts = [
         '<!doctype html><html><body style="margin:0;padding:24px;background:#f6f5f2;'
         'font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2328;">',
@@ -314,11 +232,6 @@ def _html(paragraphs: list[str], *, button: tuple[str, str] | None = None, quote
     return "".join(parts)
 
 
-# --------------------------------------------------------------------------------------
-# The Monday summary (services/weekly_digest.py)
-# --------------------------------------------------------------------------------------
-
-#: How many workshop titles the e-mail names under Waiting and Overdue; the page shows five.
 DIGEST_EMAIL_ITEMS = 3
 _DIGEST_LABEL = "margin:0 0 2px;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#6b6457;"
 _DIGEST_FIGURE = "margin:0;font-size:22px;line-height:1.3;font-weight:600;color:#1f2328;"
@@ -333,13 +246,11 @@ def _count(value: Any) -> int:
 
 
 def digest_title(waiting: Any, overdue: Any) -> str:
-    """The subject and the in-app title, one sentence for both."""
     w, o = _count(waiting), _count(overdue)
     return f"Your week: {w} waiting, {o} overdue" if o else f"Your week: {w} waiting"
 
 
 def coverage_words(coverage: dict[str, Any] | None) -> tuple[str, str, str]:
-    """``(label, figure, note)`` for the coverage block: "Reports in", "71%", "41 of 58"."""
     cov = coverage or {}
     label = str(cov.get("label") or "Coverage")
     value = _count(cov.get("value"))
@@ -351,8 +262,6 @@ def coverage_words(coverage: dict[str, Any] | None) -> tuple[str, str, str]:
     return label, figure, f"{value} of {_count(of)}"
 
 
-# The lines whose workshops are listed by title. "and N more" counts only these, so a sanction order
-# or a record to review is never passed off as one more workshop.
 _TITLED_LINES = {"waiting": ("approvals", "inspections"), "overdue": ("stages", "reviews")}
 
 
@@ -366,7 +275,6 @@ def _titled_total(section: dict[str, Any], key: str) -> int:
 
 
 def _digest_blocks(sections: list[dict[str, Any]], coverage: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """The four blocks in their fixed order, from the stored payload."""
     by_key = {str(s.get("key")): s for s in sections or [] if isinstance(s, dict)}
     blocks: list[dict[str, Any]] = []
     for key, label in (("waiting", "Waiting for you"), ("overdue", "Overdue"), ("new", "New this week")):
@@ -389,11 +297,6 @@ def _digest_html(
     footer: tuple[str, str],
     settings: Settings | None = None,
 ) -> str:
-    """The summary's HTML part, in :func:`_html`'s shell: the same page, card, button and fonts.
-
-    Four compact blocks, each a small uppercase label over one figure, with at most three linked
-    workshop titles under Waiting and Overdue. Every value is escaped here; nothing arrives escaped.
-    """
     parts = [
         '<!doctype html><html><body style="margin:0;padding:24px;background:#f6f5f2;'
         'font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2328;">',
@@ -452,7 +355,6 @@ def _e(value: Any) -> str:
 
 
 def subject_for(kind: str, params: dict[str, Any]) -> str:
-    """The subject alone — stored on the outbox row so the send log reads without rendering."""
     title = str(params.get("workshopTitle") or "your design workshop").strip()
     if kind == PASSWORD_LINK:
         if params.get("context") == "SANCTION":
@@ -510,7 +412,6 @@ def subject_for(kind: str, params: dict[str, Any]) -> str:
 def render(
     kind: str, params: dict[str, Any], *, secret: str | None = None, settings: Settings | None = None
 ) -> Rendered:
-    """Subject, plain text and HTML for one message. ``secret`` is the set-password link, if any."""
     settings = settings or get_settings()
     subject = subject_for(kind, params)
     greeting = _greeting(params.get("recipientName"))
@@ -521,7 +422,6 @@ def render(
             raise ValueError("A password-link message needs its link")
         expires = format_moment(params.get("expiresAt"))
         if params.get("context") == "SANCTION":
-            # A sanction order named this person (2026-10-18): the officer's e-mail, sent for them.
             order = str(params.get("sanctionOrderNo") or "").strip()
             title = str(params.get("workshopTitle") or "your design workshop")
             lead = (
@@ -542,8 +442,6 @@ def render(
             )
             label = "Choose your password"
         elif params.get("requestedBy") == "self":
-            # "Forgot your password?" — the person asked, so the message says so, and says that the
-            # second step (if it is on) is still asked for at sign-in afterwards.
             lead = (
                 f"You asked for a link to set a new password for {PRODUCT_NAME}. Setting it signs you "
                 "out everywhere you are signed in. If two-step verification is on for your account, "
@@ -576,7 +474,6 @@ def render(
             "because whoever did this knows it. If you sign in with Google, Microsoft or Yahoo, change "
             "the password of that account."
         )
-        # Only the six-digit pause leaves a way in; a recovery-code pause says nothing it cannot keep.
         later = ["Your recovery codes still work while the pause lasts."] if params.get("codeKind") != "recovery" else []
         link = app_url("/login", settings)
         text = "\n\n".join([greeting, lead, act, *later, sign_off]) + "\n"
@@ -715,7 +612,6 @@ def render(
     raise ValueError(f"Unknown e-mail kind {kind!r}")
 
 
-#: Why the reader got a notice, and how to stop it — one sentence per preference.
 _WHY_WORKSHOP = "You get these because you work on this workshop. You can turn them off in Settings."
 _WHY_ACCESS = "You can turn these e-mails off in Settings."
 _WHY_HAND_IN = (
@@ -737,7 +633,6 @@ _RECORD_PATHS = {
 
 
 def record_path(record_type: Any, record_id: Any) -> str:
-    """The read-only page of one record, for a comment notice's button."""
     template = _RECORD_PATHS.get(str(record_type or "").lower(), "/sharing")
     return template.replace("{id}", str(record_id or ""))
 
@@ -745,7 +640,6 @@ def record_path(record_type: Any, record_id: Any) -> str:
 def _notice_parts(
     kind: str, params: dict[str, Any]
 ) -> tuple[str, str | None, list[str], tuple[str, str], str] | None:
-    """``(lead, quote, items, (button label, path), why)`` for the plain notices, or ``None``."""
     title = str(params.get("workshopTitle") or "your design workshop")
     workshop_path = f"/design-workshops/{params.get('workshopId')}"
     actor = str(params.get("actorName") or "").strip()
@@ -831,8 +725,6 @@ def _notice_parts(
 
 
 def _official_path(params: dict[str, Any]) -> str:
-    """Where an official opens a handed-in report: the approvals screen for the approving authority,
-    the inspection screen for an inspector."""
     workshop_id = params.get("workshopId")
     if params.get("approver"):
         return f"/design-workshop-approvals/{workshop_id}"

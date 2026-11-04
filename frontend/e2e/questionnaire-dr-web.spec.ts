@@ -4,17 +4,6 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { ME, OTHER, QuestionnaireFake } from "./support/qv2Fake";
 
-/**
- * DESIGNER-PORTAL'S SHARED QUESTIONNAIRE, IN A REAL BROWSER (UNIFY 5.4, Web; stream U1).
- *
- * Every screen runs for real over a production build (`next build && next start`, the
- * `questionnaire-web` job in `.github/workflows/checks.yml`); every `/api` call is answered by the
- * in-memory fake in `e2e/support/qv2Fake.ts`, which keeps what each screen sent. Each test is
- * tagged with the feature-registry rows it exercises (`@qf:<id>`, `shared/questionnaire-features.json`).
- * The server's own rules (the lock, the soft delete, the shims) are held by the backend suites and
- * by the real-stack spec, `e2e/questionnaire-dr-v2-stack.spec.ts`.
- */
-
 const SHOTS = process.env.E2E_SHOT_DIR ?? "test-results/questionnaire-dr-web";
 
 async function open(page: Page, fake: QuestionnaireFake, path: string) {
@@ -47,9 +36,7 @@ test("@qf:A18 @qf:A8 @qf:B1 @qf:B3 @qf:B30 @qf:B31 @qf:D2 @qf:D3 @qf:B38 a sessi
   const fake = new QuestionnaireFake();
   await open(page, fake, "/questionnaire/sessions/new");
   const sheet = page.locator("[data-start-sheet]");
-  // B30: the design workshop most recently given; B31: its primary form, resolved by the server.
   await expect.poll(() => fake.calledWith("GET", "/questionnaire/form-for").some((c) => c.query.get("designWorkshopId") === "dw1")).toBe(true);
-  // A8: the workshop's forms are offered first, under their kind.
   await sheet.locator("[data-searchable-select]").nth(1).click();
   await expect(page.getByText("This workshop’s forms · Workshop interview")).toBeVisible();
   await page.keyboard.press("Escape");
@@ -89,7 +76,6 @@ test("@qf:A11 @qf:B19 @qf:B20 @qf:A20 @qf:B21 someone else's answer is locked wi
   await page.getByRole("button", { name: "A", exact: true }).click();
   await page.getByRole("switch", { name: "Type answers" }).click();
   const a1 = page.locator("[data-answer-box='l1']");
-  // P15 for Giriraj: Priya answered, and only she or a lead can change it.
   await a1.locator("[data-searchable-select]").first().click();
   await page.getByRole("option", { name: "Giriraj Prasad Chhipa" }).click();
   await expect(a1.locator("[role=textbox]")).toHaveAttribute("aria-readonly", "true");
@@ -98,7 +84,6 @@ test("@qf:A11 @qf:B19 @qf:B20 @qf:A20 @qf:B21 someone else's answer is locked wi
   await expect(page.locator("[data-answer-history]")).toContainText("Wooden blocks");
   await expect(page.locator("[data-answer-history]")).toContainText("Blocks");
   await page.getByRole("button", { name: "OK" }).click();
-  // B20: "All 2" — one GROUP_SHARED item for Giriraj and one for the guest, with the note (A20).
   const a2 = page.locator("[data-answer-box='l2']");
   await a2.getByRole("button", { name: "Add a note" }).click();
   await a2.locator("[data-answer-note]").fill("Asked twice");
@@ -115,9 +100,6 @@ test("@qf:A11 @qf:B19 @qf:B20 @qf:A20 @qf:B21 someone else's answer is locked wi
 test("@qf:B22 @qf:C2 @qf:B23 @qf:C3 @qf:B18 @qf:B40 a take's transcript is offered as an answer; removed takes restore; a take has a history", async ({ page }) => {
   const fake = new QuestionnaireFake();
   await fake.install(page);
-  // The restore re-reads the session and then the form's structure. Hold that structure read open so
-  // the take is offered while the session is half re-read: the window in which the section used to
-  // lose its questions, and "Use as answer" never opened it (the 0.0.8 flake). Held, not delayed.
   let holdStructure = false;
   let heldStructureReads = 0;
   let releaseStructure!: () => void;
@@ -250,9 +232,6 @@ for (const theme of ["light", "dark"] as const) {
     const prompt = page.locator("[data-prompt='P17']");
     await expect(prompt.getByRole("button", { name: "Not now" })).toBeVisible();
     await expect(prompt.getByRole("button", { name: "Add" })).toBeVisible();
-    // The dialog panel springs in (y 10 -> 0, scale 0.98 -> 1), so two separate boundingBox() calls
-    // can land on different frames of that motion and disagree by several px with the buttons on one
-    // line. Read both tops in one layout pass, once the fonts the labels are set in have loaded.
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     const tops = await prompt
       .getByRole("button", { name: /^(Not now|Add)$/ })
@@ -499,7 +478,6 @@ test("@qf:C8 a formatted answer is written as the document and its plain text", 
   expect(String(item.richText)).toContain("Indigo");
 });
 
-/** Writes into the shared client's IndexedDB once the page has opened it. */
 async function seedQuestionnaireDb(page: Page, store: string, rows: unknown[]) {
   await page.evaluate(
     async ({ store, rows }) => {
@@ -549,9 +527,6 @@ test("@qf:B15 a take cut short by a closed tab is offered back by P13 when the s
 
 test("@qf:B39 the fix tray sends a refused step again, sends without the conflicting answers, and discards", async ({ page }) => {
   const fake = new QuestionnaireFake();
-  // The page drains the outbox as soon as it loads, and that drain re-sends the refused participant
-  // step. The server must refuse it the way it was refused before, or the reason in the tray is
-  // replaced by whatever the re-send happens to get, depending on which lands first.
   fake.removedArtisans.add("a2");
   await open(page, fake, "/questionnaire");
   await expect(page.locator("[data-sessions-list]")).toBeVisible();
@@ -588,9 +563,6 @@ test("@qf:B39 the fix tray sends a refused step again, sends without the conflic
   await expect(page.locator("[data-outbox-tray]")).toHaveCount(0);
 });
 
-// ── Recording chips and the shared filters (owner, 31 Oct 2026) ───────────────────────────────
-
-/** Types into a filter's searchable select and picks a row the server's typeahead answered. */
 async function typeahead(page: Page, fake: QuestionnaireFake, scope: string, field: string, apiField: string, term: string, option: RegExp) {
   await page.locator(`${scope} [data-filter-field='${field}'] button`).first().click();
   await page.locator("[data-anchored-popover] input").last().fill(term);
@@ -614,7 +586,6 @@ test("@qf:E3 @qf:E6 the sessions list searches and filters on the server and kee
   await page.locator("[data-filter-pill='source=UPLOAD']").click();
   await expect.poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("source") === "UPLOAD")).toBe(true);
   await expect(page).toHaveURL(/source=UPLOAD/);
-  // A refresh keeps the filters: the box and the pill come back from the URL, and so does the request.
   fake.calls.length = 0;
   await page.reload();
   await expect(page.locator("[data-filter-bar]").getByRole("searchbox")).toHaveValue("Second");
@@ -622,7 +593,6 @@ test("@qf:E3 @qf:E6 the sessions list searches and filters on the server and kee
   await expect.poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("source") === "UPLOAD" && c.query.get("q") === "Second")).toBe(true);
   await page.locator("[data-clear-filters]").click();
   await expect(page).not.toHaveURL(/source=/);
-  // The artisans select searches the server as the reader types, and its pick filters the list.
   await page.locator("[data-filters-toggle]").click();
   await typeahead(page, fake, "[data-filters-panel]", "artisanId", "artisans", "Mee", /Meena Devi/);
   await expect.poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("artisanId") === "a2")).toBe(true);
@@ -690,7 +660,6 @@ test("@qf:E4 the forms library and a form's own sessions narrow by the shared fi
   await expect(page).toHaveURL(/\/questionnaires\/f1\?source=APP/);
   await sessions.locator("[data-form-session-list] [data-chip-filter='languageCode=hi']").first().click();
   await expect(page).toHaveURL(/languageCode=hi/);
-  // A form's sessions: the researcher select is a server typeahead too.
   await typeahead(page, fake, "[data-filters-panel]", "researcherId", "researchers", "Priya", /Priya Shah/);
   await expect
     .poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("questionnaireId") === "f1" && c.query.get("researcherId") === "u-other"))

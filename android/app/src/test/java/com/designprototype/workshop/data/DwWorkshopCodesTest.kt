@@ -10,33 +10,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * `DwWorkshopCodes.kt` against the values `frontend/lib/workshopCodes.ts` actually produces.
- *
- * EVERY EXPECTED VALUE BELOW WAS PRINTED BY THE WEB MODULE, not derived from the Kotlin. The cases
- * are `frontend/e2e/workshop-codes.spec.ts` — which is the payload grammar's specification — plus
- * the ones that only exist because the JVM is not a browser. That distinction is the whole point of
- * the file: a card printed by the web is a physical object in a workshop, and the only thing that
- * makes it readable on a handset is that these two implementations agree character for character.
- * When they disagree, the TypeScript is right and the Kotlin is broken.
- *
- * A ROUND TRIP ON ITS OWN WOULD PROVE NOTHING. `encode` then `decode` inside one language passes for
- * any self-consistent pair of functions, including a hash with a transposed constant — so the code
- * STRINGS are asserted whole, and the check characters are pinned in a golden table. Those are the
- * assertions with power; the round trips are there for the sentences they let the tests state.
- */
 class DwWorkshopCodesTest {
-
-    // ----------------------------------------------------------------------------------
-    // The payload
-    // ----------------------------------------------------------------------------------
 
     @Test
     fun `a code round-trips to the same record, and the id comes back in the case the repository stores`() {
         val encoded = encodeWorkshopCode("artisan", ARTISAN_ID)
 
-        // The whole shape is asserted, not just that it round-trips: the printed string is a contract
-        // with every card already in a workshop, and a silent change to it strands them.
         assertEquals("DPW1:A:CMSIK2JG8000EH8XC1LCY661A:NEWD", codeOf(encoded))
         assertEquals(DwWorkshopCodeRef(DwWorkshopRecordType.ARTISAN, ARTISAN_ID), refOf(encoded))
 
@@ -55,52 +34,33 @@ class DwWorkshopCodesTest {
 
     @Test
     fun `the same id under two record types is two different codes`() {
-        // The letter is inside the hashed prefix, so an artisan card and a prototype tag for the same
-        // id differ in their check as well as their letter. A check computed over the id alone would
-        // let one be read as the other by changing a single printed character.
         assertEquals("DPW1:A:CMSIK2JG8000EH8XC1LCY661A:NEWD", codeOf(encodeWorkshopCode("artisan", ARTISAN_ID)))
         assertEquals("DPW1:P:CMSIK2JG8000EH8XC1LCY661A:63DP", codeOf(encodeWorkshopCode("prototype", ARTISAN_ID)))
     }
 
-    // ----------------------------------------------------------------------------------
-    // What a human does to a printed code
-    // ----------------------------------------------------------------------------------
-
-    // The web's name for this case carries a semicolon, which the JVM will not have in an identifier
-    // — a comma is the only difference between the two.
     @Test
     fun `what a human does to a printed code is tolerated, what it means is not`() {
         val code = "DPW1:A:CMSIK2JG8000EH8XC1LCY661A:NEWD"
 
-        // Lower case, the grouping formatWorkshopCodeForPrint adds, and stray whitespace all survive.
         assertEquals(EXPECTED_REF, refOf(decodeWorkshopCode(code.lowercase())))
         assertEquals(EXPECTED_REF, refOf(decodeWorkshopCode(formatWorkshopCodeForPrint(code))))
         assertEquals(EXPECTED_REF, refOf(decodeWorkshopCode("  $code\n")))
 
-        // Crockford's confusables, applied to the CHECK only: O reads as 0 and I/L as 1.
         assertEquals("5QVC", workshopCodeCheck("DPW1:P:CMT0PROTOTYPE0001ABC"))
         assertTrue(decodeWorkshopCode("DPW1:P:CMT0PROTOTYPE0001ABC:5QVC") is DwDecodeResult.Ok)
         assertEquals("1HDH", workshopCodeCheck("DPW1:P:CM0000001MPROTOTYPE"))
         for (typed in listOf("1HDH", "IHDH", "LHDH")) {
             val decoded = decodeWorkshopCode("DPW1:P:CM0000001MPROTOTYPE:$typed")
             assertEquals("cm0000001mprototype", refOf(decoded)?.id)
-            // What comes back is the CANONICAL spelling, so a code typed with an I and one typed with
-            // a 1 are one value downstream rather than two that compare unequal.
             assertEquals("DPW1:P:CM0000001MPROTOTYPE:1HDH", (decoded as DwDecodeResult.Ok).code)
         }
         assertEquals("0N94", workshopCodeCheck("DPW1:P:CM00000010PROTOTYPE"))
         assertTrue(decodeWorkshopCode("DPW1:P:CM00000010PROTOTYPE:ON94") is DwDecodeResult.Ok)
-        // U is absent from Crockford's alphabet on purpose and is left to fail rather than guessed at.
         assertEquals(DwDecodeRefusal.CHECK_FAILED, refusalOf(decodeWorkshopCode("DPW1:P:CM00000010PROTOTYPE:UN94")))
     }
 
     @Test
     fun `a no-break space in a typed code is a refusal about nothing, so it is not one`() {
-        // KOTLIN-ONLY HAZARD. `Char.isWhitespace()` is FALSE for U+00A0 and U+FEFF and Java's `\s` is
-        // ASCII-only, so the obvious spellings of the web's `replace(/\s+/g, "")` would leave both
-        // attached — and the code would then fail the identifier grammar and be reported to a designer
-        // as a DAMAGED CARD. The card is fine; a long press on the space bar of an Android keyboard
-        // produces U+00A0, and a code pasted out of a document carries U+FEFF at its head.
         val nbsp = "\u00A0"
         val zwnbsp = "\uFEFF"
         val figureSpace = "\u2007"
@@ -108,48 +68,32 @@ class DwWorkshopCodesTest {
         assertEquals(EXPECTED_REF, refOf(decodeWorkshopCode("${zwnbsp}DPW1:A:CMSIK2JG8000EH8XC1LCY661A:NEWD")))
         assertEquals(EXPECTED_REF, refOf(decodeWorkshopCode("DPW1:A:CMSIK2JG8000EH8XC1LCY661A:NEWD$figureSpace")))
 
-        // The same set governs the id handed to the encoder, which JavaScript's `trim()` strips.
         assertEquals(
             "DPW1:A:CMSIK2JG8000EH8XC1LCY661A:NEWD",
             codeOf(encodeWorkshopCode("artisan", "$zwnbsp$figureSpace$ARTISAN_ID$nbsp"))
         )
-        // An id that is nothing but those characters is NO id, not a malformed one.
         assertEquals(DwEncodeRefusal.NO_ID, refusalOf(encodeWorkshopCode("artisan", nbsp)))
     }
-
-    // ----------------------------------------------------------------------------------
-    // Refusals
-    // ----------------------------------------------------------------------------------
 
     @Test
     fun `a corrupted code is refused, and refused for the right reason`() {
         val good = "DPW1:A:CMSIK2JG8000EH8XC1LCY661A:NEWD"
 
-        // ONE character of the id changed. This is the case the check exists for: the mutated id is a
-        // perfectly well-formed cuid that collides with nobody, so nothing downstream could ever notice.
         val oneOff = decodeWorkshopCode(good.replace("CMSIK2JG8", "CMSIK2JG9"))
         assertEquals(DwDecodeRefusal.CHECK_FAILED, refusalOf(oneOff))
 
-        // A tag torn across its last character: still a well-formed identifier, still refused.
         assertEquals(
             DwDecodeRefusal.CHECK_FAILED,
             refusalOf(decodeWorkshopCode("DPW1:A:CMSIK2JG8000EH8XC1LCY661:NEWD"))
         )
-        // Short enough that it is no longer an identifier at all, which is a different sentence: there
-        // is nothing here to check against the card character by character.
         assertEquals(DwDecodeRefusal.MALFORMED, refusalOf(decodeWorkshopCode("DPW1:A:CM:NEWD")))
-        // `_` cannot be carried by QR alphanumeric mode, so an id holding one was never printed here.
         assertEquals(
             DwDecodeRefusal.MALFORMED,
             refusalOf(decodeWorkshopCode("DPW1:A:CMSIK2JG8000EH8XC1LCY6_1A:NEWD"))
         )
-        // A check of the wrong LENGTH is a check failure and not a parse failure — three characters
-        // read off a card is a character missed, which is exactly what this refusal is for.
         assertEquals(DwDecodeRefusal.CHECK_FAILED, refusalOf(decodeWorkshopCode("DPW1:A:CMSIK2JG8000EH8XC1LCY661A:NEW")))
         assertEquals(DwDecodeRefusal.CHECK_FAILED, refusalOf(decodeWorkshopCode("DPW1:A:CMSIK2JG8000EH8XC1LCY661A:NEWDD")))
 
-        // Something that is not ours at all. It must not be reported as damaged — a shop barcode is not
-        // a broken workshop tag, and telling a designer to "check the card" would be nonsense.
         for (foreign in listOf("https://example.org/artisans/abc", "4006381333931", "", "   ")) {
             assertNotEquals(
                 "'$foreign' must not be reported as a damaged workshop code",
@@ -163,7 +107,6 @@ class DwWorkshopCodesTest {
         )
         assertEquals(DwDecodeRefusal.EMPTY, refusalOf(decodeWorkshopCode(null)))
         assertEquals(DwDecodeRefusal.EMPTY, refusalOf(decodeWorkshopCode("   ")))
-        // The right number of colons is part of "is this ours at all", not part of "is it damaged".
         assertEquals(DwDecodeRefusal.NOT_A_WORKSHOP_CODE, refusalOf(decodeWorkshopCode("$good:EXTRA")))
         assertEquals(
             DwDecodeRefusal.NOT_A_WORKSHOP_CODE,
@@ -173,9 +116,6 @@ class DwWorkshopCodesTest {
 
     @Test
     fun `the sentences a designer reads are the web's, word for word`() {
-        // These are the whole of what the feature says out loud when it refuses, and they are written
-        // to send a designer somewhere specific. Paraphrasing one on the handset would mean the same
-        // card explained two different ways depending on which client was holding it.
         assertEquals(
             "This code does not check out, so one of its characters is wrong. Read it off the card " +
                 "again, character by character — a single wrong character points at a different record, " +
@@ -218,25 +158,17 @@ class DwWorkshopCodesTest {
         )
     }
 
-    // ----------------------------------------------------------------------------------
-    // Versions
-    // ----------------------------------------------------------------------------------
-
     @Test
     fun `versions - this build writes 1, reads every version it declares, and says so about a newer one`() {
         assertEquals(1, WORKSHOP_CODE_VERSION)
         assertTrue(1 in SUPPORTED_VERSIONS)
         assertTrue(codeOf(encodeWorkshopCode("artisan", ARTISAN_ID))!!.startsWith("DPW1:"))
 
-        // A card printed by a LATER build. "Update the app" and "the tag is damaged" send a designer to
-        // two completely different places, so these must not collapse into one refusal — and a handset
-        // in a village is the client most likely to be the old one holding the newer card.
         val future = decodeWorkshopCode("DPW9:A:CMSIK2JG8000EH8XC1LCY661A:3ESN")
         assertEquals(DwDecodeRefusal.NEWER_VERSION, refusalOf(future))
         assertTrue(messageOf(future)!!.contains("newer version"))
         assertTrue(messageOf(future)!!.contains("code format 9"))
 
-        // A record type a later build might add, met by this one.
         assertEquals(
             DwDecodeRefusal.UNKNOWN_RECORD_TYPE,
             refusalOf(decodeWorkshopCode("DPW1:Z:CMSIK2JG8000EH8XC1LCY661A:VZCR"))
@@ -245,10 +177,6 @@ class DwWorkshopCodesTest {
 
     @Test
     fun `a version is a number and not the digits printed, so a leading zero is the same card`() {
-        // The check is computed over the CANONICALISED prefix — "DPW1", never "DPW01" — which is what
-        // makes a code with a padded version read as the version-1 card it is rather than fail its
-        // check. Reading the version as text would break that silently and only for the cards a person
-        // typed, which is the path with no Reed-Solomon under it.
         for (padded in listOf("DPW01", "DPW001", "DPW0000000001")) {
             val decoded = decodeWorkshopCode("$padded:A:CMSIK2JG8000EH8XC1LCY661A:NEWD")
             assertEquals(EXPECTED_REF, refOf(decoded))
@@ -258,9 +186,6 @@ class DwWorkshopCodesTest {
 
     @Test
     fun `a version too large for an Int is still named in the sentence, not turned into a damaged card`() {
-        // KOTLIN-ONLY HAZARD. `toIntOrNull()` returns null for both of these, and null would have to
-        // become some refusal — the one it would become is "this card is damaged", about a card that is
-        // not. JavaScript's `Number` reads them, so this reads them.
         val padded = decodeWorkshopCode("DPW00000000000000000009:A:CMSIK2JG8000EH8XC1LCY661A:NEWD")
         assertEquals(DwDecodeRefusal.NEWER_VERSION, refusalOf(padded))
         assertTrue(messageOf(padded)!!.contains("code format 9"))
@@ -269,24 +194,6 @@ class DwWorkshopCodesTest {
         assertEquals(DwDecodeRefusal.NEWER_VERSION, refusalOf(overflowed))
         assertTrue(messageOf(overflowed)!!.contains("code format Infinity"))
 
-        // A VERSION OF SEVENTEEN OR MORE SIGNIFICANT DIGITS IS THE ONE CASE THIS PORT DOES NOT MATCH,
-        // and it is written down rather than asserted away. Twenty-three nines is bit-for-bit the
-        // double JavaScript prints as `1e+23`; `jsNumber` goes through `Double.toString`, which
-        // belongs to `PlaceSearch.kt` and is not fixed from here.
-        //
-        // ⚠ WHICH DECIMAL IT PRINTS DEPENDS ON THE JDK, AND THIS LINE USED TO ASSERT ONE OF THEM.
-        // It read `contains("code format 9")`, which is true only while `Double.toString` is NOT the
-        // shortest round-tripping decimal — i.e. before JDK 19 (JDK-4511638). CI pinned JDK 17 then
-        // (25 since 2026-10-09) and
-        // prints "9.999999999999999e+22", so it passed there; Gradle here resolves JDK 21, prints
-        // "1.0E23", and it failed on every developer machine. A test that is green on the build
-        // server and red for everyone who runs it is worse than one that is simply red: it trains
-        // people to ignore a failing suite.
-        //
-        // So what is asserted is what this file OWNS and what actually reaches a designer: the card
-        // is called NEWER_VERSION rather than damaged, and the sentence names a number of some kind.
-        // Which decimal spelling that number takes is `Double.toString`'s business and nobody here
-        // depends on it.
         val absurd = decodeWorkshopCode("DPW${"9".repeat(23)}:A:CMSIK2JG8000EH8XC1LCY661A:NEWD")
         assertEquals(DwDecodeRefusal.NEWER_VERSION, refusalOf(absurd))
         val sentence = messageOf(absurd)!!
@@ -296,25 +203,14 @@ class DwWorkshopCodesTest {
         )
     }
 
-    // ----------------------------------------------------------------------------------
-    // The anti-PII gate
-    // ----------------------------------------------------------------------------------
-
     @Test
     fun `no sensitive field can be encoded, whatever a caller hands over`() {
-        // The one that matters most. An artisan's Aadhaar number is the repository's deduplication key
-        // and is regulated personal data; a QR is public the moment the card is printed.
         assertEquals(DwEncodeRefusal.ID_LOOKS_SENSITIVE, refusalOf(encodeWorkshopCode("artisan", "234567890123")))
-        // The spaced form people actually type, and the mask the API hands to a caller not entitled to
-        // the real number.
         assertEquals(DwEncodeRefusal.ID_LOOKS_SENSITIVE, refusalOf(encodeWorkshopCode("artisan", "2345 6789 0123")))
         assertEquals(DwEncodeRefusal.ID_LOOKS_SENSITIVE, refusalOf(encodeWorkshopCode("artisan", "2345-6789-0123")))
         assertEquals(DwEncodeRefusal.ID_LOOKS_SENSITIVE, refusalOf(encodeWorkshopCode("artisan", "XXXX XXXX 9012")))
-        // Pehchan, in the shape normalize_pehchan stores it: upper-case alphanumerics, no separators.
         assertEquals(DwEncodeRefusal.ID_LOOKS_SENSITIVE, refusalOf(encodeWorkshopCode("artisan", "VW1234567890")))
 
-        // Everything else a caller could wrongly pass, refused by the identifier grammar rather than by
-        // a list of banned shapes — a list would only ever cover the fields somebody thought of.
         for (value in listOf("Ram Kumar", "ram@example.org", "+91 98765 43210", "Bagru, Rajasthan", "ram", "", null)) {
             assertTrue(
                 "encoding '$value' must be refused",
@@ -322,17 +218,10 @@ class DwWorkshopCodesTest {
             )
         }
 
-        // An id with a capital in it is refused rather than upper-cased into an id that does not exist:
-        // the payload is upper case, so a mixed-case id could not be decoded back to itself.
         assertEquals(
             DwEncodeRefusal.ID_NOT_AN_IDENTIFIER,
             refusalOf(encodeWorkshopCode("artisan", "CmSik2jg8000eh8xc1lcy661a"))
         )
-        // A record type this build does not print, in the spellings a caller could reach for. It used
-        // to read "craft" — crafts now carry a letter of their own, so the assertion is re-pointed at
-        // things this repository genuinely does not issue codes for rather than dropped, and the
-        // capitalised spelling stays: `ofWire` is exact on purpose, because a case-insensitive port
-        // would print a card the web could not have printed.
         for (notARecord in listOf("designer", "location", "user", "review", "Artisan", "")) {
             assertEquals(
                 "encoding a “$notARecord” must be refused as an unknown record type",
@@ -344,12 +233,6 @@ class DwWorkshopCodesTest {
 
     @Test
     fun `an Aadhaar number spaced the way it is printed is refused as sensitive, not as malformed`() {
-        // KOTLIN-ONLY HAZARD, and the reason the gate strips by JavaScript's whitespace rule. Java's
-        // `\s` is ASCII-only, so with the obvious spelling a number grouped with no-break spaces —
-        // which is what a paste out of a spreadsheet or a web form carries — would keep them, miss the
-        // twelve-digit gate, and fall through to "that is not an identifier". The card is refused
-        // either way; what is lost is the sentence that tells a caller it just handed over an Aadhaar
-        // number, which is the only reason the sensitive shapes are tested first at all.
         for (spacing in listOf("\u00A0", "\u2007", "\u202F", " ")) {
             assertEquals(
                 "an Aadhaar number grouped with U+%04X".format(spacing[0].code),
@@ -361,8 +244,6 @@ class DwWorkshopCodesTest {
 
     @Test
     fun `the identifier grammar's edges are the web's edges`() {
-        // The floor keeps short human-typed strings out; the ceiling keeps a runaway value from
-        // producing a symbol too dense to scan off a 22mm card. Both are exact, so both are pinned.
         assertEquals(DwEncodeRefusal.ID_NOT_AN_IDENTIFIER, refusalOf(encodeWorkshopCode("artisan", "cmsik2j")))
         assertEquals("DPW1:A:CMSIK2JG:WRSM", codeOf(encodeWorkshopCode("artisan", "cmsik2jg")))
         assertEquals("DPW1:A:${"A".repeat(64)}:NQSE", codeOf(encodeWorkshopCode("artisan", "a".repeat(64))))
@@ -370,39 +251,24 @@ class DwWorkshopCodesTest {
             DwEncodeRefusal.ID_NOT_AN_IDENTIFIER,
             refusalOf(encodeWorkshopCode("artisan", "a".repeat(65)))
         )
-        // A hyphen is legal inside and at the end (UUIDs are full of them) but not as the first
-        // character, where it would make the payload's own separator grammar ambiguous to read aloud.
         assertEquals("DPW1:A:CMSIK2JG-:C02V", codeOf(encodeWorkshopCode("artisan", "cmsik2jg-")))
         assertEquals(DwEncodeRefusal.ID_NOT_AN_IDENTIFIER, refusalOf(encodeWorkshopCode("artisan", "-cmsik2jg")))
-        // `_` is legal in a lot of id schemes and cannot be carried by QR alphanumeric mode.
         assertEquals(DwEncodeRefusal.ID_NOT_AN_IDENTIFIER, refusalOf(encodeWorkshopCode("artisan", "cm_sik2jg")))
 
-        // The Pehchan gate's ceiling: twenty upper-case alphanumerics is a card number, twenty-one is
-        // merely not an identifier. Both are refused; they are refused with different sentences.
         assertEquals(DwEncodeRefusal.ID_LOOKS_SENSITIVE, refusalOf(encodeWorkshopCode("artisan", "ABCDEFGHIJKLMNOPQRST")))
         assertEquals(
             DwEncodeRefusal.ID_NOT_AN_IDENTIFIER,
             refusalOf(encodeWorkshopCode("artisan", "ABCDEFGHIJKLMNOPQRSTU"))
         )
 
-        // Devanagari numerals are not what a JavaScript `\d` matches, so they reach the identifier
-        // grammar rather than the "that is a number" refusal. A Unicode-aware digit class on the JVM
-        // would have quietly moved this case to the other sentence.
         assertEquals(
             DwEncodeRefusal.ID_NOT_AN_IDENTIFIER,
             refusalOf(encodeWorkshopCode("artisan", "\u0967\u0968\u0969\u096A\u096B\u096C\u096D\u096E"))
         )
     }
 
-    // ----------------------------------------------------------------------------------
-    // The check itself
-    // ----------------------------------------------------------------------------------
-
     @Test
     fun `the check is the web's, character for character`() {
-        // A hash agrees with another hash or it does not; there is no nearly. These sixteen values were
-        // printed by `workshopCodes.ts` itself, and they are what stops a transposed constant or a
-        // sign-extended shift from producing a self-consistent Kotlin that no web-printed card matches.
         val golden = listOf(
             "DPW1:A:CMSIK2JG8000EH8XC1LCY661A" to "NEWD",
             "DPW1:P:CMSIK2JG8000EH8XC1LCY661A" to "63DP",
@@ -416,11 +282,7 @@ class DwWorkshopCodesTest {
             "DPW1:A:CMOTHER0000000000000000ZZ" to "F5K8",
             "DPW1:P:ABCDEFGH" to "62DV",
             "DPW1:A:" to "6HBE",
-            // The empty prefix pins the offset basis on its own, which nothing else here does.
             "" to "S7E5",
-            // Not reachable from a payload this file emits, and pinned anyway: the check is also
-            // computed over what a person TYPED, and `Char.code` has to stay the UTF-16 code unit
-            // `charCodeAt` returns rather than becoming a code point.
             "DPW1:A:\u0B2A" to "8D8C",
             "\uD83D\uDE00" to "3H5R",
             "\u00E9" to "PV24",
@@ -432,9 +294,6 @@ class DwWorkshopCodesTest {
 
     @Test
     fun `a payload can only contain characters a compact QR symbol carries`() {
-        // Byte mode would produce a symbol a third larger for the same id, on a card printed at 22mm.
-        // This is `isQrAlphanumeric` in `frontend/lib/qrEncode.ts`, spelled out because the symbol
-        // builder itself has not been ported to the handset.
         val alphanumeric = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ \$%*+-./:"
         for (id in listOf(ARTISAN_ID, CLIENT_KEY, "cmsik2jg", "a".repeat(64), "cmsik2jg-")) {
             for (type in DwWorkshopRecordType.entries) {
@@ -446,10 +305,6 @@ class DwWorkshopCodesTest {
         }
     }
 
-    // ----------------------------------------------------------------------------------
-    // Presentation
-    // ----------------------------------------------------------------------------------
-
     @Test
     fun `the printed grouping is exactly what the decoder strips back off`() {
         assertEquals(
@@ -458,7 +313,6 @@ class DwWorkshopCodesTest {
         )
         assertEquals("", formatWorkshopCodeForPrint(""))
         assertEquals("ABCD E", formatWorkshopCodeForPrint("ABCDE"))
-        // And what is printed can be typed straight back, which is the only reason to group it.
         assertEquals(
             EXPECTED_REF,
             refOf(decodeWorkshopCode(formatWorkshopCodeForPrint("DPW1:A:CMSIK2JG8000EH8XC1LCY661A:NEWD")))
@@ -469,8 +323,6 @@ class DwWorkshopCodesTest {
     fun `an unresolved code says the same thing about a missing record and a forbidden one`() {
         assertEquals("Artisan", workshopRecordTypeLabel(DwWorkshopRecordType.ARTISAN))
         assertEquals("Prototype", workshopRecordTypeLabel(DwWorkshopRecordType.PROTOTYPE))
-        // The API answers 404 rather than 403 so that a card cannot be used to confirm a record exists.
-        // A message that distinguished the two here would undo that from the other side.
         assertEquals(
             "No prototype in this workshop matches that tag. It may belong to another workshop, or " +
                 "it may not be on this phone yet — open the workshop that made it, or find the " +
@@ -482,9 +334,6 @@ class DwWorkshopCodesTest {
                 "belong to work you do not have access to — search for the artisan by name instead.",
             unresolvedWorkshopCodeMessage(DwWorkshopRecordType.ARTISAN)
         )
-        // EVERY type, not only the two that were here first: the sentence is built from the record
-        // type's own word now, and a word that leaked WHICH of the two situations happened would undo
-        // the API's 404 one card at a time.
         for (type in DwWorkshopRecordType.entries) {
             val message = unresolvedWorkshopCodeMessage(type).lowercase()
             for (giveaway in listOf("permission", "not allowed", "forbidden", "403", "exists")) {
@@ -497,18 +346,6 @@ class DwWorkshopCodesTest {
 
     @Test
     fun `every record type has the same letter here as in the browser, and no two share one`() {
-        // THE FAILURE THIS PREVENTS: a letter meaning one kind of record on the handset and another in
-        // the browser produces a code that scans cleanly and opens the WRONG record, with the check
-        // digit agreeing all the way. Every value below was read off `frontend/lib/workshopCodes.ts`,
-        // and every code string was printed by that module — see the file header. Changing one strands
-        // every card and tag already printed against it.
-        //
-        // THIS MAP IS HAND-HELD AND SO CAN ONLY EVER AGREE WITH ITSELF. It stayed green for as long
-        // as the browser had a `designWorkshop` letter this enum did not, because nothing here reads
-        // the browser. `backend/tests/test_workshop_code_letters.py` is the pin that does: it reads
-        // this enum and `TYPE_LETTER` as text and fails on a letter that differs, or is present on
-        // one surface and absent on the other. What is kept here is the CODE STRINGS below, which
-        // that pin cannot check — it compares tables, not payloads.
         val letters = linkedMapOf(
             DwWorkshopRecordType.ARTISAN to "A",
             DwWorkshopRecordType.CRAFT to "C",
@@ -522,23 +359,14 @@ class DwWorkshopCodesTest {
             DwWorkshopRecordType.PROTOTYPE to "P",
         )
 
-        // The list is the WHOLE list, in the order the "codes exist for…" sentence reads it out: a type
-        // added to the enum and forgotten here fails on size, and one moved fails on order.
         assertEquals(letters.keys.toList(), DwWorkshopRecordType.entries.toList())
 
         val seen = mutableMapOf<String, DwWorkshopRecordType>()
         for ((type, letter) in letters) {
             assertEquals("$type's letter", letter, type.letter)
-            // INJECTIVE. [DwWorkshopRecordType.ofLetter] takes the FIRST entry with a letter, so a
-            // duplicate would not be a compile error — it would silently drop one record type out of
-            // the decoder and resolve every code of that type to the other one.
             assertNull("$letter is already ${seen[letter]}", seen.put(letter, type))
-            // None of the letters people misread off a card. The check digit's alphabet drops I, L, O
-            // and U; the type letter is typed by the same person in the same box and is NOT
-            // confusable-corrected, so it must not use them either.
             assertFalse("$letter is a confusable", letter in "ILOU")
 
-            // Whole strings, not a round trip: these are what a printed card carries.
             val expected = "DPW1:$letter:CMSIK2JG8000EH8XC1LCY661A"
             assertEquals(
                 "$expected:${workshopCodeCheck(expected)}",
@@ -548,17 +376,12 @@ class DwWorkshopCodesTest {
                 DwWorkshopCodeRef(type, ARTISAN_ID),
                 refOf(decodeWorkshopCode("$expected:${workshopCodeCheck(expected)}"))
             )
-            // And the wire name is the web's spelling, which is what lets a scanned code route through
-            // the same `searchRecordEntryMode` a tapped search hit does.
             assertEquals(type, DwWorkshopRecordType.ofWire(type.wire))
         }
     }
 
     @Test
     fun `the anti-PII gate applies to every record type, not only the two it was written for`() {
-        // The gate sits before the letter lookup's success path, so a new record type cannot route
-        // around it — but that is exactly the sort of thing a refactor breaks silently, and the field
-        // it would leak is Aadhaar, this repository's deduplication key.
         for (type in DwWorkshopRecordType.entries) {
             for (sensitive in listOf("234567890123", "2345 6789 0123", "XXXX XXXX 9012", "VW1234567890")) {
                 assertEquals(
@@ -567,14 +390,9 @@ class DwWorkshopCodesTest {
                     refusalOf(encodeWorkshopCode(type, sensitive))
                 )
             }
-            // And an unsaved record still refuses with NO_ID rather than encoding an empty reference.
             assertEquals(DwEncodeRefusal.NO_ID, refusalOf(encodeWorkshopCode(type, null)))
         }
     }
-
-    // ----------------------------------------------------------------------------------
-    // The rows a tag is printed for
-    // ----------------------------------------------------------------------------------
 
     @Test
     fun `a row answers to both the identifiers it is known by`() {
@@ -583,39 +401,19 @@ class DwWorkshopCodesTest {
         assertEquals(ARTISAN_ID, workshopCodeIdForRow(synced))
         assertEquals(CLIENT_KEY, workshopCodeIdForRow(unsynced))
         assertNull(workshopCodeIdForRow(emptyMap()))
-        // A JSON null is the same answer as a missing key, which is what the web's `??` does.
         assertEquals(CLIENT_KEY, workshopCodeIdForRow(mapOf("_entryId" to JsonNull, "_clientKey" to JsonPrimitive(CLIENT_KEY))))
-        // …but an EMPTY `_entryId` is not. `??` falls through on null and on nothing else, so this
-        // answers "" and the encoder then refuses it as NO_ID — rather than printing a tag under the
-        // client key for a row whose own sync state says it has a server id.
         assertEquals("", workshopCodeIdForRow(row("_entryId" to "", "_clientKey" to CLIENT_KEY)))
 
-        // A tag printed on Monday, before the row synced, must still resolve on Friday after it has.
         val tag = decodeWorkshopCode(codeOf(encodeWorkshopCode("prototype", CLIENT_KEY)))
         assertTrue(workshopCodeMatchesRow(refOf(tag)!!, synced))
         assertTrue(workshopCodeMatchesRow(refOf(tag)!!, unsynced))
         assertFalse(workshopCodeMatchesRow(refOf(tag)!!, row("_entryId" to "cmother0000000000000000zz")))
         assertFalse(workshopCodeMatchesRow(refOf(tag)!!, emptyMap()))
-        // An artisan card never matches a prototype row, whatever its id says.
         assertFalse(workshopCodeMatchesRow(DwWorkshopCodeRef(DwWorkshopRecordType.ARTISAN, CLIENT_KEY), synced))
     }
 
-    // ----------------------------------------------------------------------------------
-    // The design workshop letter, and the id shape it is the only type to refuse
-    // ----------------------------------------------------------------------------------
-
     @Test
     fun `a workshop that exists only on one device gets no code, on either client's spelling of its id`() {
-        // THE FAILURE THIS PREVENTS, and it is the reason a designer cannot create a workshop at all.
-        // `local-<uuid>` is what `WorkshopListScreen` mints for a workshop opened with no signal, and
-        // `dwlocal-<uuid>` is the browser's. Neither ever becomes a server id — the create route
-        // carries no client key, so the draft is allocated a fresh cuid on sync and the local id is
-        // thrown away. A tag printed from one resolves to nothing on every device but the one that
-        // made it, and a colleague told there is no such workshop starts their own: two devices, two
-        // workshops, one fortnight of fieldwork split between them.
-        //
-        // Both prefixes pass [ID_PATTERN] perfectly — lower case, hyphenated, the right length — so
-        // this has to be its own refusal ahead of the pattern rather than a consequence of it.
         val local = "local-3f7a91c2-0b4d-4e19-9c2a-1d5e6f708a9b"
         val webLocal = "dwlocal-3f7a91c2-0b4d-4e19-9c2a-1d5e6f708a9b"
 
@@ -628,10 +426,6 @@ class DwWorkshopCodesTest {
             refusalOf(encodeWorkshopCode(DwWorkshopRecordType.DESIGN_WORKSHOP, webLocal))
         )
 
-        // SCOPED THE WAY THE WEB SCOPES IT, and the asymmetry is the point. `dwlocal-` is a string
-        // nothing else here could issue, so it is refused for every type; bare `local-` is six
-        // generic characters, and refusing a real record's code would be worse than the failure it
-        // prevents. A device-local workshop is the only record either client mints under it.
         for (type in DwWorkshopRecordType.entries) {
             assertEquals(
                 "$type must refuse the browser's device-local prefix",
@@ -639,13 +433,6 @@ class DwWorkshopCodesTest {
                 refusalOf(encodeWorkshopCode(type, webLocal))
             )
             if (type == DwWorkshopRecordType.DESIGN_WORKSHOP) continue
-            // THE POSITIVE, AND NOT ONLY THE ABSENCE OF THIS REASON. `assertNotEquals` on the reason
-            // alone is satisfied by ANY other refusal, so a change that started refusing a bare
-            // `local-` id for every type under some new reason would keep this green while doing
-            // exactly what the scoping exists to prevent. The web analogue asserts the encode really
-            // succeeds, so this asserts a code came back — with the reason still named, because a
-            // failure that prints "expected not ID_IS_DEVICE_LOCAL" reads better than "expected not
-            // null" when the scoping itself is what broke.
             assertNotEquals(
                 "$type must NOT refuse a bare `local-` id — only a design workshop mints one",
                 DwEncodeRefusal.ID_IS_DEVICE_LOCAL,
@@ -658,10 +445,6 @@ class DwWorkshopCodesTest {
             )
         }
 
-        // AND THE DECODER SAYS THE SAME THING, because a code the encoder refuses to print is one a
-        // colleague can still type in off a photograph of somebody's screen. Not folded into
-        // MALFORMED: the code is not damaged, and "check it against the card" would send a designer
-        // round a loop that cannot end.
         val prefix = "DPW1:G:LOCAL-3F7A91C2-0B4D-4E19-9C2A-1D5E6F708A9B"
         val typed = "$prefix:${workshopCodeCheck(prefix)}"
         assertEquals(DwDecodeRefusal.DEVICE_LOCAL, refusalOf(decodeWorkshopCode(typed)))
@@ -670,7 +453,6 @@ class DwWorkshopCodesTest {
             messageOf(decodeWorkshopCode(typed))
         )
 
-        // A REAL design workshop id still prints, which is the whole point of the letter.
         assertEquals(
             "DPW1:G:CMSIK2JG8000EH8XC1LCY661A:${workshopCodeCheck("DPW1:G:CMSIK2JG8000EH8XC1LCY661A")}",
             codeOf(encodeWorkshopCode(DwWorkshopRecordType.DESIGN_WORKSHOP, ARTISAN_ID))
@@ -679,31 +461,11 @@ class DwWorkshopCodesTest {
 
     @Test
     fun `a design workshop code that does not resolve names the admin, not a search box`() {
-        // ⚠ THIS SENTENCE IS NOT YET WHAT A DESIGNER READS ON THIS CLIENT, and the test says so
-        // rather than implying otherwise. No production call site passes `DESIGN_WORKSHOP` to
-        // `unresolvedWorkshopCodeMessage`: the typed-code box refuses a `G` code before it asks the
-        // network (see the test below), and the two `WorkshopCodesScreen` call sites are reached only
-        // for `PROTOTYPE` and `ARTISAN`. It is pinned anyway because the BROWSER reaches its copy on
-        // an `ApiError`, and this is the copy that copy has to agree with —
-        // `backend/tests/test_workshop_code_letters.py` compares the two — and because it becomes
-        // this client's answer unchanged the moment `MainActivity` can route a scanned workshop.
-        // THE ONE TYPE WHOSE UNRESOLVED SENTENCE IS NOT THE GENERIC ONE. For every other record the
-        // two states behind a 404 are "not there" and "not yours" and the API refuses to tell them
-        // apart. That holds here too — but a design workshop is the one type where the second state
-        // is both the likely one and completely fixable: the code was handed over by the colleague
-        // standing next to you, precisely so you could work on it together. "Search for the design
-        // workshop by name instead" is a loop with no end in it: a list cannot show a workshop you
-        // are not on yet.
-        //
-        // Word for word the web's `unresolvedWorkshopCodeMessage`, because two clients explaining one
-        // refusal two ways is the failure the whole module is written against.
         assertEquals(
             "No workshop you can open matches this code. Ask an admin to add you — your work here is kept.",
             unresolvedWorkshopCodeMessage(DwWorkshopRecordType.DESIGN_WORKSHOP)
         )
         assertEquals("Design workshop", workshopRecordTypeLabel(DwWorkshopRecordType.DESIGN_WORKSHOP))
-        // It must not become a "request sent" — nothing has been sent, and granting access is an
-        // admin-only PUT that a designer cannot make even with a perfect connection.
         val message = unresolvedWorkshopCodeMessage(DwWorkshopRecordType.DESIGN_WORKSHOP).lowercase()
         assertFalse(message.contains("request sent"))
         assertFalse(message.contains("we have asked"))
@@ -711,33 +473,14 @@ class DwWorkshopCodesTest {
 
     @Test
     fun `the answer to a scanned workshop this build cannot open names the build's limit, not the card`() {
-        // WHAT `RecordCodeLookup` RETURNS FOR A `G` CODE TODAY, which is a different situation from the
-        // sentence above: nothing was asked of the server, so nothing is known about the workshop. The
-        // typed-code box decodes the card perfectly and has nowhere to send it, because opening a
-        // design workshop from a code needs routing in `MainActivity` that does not exist yet.
         val message = designWorkshopCodeNotOpenableMessage()
 
-        // IT MUST NOT CLAIM THE WORKSHOP IS MISSING. The browser RESOLVES a `G` code and opens
-        // `/design-workshops/{id}`, so "no design workshop matches that code" would be false here for
-        // any designer who is on the workshop, and would contradict the other client outright.
         assertFalse(message.lowercase().contains("matches that code"))
-        // NOR THAT IT EXISTS. The access half is conditional, which is the hedge the web's unresolved
-        // sentence carries: a card naming a deleted workshop, or one from another deployment, must not
-        // send a designer to an admin about a workshop that is not there.
         assertTrue(message.contains("If a colleague has just shared this one with you"))
-        // A CAPABILITY, NOT A CLAIM ABOUT THE CARD. "That is a design workshop code, not a record
-        // code" is a statement about the code that the browser contradicts; "this version of the app
-        // cannot" is true on both surfaces and stops being true here without a rewording argument.
         assertTrue(message.startsWith("This is a design workshop's code. Design workshops are opened from"))
-        // And it must not become a "request sent", for the same reason as the sentence above: granting
-        // access is an admin-only PUT that a designer cannot make even with a perfect connection.
         assertFalse(message.lowercase().contains("request sent"))
         assertFalse(message.lowercase().contains("we have asked"))
     }
-
-    // ----------------------------------------------------------------------------------
-    // Fixtures and readers
-    // ----------------------------------------------------------------------------------
 
     private fun row(vararg pairs: Pair<String, String>): DwDataRow =
         pairs.associate { (key, value) -> key to JsonPrimitive(value) }
@@ -757,10 +500,8 @@ class DwWorkshopCodesTest {
     private fun messageOf(result: DwDecodeResult): String? = (result as? DwDecodeResult.Refused)?.message
 
     private companion object {
-        /** The artisan `DwReferenceWireTest` and the web's own spec both use, so the codes line up. */
         const val ARTISAN_ID = "cmsik2jg8000eh8xc1lcy661a"
 
-        /** What a prototype row is known by before it has ever reached the server. */
         const val CLIENT_KEY = "3f7a91c2-0b4d-4e19-9c2a-1d5e6f708a9b"
 
         val EXPECTED_REF = DwWorkshopCodeRef(DwWorkshopRecordType.ARTISAN, ARTISAN_ID)

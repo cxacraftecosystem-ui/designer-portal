@@ -33,10 +33,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * DA-29: the transcript annexure on the phone — which recordings it prints, what the designer is
- * told about the rest, and that the document the export screen writes actually carries it.
- */
 class ReportTranscriptAnnexureTest {
 
     private val schema = SchemaResponse(
@@ -103,7 +99,6 @@ class ReportTranscriptAnnexureTest {
         items = listOf(
             item("a2", 13, "PROTOTYPE_DEVELOPMENT", "Voice note", "**Speaker 1:** Too dark."),
             item("a1", 5, "TRADITIONAL_PROCESS_BASELINE", "Artisan audio", "We tie the warp first."),
-            // Held on the server and not referenced by this draft: never printed.
             item("zz", 5, "TRADITIONAL_PROCESS_BASELINE", "Elsewhere", "Not in this report."),
         ),
         referencedIds = listOf("a1", "a2", "zz", "refused-1"),
@@ -130,7 +125,6 @@ class ReportTranscriptAnnexureTest {
         val all = headings(doc)
         val at = all.indexOf(TRANSCRIPT_DEFAULT_HEADING)
         assertTrue("no transcript annexure in the phone's report: $all", at >= 0)
-        // `load_transcript_items` sorts by stage number first — stage 5 before stage 13.
         assertEquals(listOf("Artisan audio", "Voice note"), all.subList(at + 1, at + 3))
         val text = doc.blocks.filterIsInstance<ParagraphBlock>().joinToString("\n") { runsText(it.runs) }
         assertTrue(text.contains("We tie the warp first."))
@@ -140,7 +134,6 @@ class ReportTranscriptAnnexureTest {
     @Test
     fun `no annexure unless stage 20 asked for it`() {
         assertFalse(headings(build(draft(emptyMap()), cache)).contains(TRANSCRIPT_DEFAULT_HEADING))
-        // And none when the phone holds nothing, rather than a heading over nothing.
         assertFalse(headings(build(draft(asked), null)).contains(TRANSCRIPT_DEFAULT_HEADING))
     }
 
@@ -158,7 +151,6 @@ class ReportTranscriptAnnexureTest {
                 "they were uploaded by another account, or the file is gone.",
             transcriptRefusedWarning(selection.refused),
         )
-        // Never read on this phone at all: every recording is outstanding.
         assertEquals(2, dwTranscriptSelection(schema, draft(asked), null).notOnPhone)
     }
 
@@ -178,7 +170,6 @@ class ReportTranscriptAnnexureTest {
         assertEquals(listOf("a2"), kept.items.map { it.mediaId })
         assertEquals("Too dark.", kept.items.single().text)
         assertEquals(listOf("a2", "gone"), kept.referencedIds)
-        // An older server with no `transcripts` key must not replace a good copy with nothing.
         assertNull(dwTranscriptCacheOf("local-1", schema, dto.stages, null))
         assertNull(dwTranscriptCacheOf("local-1", schema, emptyMap<String, StageBucketDto>(), null))
     }

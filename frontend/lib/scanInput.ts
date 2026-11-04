@@ -1,7 +1,3 @@
-/**
- * What a scanned or typed string is, in the order it is tried: an artisan QR card first, then an
- * older DPW1 code (`lib/workshopCodes`). Old DPW1:A cards keep resolving; nothing prints them now.
- */
 import { CARD_CHECK_MESSAGE, looksLikeArtisanCard, parseArtisanCard, type ParsedCard } from "@/lib/artisanCard";
 import { decodeWorkshopCode, type WorkshopCodeRef } from "@/lib/workshopCodes";
 

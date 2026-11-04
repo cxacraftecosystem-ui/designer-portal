@@ -22,7 +22,6 @@ import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-/** "18 Oct 2026" from the server's ISO timestamp, or null when it cannot be read. */
 internal fun artisanConsentDate(recordedAt: String?): String? {
     val raw = recordedAt?.takeIf { it.isNotBlank() } ?: return null
     val day = runCatching { OffsetDateTime.parse(raw).toLocalDate() }.getOrNull()
@@ -31,11 +30,6 @@ internal fun artisanConsentDate(recordedAt: String?): String? {
     return day.format(DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH))
 }
 
-/**
- * "Recordings may be transcribed" on the artisan edit form: the web's `ArtisanConsentToggle`. A
- * setting, saved the moment it is pressed and never part of the form's unsaved changes: Discard on
- * the form cannot take back an artisan's refusal, and Save does not have to carry it.
- */
 @Composable
 fun ArtisanConsentRow(repository: WorkshopRepository, artisanId: String) {
     val scope = rememberCoroutineScope()

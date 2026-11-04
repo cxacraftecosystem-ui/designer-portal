@@ -13,7 +13,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** C10: the read view shows the readers' completeness for a session, read-only. */
 @RunWith(AndroidJUnit4::class)
 class SessionReadersUiTest {
     @get:Rule val compose = createComposeRule()

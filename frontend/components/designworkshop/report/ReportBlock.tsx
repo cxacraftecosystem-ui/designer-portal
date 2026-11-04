@@ -1,25 +1,5 @@
 "use client";
 
-/**
- * Every block the report builder can emit, drawn as the paper it is about to become.
- *
- * THIS IS NOT A FIFTH RENDERER. `GET /report/preview` builds the same `ReportDocument` the .docx
- * writer, the server .pdf writer and the two on-device Kotlin writers consume, and serialises its
- * blocks; this file draws those blocks and reconstructs nothing. A preview that walked the
- * workshop data itself would be one more traversal of the same record and would be the first of
- * the five to drift — silently, because the person reading the preview is reading it precisely so
- * they do not have to open the file. If a block arrives that this file cannot draw, that is a bug
- * here, never a reason to rebuild the block from the stage data.
- *
- * THE CLASS NAMES ARE NOT TAILWIND. Everything inside a sheet is styled by the hand-written
- * `rp-*` stylesheet in `ReportSheet.tsx`, in POINTS and MILLIMETRES, against the colours
- * `report_model.ReportTheme` declares — because the job of this markup is to look like a printed
- * A4 page and not like a screen. Tailwind's ladders are the right answer for the chrome AROUND
- * the sheet and the wrong one inside it: `text-sm` is 14px on a viewport, and 14px is not 10.5pt
- * on paper. The chrome this file does render outside a sheet — the "not readable from here"
- * placeholder, the figure toggle — uses the themed token ladders as usual.
- */
-
 import {
   createContext,
   memo,
@@ -66,25 +46,6 @@ import {
 
 export { countCodeSpans };
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The one piece of block state that changes a block's HEIGHT
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * The map figure's live-map / printed-figure choice, held OUTSIDE the block where a paginator
- * needs to know about it.
- *
- * `ReportSheets` lays every block out once off-screen, measures it, and draws fixed-height pages
- * from those measurements. Exactly one control inside a block can change a block's height after
- * that: `ReportMapFigure`'s toggle, because the hoverable `IndiaMap` and the rasterised figure the
- * file will contain are not the same size. Left as local state, the drawn copy would grow while
- * the measured copy did not, and the fixed page would CLIP the difference — a silent truncation,
- * on the one screen whose entire job is showing what is on the page.
- *
- * So the state is lifted through a context the paginator provides and re-measures on. Optional by
- * design: with no provider — `StageDocumentPreview`, or anything rendering a bare block list —
- * each figure keeps its own state and behaves exactly as it did before.
- */
 export type ReportFigureModes = {
   modes: Record<string, boolean>;
   setMode: (key: string, value: boolean) => void;
@@ -102,12 +63,6 @@ export function ReportFigureModeProvider({
   return <FigureModeContext.Provider value={value}>{children}</FigureModeContext.Provider>;
 }
 
-/**
- * `useState`, unless a host is holding this piece of state for everybody — then it is the host's.
- *
- * Both hooks run on every render and the choice is made in the RETURN, never around a hook call:
- * a provider that appeared or vanished between renders must not change the hook order.
- */
 function useShared(
   key: string | undefined,
   fallback: boolean
@@ -127,10 +82,6 @@ function useShared(
   return [current, set];
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Inline content
- * ──────────────────────────────────────────────────────────────────────────── */
-
 const ALIGN_STYLE: Record<string, CSSProperties["textAlign"]> = {
   LEFT: "left",
   CENTER: "center",
@@ -138,39 +89,8 @@ const ALIGN_STYLE: Record<string, CSSProperties["textAlign"]> = {
   JUSTIFY: "justify"
 };
 
-/**
- * One run of formatted text.
- *
- * `color` arrives BARE ("1F3864", no leading hash) because both file writers want it that way, so
- * the hash is added here. A run with no colour inherits the sheet's ink rather than being given a
- * default, which is what lets the theme live in one place.
- *
- * UNDERLINE AND STRIKETHROUGH ARE ONE DECLARATION, NOT TWO. `text-decoration: underline` followed
- * by `text-decoration: line-through` is not both — the second wins outright — so a run carrying
- * both marks would silently lose one, and losing it here means a designer approves a deletion
- * that the .docx still shows as struck. `text-decoration-line` takes both keywords at once, so
- * they are composed into a single value.
- */
-/**
- * `PreviewRun` plus the two flags `report_model.Run` grew for raised and lowered text.
- *
- * Declared HERE rather than widened in `previewModel.ts` for one reason: that file is shared, and
- * these two arrive automatically — the preview payload is `dataclasses.asdict` over `Run`, so a
- * field added to the dataclass is on the wire the same day — which makes this an optional pair to
- * read, not a contract to renegotiate. Optional on purpose: a payload generated by a server one
- * release behind simply has neither, and the run draws on the baseline, which is what it did.
- */
 type VerticalRun = PreviewRun & { superscript?: boolean; subscript?: boolean; highlight?: boolean };
 
-/**
- * The one colour a highlight is, in every renderer.
- *
- * `report_model.HIGHLIGHT_FILL` — the hex Word draws for `w:highlight w:val="yellow"`, which is the
- * only spelling the .docx has for it. Restated here rather than imported because this file is the
- * PAPER, and everything inside a sheet is drawn against the report's own colours in its own units;
- * a token from the app's theme would invert with the viewer's dark mode and the printed page does
- * not.
- */
 const HIGHLIGHT_FILL = "#FFFF00";
 
 export function Runs({ runs }: { runs: DwRun[] | undefined }) {
@@ -181,31 +101,18 @@ export function Runs({ runs }: { runs: DwRun[] | undefined }) {
         const decoration = [run.underline ? "underline" : null, run.strike ? "line-through" : null]
           .filter(Boolean)
           .join(" ");
-        // SUPERSCRIPT WINS a run that somehow claims both, which is the same rule
-        // `rich_text._runs_for` applies before either flag ever leaves the server — restated here
-        // only so this file has one answer rather than depending on the payload having exactly one.
         const raised = run.superscript ? "super" : run.subscript ? "sub" : undefined;
         return (
           <span
             key={index}
             style={{
               color: run.color ? `#${run.color}` : undefined,
-              // Both file writers fill the run's own extent and nothing more, so the box here is
-              // the span rather than the line: a highlighted phrase must not tint the whole
-              // paragraph it sits in, on screen or on paper.
               backgroundColor: run.highlight ? HIGHLIGHT_FILL : undefined,
               fontWeight: run.bold ? 700 : undefined,
               fontStyle: run.italic ? "italic" : undefined,
               textDecorationLine: decoration || undefined,
               verticalAlign: raised,
-              // Sized in em and NOT left to the browser's own `vertical-align: super` default,
-              // which shrinks nothing at all: both file writers draw the glyph at 62% of the body
-              // size (`report_pdf.VERTICAL_SCALE`), and a preview that showed a full-size raised
-              // character would be showing a line that fits on screen and does not fit in the file.
               fontSize: raised ? "0.62em" : undefined,
-              // A raised run must not open up the line it sits on — the .docx and both PDF writers
-              // leave the leading alone, so the sheet has to as well or a paragraph containing a
-              // footnote marker paginates differently on screen than on paper.
               lineHeight: raised ? 0 : undefined
             }}
           >
@@ -217,11 +124,7 @@ export function Runs({ runs }: { runs: DwRun[] | undefined }) {
   );
 }
 
-/** One rich-text span. Same composition rule as {@link Runs}, plus the mark the writers lack. */
 function RichSpanText({ span: raw }: { span: DwRichSpan }) {
-  // The same optional pair {@link Runs} reads, and for the same reason: `rich_text.to_preview_json`
-  // emits `superscript`/`subscript` already resolved to single-valued booleans, so this file never
-  // has to know that SUPERSCRIPT beats SUBSCRIPT.
   const span = raw as DwRichSpan & {
     superscript?: boolean;
     subscript?: boolean;
@@ -240,11 +143,6 @@ function RichSpanText({ span: raw }: { span: DwRichSpan }) {
     fontSize: raised ? "0.62em" : undefined,
     lineHeight: raised ? 0 : undefined
   };
-  // CODE is in the stored vocabulary and NOT on `report_model.Run`, so it reaches this screen and
-  // does not reach the file. Drawing it faithfully and counting it (see `countCodeSpans`, whose
-  // total the page states above the preview) is the only honest pair: hiding the mark would lie
-  // to the designer about what they typed, and drawing it without saying anything would lie about
-  // what the ministry will receive.
   return span.code ? (
     <code className="rp-code" style={style}>
       {span.text}
@@ -254,20 +152,6 @@ function RichSpanText({ span: raw }: { span: DwRichSpan }) {
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Photographs
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * Media ids resolved to something an `<img>` can load.
- *
- * A CONTEXT rather than a prop threaded through sixteen block renderers, because the resolution
- * is a cross-cutting concern of the whole preview and only three of the sixteen blocks carry an
- * image at all. `undefined` for an id means "not looked up yet"; `null` means "looked up and
- * there is no URL to show" — a media row this caller is not entitled to the bytes of, or one
- * deleted since the stage referenced it. The two must stay distinguishable or a photograph that
- * is merely still loading renders as a permanent "cannot be shown".
- */
 const MediaUrlContext = createContext<Record<string, string | null>>({});
 
 export function MediaUrlProvider({
@@ -280,32 +164,6 @@ export function MediaUrlProvider({
   return <MediaUrlContext.Provider value={urls}>{children}</MediaUrlContext.Provider>;
 }
 
-/**
- * A photograph the report references, drawn from its media id.
- *
- * `ImageRef.source` IS A MEDIA ID, NOT A URL. The file writers load the bytes server-side; the
- * browser has to fetch its own copy, and it cannot do that by pointing an `<img>` at the API —
- * every media route is bearer-authenticated and an `<img>` sends no Authorization header. So the
- * id is exchanged for `MediaFile.url` first (presigned or public) and that is what is rendered.
- * `url` is gated server-side at the encoder and may legitimately be absent, which is why the
- * fallback is a stated placeholder rather than a broken frame.
- *
- * The EXIF quarter turn is applied here as well: the Android client stores camera output
- * unrotated with the orientation only in EXIF, so a preview that ignored `rotation_deg` would lay
- * every portrait photograph on its side — and a designer would then "fix" a rotation that is
- * already correct in the generated file, which is the worse outcome of the two.
- */
-/**
- * The page geometry a block is drawn against, and whether this copy is the off-screen MEASURING
- * copy. `ReportSheets` provides it; a caller without one gets A4 at the default margin.
- *
- * Images need the first half: `report_pdf._image_box` fits a photograph into a box whose height is
- * a FRACTION OF THE TEXT COLUMN (0.62 for a photograph, 0.30 for a gallery cell), and a grid's
- * column count depends on the column's width (`_block_image_grid` drops a column while a cell would
- * be narrower than 45 mm). The second half lets the measuring copy draw a photograph's box without
- * downloading it: the box is sized from the dimensions the payload already carries, so the bytes
- * cannot change the height and there is nothing for the measurement to wait for.
- */
 export type ReportGeometry = { textWidthMm: number; bodyHeightMm: number; measuring: boolean };
 
 const DEFAULT_GEOMETRY: ReportGeometry = { textWidthMm: 160, bodyHeightMm: 297 - 50 - 16, measuring: false };
@@ -316,10 +174,6 @@ export function ReportGeometryProvider({ value, children }: { value: ReportGeome
   return <GeometryContext.Provider value={value}>{children}</GeometryContext.Provider>;
 }
 
-/**
- * Width over height after the EXIF quarter turn — `ImageRef.aspect` in `report_model.py`. A ref
- * with no dimensions falls back to 4:3, which is `_image_box`'s own `width * 0.75`.
- */
 export function displayAspect(image: DwImageRef): number {
   const turned = image.rotation_deg === 90 || image.rotation_deg === 270;
   const w = turned ? image.height_px : image.width_px;
@@ -327,24 +181,6 @@ export function displayAspect(image: DwImageRef): number {
   return w > 0 && h > 0 ? w / h : 4 / 3;
 }
 
-/**
- * A photograph the report references, drawn from its media id, in the BOX the file gives it.
- *
- * `ImageRef.source` IS A MEDIA ID, NOT A URL — every media route is bearer-authenticated and an
- * `<img>` sends no Authorization header, so the id is exchanged for `MediaFile.url` first (see
- * `useReportMediaUrls`) and a row with no `url` is a stated placeholder rather than a broken frame.
- *
- * THE BOX IS DECIDED BEFORE A BYTE ARRIVES, which is the whole of this component. It is
- * `report_pdf._image_box`: the photograph's display aspect, as wide as the space allows and no
- * taller than `maxHeightFraction` of the text column. The pending state, the loaded photograph and
- * the "cannot be shown" state are all that same box, so a photograph arriving never moves a line
- * of text and never moves a page break — the preview used to draw a 4:3 grey slab, then let the
- * picture take its natural height, then re-paginate the whole document under the reader.
- *
- * THE ROTATION IS APPLIED HERE AND ONLY HERE: `image-orientation: none` stops the browser from also
- * applying the EXIF tag, which is the double turn a portrait photograph would otherwise get, and the
- * quarter turn the payload carries is what both file writers apply to the raw pixels.
- */
 function ReportImage({
   image,
   alt,
@@ -355,11 +191,8 @@ function ReportImage({
 }: {
   image: DwImageRef;
   alt: string;
-  /** Of the text column's usable height: 0.62 for a photograph, 0.30 for a gallery cell. */
   maxHeightFraction?: number;
-  /** An absolute cap instead — the cover's 62 mm hero and 22 mm logo. */
   maxHeightMm?: number;
-  /** A CSS length the box may not exceed, before the height cap. */
   maxWidth?: string;
   className?: string;
 }) {
@@ -367,14 +200,6 @@ function ReportImage({
   const { bodyHeightMm, measuring } = useContext(GeometryContext);
   const url = urls[image.source];
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
-  /*
-    THE PAYLOAD'S OWN SIZE WHEN IT HAS ONE, the photograph's measured size when it does not. A media
-    row uploaded from a browser carries no dimensions (see `imageDimensions`), and the file writers
-    read the real size off the bytes; until it is learned the box holds a 4:3 placeholder.
-    With the payload's size the quarter turn is the payload's too and the browser is told to apply
-    nothing of its own; without it the browser's own reading of the file is the size and the
-    orientation, so the two can never disagree.
-  */
   const learned = useImageDimensions(image.source);
   const hasOwn = image.width_px > 0 && image.height_px > 0;
   const aspect = hasOwn ? displayAspect(image) : learned ? learned.width / learned.height : 4 / 3;
@@ -442,20 +267,7 @@ function ReportGallery({ block }: { block: Extract<PreviewBlock, { type: "IMAGEG
   );
 }
 
-/**
- * Resolve every image id in the preview, once per preview.
- *
- * Batched over the whole document rather than fetched per `<img>`: a photo catalogue is forty
- * pictures, and forty components each firing their own effect is forty requests plus forty
- * renders on a connection that is often the reason the report is being generated at all.
- * `Promise.all` over the distinct ids costs one round trip's latency for all of them.
- *
- * MAP AND CHART BLOCKS ARE NOT SCANNED, and must not be. Their pictures are rasterised by the
- * server and travel inside the block; they reference no media row at all, and looking one up
- * would 404 and be reported to the designer as a photograph that could not be included.
- */
 export function useReportMediaUrls(blocks: PreviewBlock[] | undefined): Record<string, string | null> {
-  // In DOCUMENT order, not sorted: the sizes are probed in this order, so the first pages settle first.
   const { ids, sized } = useMemo(() => {
     const found = new Set<string>();
     const withSize = new Set<string>();
@@ -477,7 +289,6 @@ export function useReportMediaUrls(blocks: PreviewBlock[] | undefined): Record<s
   }, [blocks]);
 
   const [urls, setUrls] = useState<Record<string, string | null>>({});
-  /** Object URLs this hook made from bytes on the device, revoked when it unmounts. */
   const madeHere = useRef<string[]>([]);
 
   useEffect(() => {
@@ -495,20 +306,12 @@ export function useReportMediaUrls(blocks: PreviewBlock[] | undefined): Record<s
       const userId = draftSessionUserId();
       const resolved = await Promise.all(
         unresolved.map(async (mediaId) => {
-          /*
-            THE DEVICE FIRST FOR A PHOTOGRAPH TAKEN HERE, THE SERVER FIRST FOR ANYTHING ELSE, AND
-            THE DEVICE AGAIN WHEN THE SERVER CANNOT BE REACHED. A `dwlocal:` id has no server row at
-            all; a server id resolved with a connection is also KEPT (`keepForOffline`), which is what
-            lets the report screen — and a report file built on this device — show it again with
-            none. See `lib/offlineReport/reportCache`.
-          */
           if (!isLocalMediaRef(mediaId)) {
             try {
               const file = await fetchMediaRow(mediaId);
               if (file.url) void keepForOffline(mediaId, file.url, userId);
               return [mediaId, file.url ?? null] as const;
             } catch {
-              // Fall through to the device's copy.
             }
           }
           const blob = await mediaBlob(mediaId, userId).catch(() => null);
@@ -520,8 +323,6 @@ export function useReportMediaUrls(blocks: PreviewBlock[] | undefined): Record<s
       );
       if (cancelled) return;
       setUrls((current) => ({ ...current, ...Object.fromEntries(resolved) }));
-      // Learn the size of every photograph whose payload does not carry one, in document order, so
-      // the boxes settle top first and before the reader scrolls to them.
       probeImageDimensions(
         unresolved
           .filter((mediaId) => !sized.has(mediaId))
@@ -534,15 +335,12 @@ export function useReportMediaUrls(blocks: PreviewBlock[] | undefined): Record<s
     return () => {
       cancelled = true;
     };
-    // `urls` is deliberately not a dependency: it is written by this effect, and listing it would
-    // re-run the effect after every resolution. `ids` changes exactly when a new image appears.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ids.join(",")]);
 
   return urls;
 }
 
-/** Keep a photograph's bytes on the device, once, for a report built with no connection. */
 async function keepForOffline(mediaId: string, url: string, userId: string | null): Promise<void> {
   if (!userId || (await hasMedia(mediaId, userId))) return;
   try {
@@ -550,21 +348,9 @@ async function keepForOffline(mediaId: string, url: string, userId: string | nul
     if (!response.ok) return;
     await putMedia(mediaId, userId, await response.blob());
   } catch {
-    // Best effort: the photograph is still on the server, and the file built online carries it.
   }
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The two rasterised figures
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * How wide a figure sits in the text column, and where.
- *
- * `width_pct` is a percentage of the TEXT COLUMN, exactly as it is for `ImageBlock` in the file
- * writers — not of the paper. The sheet's padding is the margin, so a percentage inside it is
- * already a percentage of the column and needs no arithmetic.
- */
 function figureStyle(widthPct: number, align: string): CSSProperties {
   const width = `${Math.max(10, Math.min(100, widthPct || 100))}%`;
   if (align === "LEFT") return { width };
@@ -579,29 +365,10 @@ const PIN_KIND_LABEL: Record<DwMapPin["kind"], string> = {
   OTHER: "Place"
 };
 
-/**
- * The report's pins in the shape the repository's own map draws.
- *
- * Two fields are answered with a deliberate blank rather than a guess:
- *
- * `counts` is the per-record-type breakdown every point on `/map` carries, and the report's map
- * has none — its `count` is a fold of artisans onto one coordinate, not a census of five record
- * tables. Zeros are the honest answer and nothing in `IndiaMap` reads them; inventing a
- * breakdown to make the shapes match would put numbers on screen that no query produced.
- *
- * `precision` decides the uncertainty halo, and `MapBlock` carries no precision at all. TOWN is
- * the zero-halo tier that claims the least: SUBJECT_PIN would assert somebody dropped a pin on
- * this exact place, and DISTRICT would draw a 45 km circle of doubt around a coordinate that may
- * be a measured venue. Neither claim is available, so neither is made — and the printed figure,
- * which is the authority, draws no halo either.
- */
 const NO_COUNTS: MapCounts = { artisans: 0, workshops: 0, products: 0, tools: 0, media: 0 };
 
 function toMapPoints(pins: DwMapPin[]): MapPoint[] {
   return pins.map((pin, index) => ({
-    // The ordinal is part of the key so two pins on the same place name stay distinct, and so the
-    // key is stable across renders — `layoutPins` derives its collision jitter from it, and a key
-    // that changed would move a pin between two identical datasets.
     key: `${index}-${pin.label}`,
     layer: "ORIGIN" as const,
     label: pin.label,
@@ -615,39 +382,10 @@ function toMapPoints(pins: DwMapPin[]): MapPoint[] {
   }));
 }
 
-/**
- * The map of India the report carries.
- *
- * THE LIVE MAP AND THE PNG MUST AGREE, AND THE PNG IS THE AUTHORITY. `report_raster` draws the
- * picture that is embedded in the .docx and the .pdf; that raster is what a ministry will receive
- * and is therefore the thing being approved on this screen. The component below is preferred for
- * SCREEN reading whenever the block carries its points, because a preview is a screen and can be
- * interactive — a designer can hover a pin, read a place name and count the artisans folded into
- * it, none of which a flat picture in a document can offer — but it is a second drawing of the
- * same data and a second drawing can disagree. Two ways it is already known to:
- *
- *   * `highlight` tints STATES in the printed figure, and `IndiaMap` has no tinting; the tinted
- *     states are therefore named in words beneath, where they cannot be missed.
- *   * pin size here is proportional to the count relative to the busiest pin on THIS map, while
- *     the rasteriser sizes by kind — the venue larger, an artisan's home district smaller.
- *
- * So: the live map is offered, the printed figure is one click away, and PRINTING this page uses
- * the PNG whenever there is one. A designer approving a document must be able to see the picture
- * the document contains, not an approximation of it that happens to be nicer to use.
- */
 function ReportMapFigure({ block, modeKey }: { block: DwMapBlock; modeKey?: string }) {
   const raster = rasterSource(block);
   const points = useMemo(() => toMapPoints(block.points ?? []), [block.points]);
   const hasLive = points.length > 0;
-  // Falls back to the raster with no toggle when there are no points to draw: an empty outline of
-  // India beside a picture full of pins is not a preview, it is a second, wrong answer.
-  //
-  // THE STATE IS SHARED WITH THE PAGINATOR WHERE ONE IS MOUNTED. The two drawings are different
-  // HEIGHTS, so on a paginated sheet this toggle moves a page break; `ReportSheets` measures its
-  // blocks off-screen and would then be sizing a page for the drawing that is no longer on it,
-  // and the fixed sheet would clip the difference. Through the context both copies read one
-  // answer and the measurement re-runs. With no provider — `StageDocumentPreview`, or any caller
-  // rendering a bare block list — it is ordinary local state and behaves exactly as it did.
   const [showRaster, setShowRaster] = useShared(modeKey, !hasLive);
   const [hovered, setHovered] = useState<string | null>(null);
   const captionId = useId();
@@ -674,9 +412,6 @@ function ReportMapFigure({ block, modeKey }: { block: DwMapBlock; modeKey?: stri
         )
       ) : (
         <div
-          // Printing always uses the printed figure when there is one, whatever is on screen: the
-          // browser's own Print to PDF is a stand-in for the server's, and a stand-in that
-          // substitutes a different drawing is not one.
           className={raster ? "rp-map-live rp-print-hide" : "rp-map-live"}
           aria-describedby={captionId}
         >
@@ -727,37 +462,10 @@ function ReportMapFigure({ block, modeKey }: { block: DwMapBlock; modeKey?: stri
   );
 }
 
-/**
- * One infographic.
- *
- * DRAWN LIVE, IN THE BROWSER, FROM THE BLOCK'S OWN `series`. The .docx and the .pdf get a PNG
- * rasterised by `report_chart` — one implementation of the picture for four renderers that must
- * not disagree about a number — but a preview is a screen, and a screen's job here is to answer
- * "what does this figure look like now that I have changed that cost head?" A round trip to
- * re-rasterise between one edit and the next is a request per keystroke on a metered rural
- * connection, and a figure that lags a second behind the data is one a designer stops believing.
- * So `ReportChartSvg` copies the rasteriser's arithmetic — the axis, the rounding, the slice order
- * and the colour ramp — rather than inventing its own. Read its header before changing anything
- * about how a value is placed.
- *
- * THE PNG IS STILL THE AUTHORITY, and if the payload ever carries one it is what PRINTING uses:
- * the browser's own Print to PDF is a stand-in for the server's writers, and a stand-in that
- * substitutes a different drawing of the same numbers is not one. (`_block_payload` is
- * `dataclasses.asdict` over `ChartBlock`, which holds no pixels at all, so today there is no PNG
- * on this wire — the branch below is what stops a preview going blank the day one is added.)
- *
- * The values are ALSO printed, as a small table under the figure. That is not a fallback: the
- * figure is `aria-hidden` to everything that cannot see it, and the table is how a screen-reader
- * user reads the figure at all, how a truncated category name is read in full, and how a value
- * that fell between two pixels of the axis is read exactly.
- */
 function ReportChartFigure({ block }: { block: DwChartBlock }) {
   const raster = rasterSource(block);
   const series = block.series ?? [];
   const total = series.reduce((sum, [, value]) => sum + (Number.isFinite(value) ? value : 0), 0);
-  // A share is only a fact for a figure that divides a whole. On a bar chart of "cost per head"
-  // a percentage of the sum is a number with no meaning, and printing one invites it to be
-  // quoted.
   const showShare = (block.kind === "PIE" || block.kind === "DONUT") && total > 0;
 
   return (
@@ -804,22 +512,11 @@ function ReportChartFigure({ block }: { block: DwChartBlock }) {
   );
 }
 
-/**
- * A figure's value, printed the way a document prints one.
- *
- * `toLocaleString` with `en-IN` groups by the Indian system — 12,34,567 rather than 1,234,567 —
- * which is what every other number in a report submitted to an Indian ministry uses, and what the
- * rasteriser draws on the axis.
- */
 function formatChartValue(value: number): string {
   if (!Number.isFinite(value)) return "—";
   const decimals = Number.isInteger(value) ? 0 : 2;
   return value.toLocaleString("en-IN", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Rich text, with the structure the writers flatten
- * ──────────────────────────────────────────────────────────────────────────── */
 
 const RICH_HEADING_CLASS: Record<number, string> = { 1: "rp-h1", 2: "rp-h2", 3: "rp-h3", 4: "rp-h4" };
 
@@ -831,19 +528,6 @@ function richLevel(block: DwRichBlock): number {
   return Math.max(0, Math.min(3, Math.trunc(block.level) || 0));
 }
 
-/**
- * A run of list items rendered as REAL nested lists, by recursive descent over the flat stream.
- *
- * The stored document is a flat block list with a depth per item, not a tree — `rich_text.py`
- * explains why: a tree is what every editor library produces and would have to be flattened at
- * the head of all five renderers, and the five flattenings would disagree about the edge cases.
- * Flattening once, when the editor saves, is what stops that. Rebuilding the nesting for DISPLAY
- * is a different job and belongs here, and it has to produce real `<ul>`/`<ol>` nesting rather
- * than a left margin per item: a screen reader announces "list, 3 items, nesting level 2" from
- * the structure and reads an indent as nothing at all.
- *
- * Returns the node and the index of the first block it did not consume.
- */
 function renderRichList(
   blocks: DwRichBlock[],
   start: number,
@@ -861,9 +545,6 @@ function renderRichList(
     if (blockLevel < level) break;
 
     if (blockLevel > level) {
-      // A deeper item belongs INSIDE the item above it. A document that opens at depth 2 with no
-      // depth-1 parent is malformed but real (a phone one release ahead, a hand-edited value), so
-      // an empty carrier item is created rather than dropping the text on the floor.
       if (!items.length) items.push({ content: null, children: [] });
       const [child, next] = renderRichList(
         blocks,
@@ -906,15 +587,6 @@ function renderRichList(
   return [node, index];
 }
 
-/**
- * A rich-text field as the designer typed it.
- *
- * All five block kinds, all four alignments, both list kinds with their depth, and the four
- * heading levels. The heading here carries no number and no bookmark: only headings the TEMPLATE
- * emits take part in the report's numbering and its table of contents, and printing "3.2" beside
- * a heading a designer typed inside a narrative field would claim a place in a contents list it
- * does not have.
- */
 export function RichTextBlocks({ blocks }: { blocks: DwRichBlock[] }) {
   const nodes: ReactNode[] = [];
   let index = 0;
@@ -965,10 +637,6 @@ export function RichTextBlocks({ blocks }: { blocks: DwRichBlock[] }) {
   return <>{nodes}</>;
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The block dispatch
- * ──────────────────────────────────────────────────────────────────────────── */
-
 const PARA_CLASS: Record<string, string> = {
   BODY: "rp-p",
   LEAD: "rp-lead",
@@ -986,10 +654,6 @@ const CALLOUT_CLASS: Record<string, string> = {
   SUCCESS: "rp-callout rp-callout-success"
 };
 
-/**
- * Memoised on the block OBJECT: the live preview shares unchanged blocks between rebuilds
- * (`stageSlice.stableBlocks`), so a keystroke re-renders the paragraph it changed and nothing else.
- */
 export const ReportBlock = memo(function ReportBlock({ block, blockKey }: { block: PreviewBlock; blockKey?: string }) {
   switch (block.type) {
     case "COVER":
@@ -1032,11 +696,6 @@ export const ReportBlock = memo(function ReportBlock({ block, blockKey }: { bloc
       return (
         <section className="rp-toc">
           <h2 className="rp-toc-title">{block.title}</h2>
-          {/* Word paginates its own TOC field and the .pdf writer lays the body out twice to learn
-              which page every heading landed on. Neither is possible in a browser, and inventing
-              page numbers would print numbers the file will not match — a contents page is
-              precisely the part of a document a reader trusts without checking. So the preview
-              says what it is instead of pretending. */}
           <p className="rp-toc-note">
             Page numbers are added in the file (depth {block.depth}).
           </p>
@@ -1049,11 +708,6 @@ export const ReportBlock = memo(function ReportBlock({ block, blockKey }: { bloc
       return (
         <Tag id={block.bookmark || undefined} className={HEADING_CLASS[level]}>
           {block.number ? <span className="rp-heading-number">{block.number}</span> : null}
-          {/* Through `Runs` and not `runsText`, even though a heading is bold already: a heading
-              typed inside a RICH_TEXT narrative can carry an italic term or a struck-through
-              working title, `to_report_blocks` puts those marks on the runs, and both file writers
-              print them. Flattening to plain text here would show a designer a heading the file
-              does not have. */}
           <Runs runs={block.runs} />
         </Tag>
       );
@@ -1067,9 +721,6 @@ export const ReportBlock = memo(function ReportBlock({ block, blockKey }: { bloc
       );
 
     case "BULLETLIST": {
-      // No nesting here, and that is the server's flattening rather than an omission:
-      // `BulletListBlock` carries no depth because a .docx list is a run of paragraphs sharing a
-      // numbering id, and the depth a designer typed survives only through the RICHTEXT block.
       const items = block.items.map((runs, index) => (
         <li key={index}>
           <Runs runs={runs} />
@@ -1091,8 +742,6 @@ export const ReportBlock = memo(function ReportBlock({ block, blockKey }: { bloc
         <dl className={block.columns > 1 ? "rp-kv rp-kv-2" : "rp-kv"}>
           {block.pairs.map(([label, runs], index) => (
             <div key={index}>
-              {/* The builder's own label width, honoured so the preview's columns line up the way
-                  the generated file's borderless two-column table will. */}
               <dt style={{ width: `${block.label_width_pct}%` }}>{label}</dt>
               <dd>
                 <Runs runs={runs} />
@@ -1105,9 +754,6 @@ export const ReportBlock = memo(function ReportBlock({ block, blockKey }: { bloc
     case "TABLE":
       return (
         <figure className="rp-table-figure">
-          {/* A table wider than the column scrolls INSIDE its own box on screen. Letting it widen
-              the sheet would make the whole page scroll sideways and every other block with it —
-              and the sheet is a picture of paper, which does not get wider. */}
           <div className="rp-scroll">
             <table className={block.zebra ? "rp-table rp-zebra" : "rp-table"}>
               <thead>
@@ -1161,8 +807,6 @@ export const ReportBlock = memo(function ReportBlock({ block, blockKey }: { bloc
       );
 
     case "IMAGEGRID":
-      // `columns` is a request, not a guarantee — see `galleryColumns`, which is the file
-      // writers' own fallback rather than a CSS approximation of it.
       return <ReportGallery block={block} />;
 
     case "METRICROW":
@@ -1195,9 +839,6 @@ export const ReportBlock = memo(function ReportBlock({ block, blockKey }: { bloc
         <div className="rp-signatures">
           {block.signatories.map(([name, designation], index) => (
             <div key={index}>
-              {/* The rule IS the signature line, so it is a real border rather than a row of
-                  underscores — underscores do not survive a copy into an email and read to a
-                  screen reader as a text artefact rather than as a place to sign. */}
               <span className="rp-signature-rule" aria-hidden />
               <span className="rp-signature-name">{name}</span>
               {designation ? <span className="rp-signature-role">{designation}</span> : null}
@@ -1213,10 +854,6 @@ export const ReportBlock = memo(function ReportBlock({ block, blockKey }: { bloc
       return <ReportChartFigure block={block} />;
 
     case "SPACER":
-      // The gap is real content in the generated document — it is what stops a section running
-      // into the next — and `height_pct` is a percentage of the TEXT COLUMN HEIGHT. Drawn against
-      // `--rp-text-h`, the sheet's own inner height, rather than at some pixel figure that would
-      // mean one thing on A4 and another on Letter.
       return (
         <div
           aria-hidden
@@ -1225,11 +862,6 @@ export const ReportBlock = memo(function ReportBlock({ block, blockKey }: { bloc
       );
 
     case "PAGEBREAK":
-      // Consumed by `ReportSheet.planFlow`, which folds it onto the following block as
-      // `breakBefore` so that the paginator acts on an instruction rather than on a block with no
-      // drawing. It can still reach here where a caller renders a raw block list —
-      // `StageDocumentPreview` does — so it draws nothing rather than falling through to an
-      // unhandled type.
       return null;
   }
 });

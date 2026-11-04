@@ -1,745 +1,520 @@
-# Design Prototype Workshop
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme-kit/assets/hero-dark.svg">
+  <img src="docs/readme-kit/assets/hero-light.svg" width="100%" alt="Design Prototype Workshop: capture every stage of a craft design workshop, hear every interview in English, and leave with the finished report">
+</picture>
 
-Full-stack, API-first application for craft and textile **designers** running a design & prototype
-development workshop: capture every stage of the workshop on a phone or in the browser — at Basic,
-Standard and Advanced tiers — and generate the workshop report, with prose, tables and photographs,
-as a `.docx` or a PDF.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://readme-typing-svg.demolab.com?font=Plus+Jakarta+Sans&weight=600&size=20&duration=2800&pause=900&color=C090F5&center=true&vCenter=true&width=760&lines=Every+stage+of+a+craft+design+workshop;Interviews+heard%2C+then+read+in+English;The+finished+report%2C+even+offline;One+API+for+web+and+Android">
+    <img src="https://readme-typing-svg.demolab.com?font=Plus+Jakarta+Sans&weight=600&size=20&duration=2800&pause=900&color=762CB1&center=true&vCenter=true&width=760&lines=Every+stage+of+a+craft+design+workshop;Interviews+heard%2C+then+read+in+English;The+finished+report%2C+even+offline;One+API+for+web+and+Android" alt="Every stage of a craft design workshop. Interviews heard, then read in English. The finished report, even offline. One API for web and Android.">
+  </picture>
+</p>
 
-The stage set is declared once, as data, in `backend/app/services/stage_schema.py`, and that one
-declaration drives the capture form, the completeness gate and the report. Every exporter renders
-from one shared document model (`backend/app/services/report_model.py`): OOXML for
-`.docx` and ReportLab for PDF on the server, and `DocxWriter` / `PdfWriter` in
-`android/app/src/main/java/com/designprototype/workshop/report/`, which write the same OOXML and
-draw the same layout onto `android.graphics.pdf.PdfDocument` pages **entirely offline** — a
-workshop held with no signal still ends with a finished report on the phone.
+<p align="center">
+  <img src="https://img.shields.io/badge/Release-0.0.10-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Release: 0.0.10">
+  <img src="https://img.shields.io/badge/Web-Next.js_16-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Web: Next.js 16">
+  <img src="https://img.shields.io/badge/API-FastAPI_·_Python_3.15-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="API: FastAPI on Python 3.15">
+  <img src="https://img.shields.io/badge/Android-Kotlin_+_Compose-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Android: Kotlin and Compose">
+  <img src="https://img.shields.io/badge/AI-Scribe_v2_·_Gemini_3.8_Flash-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="AI: Scribe v2 and Gemini 3.8 Flash">
+  <img src="https://github.com/cxacraftecosystem-ui/designer-portal/actions/workflows/checks.yml/badge.svg" alt="Checks">
+</p>
 
-Alongside the workshop record it keeps the supporting corpus — artisans, crafts, products, tools,
-media, GPS locations, structured interviews with transcription, and review decisions.
+**Design Prototype Workshop** is the Ministry of Textiles' record of a craft design and prototype
+workshop, built by the AI CoE at IIT Kharagpur. Designers capture every stage on a phone or in the
+browser, at Basic, Standard and Advanced tiers; every interview is transcribed, translated into
+English and made searchable; and the workshop ends with a finished Word or PDF report, written on the
+phone itself when there is no signal.
 
-> **Live:** the backend runs on AWS (EC2 at `13.206.216.18`) and is served over HTTPS through
-> CloudFront at **https://d3ekigkotd1xa2.cloudfront.net/api/** (Terraform in `infra/terraform/`,
-> auto-deployed by `.github/workflows/deploy-backend.yml`). CloudFront is dual-stack, so the API is
-> reachable on IPv6-only mobile networks where the IPv4-only origin is not.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme-kit/assets/stats-dark.svg">
+  <img src="docs/readme-kit/assets/stats-light.svg" width="100%" alt="At a glance: three capture tiers, two clients on one API, two report formats, and the report built offline">
+</picture>
 
-**📚 [docs/](docs/README.md) is the documentation index** — start there. It routes you by what you
-are doing, and every document states how it is kept true.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme-kit/assets/divider-dark.svg">
+  <img src="docs/readme-kit/assets/divider-light.svg" width="100%" alt="">
+</picture>
 
-The ones you most likely want:
+## Contents
 
 | | |
 |---|---|
-| The stages, the field registry, the report pipeline | [docs/DESIGN_WORKSHOP.md](docs/DESIGN_WORKSHOP.md) |
-| Handing the app to a designer | [docs/RESEARCHER_GUIDE.md](docs/RESEARCHER_GUIDE.md) |
-| What each screen asks for | [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) |
-| How the system fits together | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| What is stored | [docs/DATA_MODEL.md](docs/DATA_MODEL.md) |
-| Who may do what | [docs/PERMISSIONS.md](docs/PERMISSIONS.md) |
-| Every environment variable | [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) |
-| Deploy runbooks | [backend/DEPLOY_AWS.md](backend/DEPLOY_AWS.md) · [docs/DEPLOYMENT_VERCEL.md](docs/DEPLOYMENT_VERCEL.md) · [docs/CI.md](docs/CI.md) |
-| Known failure modes | [docs/QA_AUDIT.md](docs/QA_AUDIT.md) |
-| Counts: models, endpoints, tests, code volume | [docs/REPO_FACTS.md](docs/REPO_FACTS.md) — **generated; no count is written by hand anywhere** |
+| [What it does](#what-it-does) | the nine things the portal is for |
+| [How it works](#how-it-works) | the workshop flow and the system around it |
+| [The AI suite](#the-ai-suite) | transcription, translation, Ask, drafts, quote cards, measurement, on-device models |
+| [Transcripts](#transcripts) | the pipeline, the viewer, the upload choice and the admin switches |
+| [Questionnaires](#questionnaires) | one engine on four clients, recording chips and filters |
+| [Ministry](#ministry) | sanction orders, the annual plan, inspections and exports |
+| [Data and exports](#data-and-exports) | the data browser, reports, datasets and the craft master list |
+| [Offline and Android](#offline-and-android) | the outbox, the report on the phone, the release line |
+| [Server and infrastructure](#server-and-infrastructure) | boxes, blue/green, memory, backups |
+| [Security](#security) | roles, two-factor sign-in, consent, Aadhaar behind flags |
+| [CI and releases](#ci-and-releases) | what every push proves, and how a release ships |
+| [Quick start](#quick-start) | running it from a clone |
+| [Documentation](#documentation) | where every question is answered |
 
-The app is split into:
+## <img src="docs/readme-kit/assets/icons/layers.svg" width="32" align="top" alt="">&nbsp; What it does
 
-- `backend/`: Python FastAPI REST API, JWT auth, Prisma ORM schema/client, PostgreSQL metadata, S3-compatible signed uploads, CSV export.
-- `frontend/`: Next.js TypeScript + Tailwind CSS web interface for admins and researchers.
-- `android/`: Kotlin + Jetpack Compose Android client using the same REST API.
-- `docker-compose.yml`: local PostgreSQL 17 and S3-compatible object storage (Silo, a maintained MinIO fork).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme-kit/assets/cards-dark.svg">
+  <img src="docs/readme-kit/assets/cards-light.svg" width="100%" alt="What the portal does: capture, offline, reports, interviews, questionnaires, AI help, data, the Ministry and security">
+</picture>
 
-## Architecture
+| Area | What a user gets | Read more |
+|---|---|---|
+| Capture | 22 numbered stages, declared once as data in `backend/app/services/stage_definitions.py`; the capture form, the completeness gate and the report all walk the same declaration | [DESIGN_WORKSHOP.md](docs/DESIGN_WORKSHOP.md) |
+| Reports | `ReportDocument` (`backend/app/services/report_model.py`) renders to OOXML and ReportLab on the server and to `DocxWriter` / `PdfWriter` on the phone | [DESIGN_WORKSHOP.md](docs/DESIGN_WORKSHOP.md) |
+| Interviews | Scribe v2 transcripts in speaker turns, English by Gemini 3.8 Flash, a karaoke viewer, copy and download in five formats | [TRANSCRIPT_PIPELINE.md](docs/TRANSCRIPT_PIPELINE.md) |
+| Questionnaires | the shared engine in `backend/app/questionnaire/`, 92 features tagged on every client in `shared/questionnaire-features.json` | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| AI help | Ask, autodraft, refine, summaries, quote cards, glossary, measurement, captions, identity OCR | [AI_FEATURES.md](docs/AI_FEATURES.md) |
+| Data | `/data` browser, Excel report, streamed datasets, transcripts in every export | [DATASET_API.md](docs/DATASET_API.md) |
+| Ministry | sanction orders, annual plan, inspections, ratings, dashboard, monthly packs | [MINISTRY_EXPORTS.md](docs/MINISTRY_EXPORTS.md) |
+| Crafts | the Ministry's master list: 9 categories, their sub-categories and every craft, identical in both portals | [CRAFTS.md](docs/CRAFTS.md) |
+| Access | eleven roles, scoped grants, two-factor sign-in, opt-out consent | [PERMISSIONS.md](docs/PERMISSIONS.md) |
 
-PostgreSQL stores structured records, media metadata and durable media-processing jobs. Any PostgreSQL server will do — the backend's only database configuration is `DATABASE_URL`, and which provider that points at is a deployment choice rather than an architectural one ("PostgreSQL — pointing this at any provider", below). Images, video, audio and PDFs are uploaded directly to S3-compatible storage using signed PUT URLs. The database stores object keys, URLs, MIME type, size, uploaded-by user, linked record IDs, optional GPS metadata, transcript state and queued AI processing state.
+## <img src="docs/readme-kit/assets/icons/workflow.svg" width="32" align="top" alt="">&nbsp; How it works
 
-This keeps the backend API-first and reusable by both the web client and the Android client.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme-kit/assets/pipeline-dark.svg">
+  <img src="docs/readme-kit/assets/pipeline-light.svg" width="100%" alt="How a workshop flows: capture, sync, transcribe, review, report, archive">
+</picture>
 
-Detailed Mermaid diagrams are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Both clients talk to one FastAPI service. Media never passes through it: clients upload straight to S3
+with presigned URLs, and a separate queue worker does the heavy work (transcription, translation,
+measurement, search indexing, e-mail) so the API stays fast.
 
 ```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif","fontSize":"15px","primaryColor":"#F2E9FE","primaryTextColor":"#1E1B2E","primaryBorderColor":"#9148D2","secondaryColor":"#FAEECD","secondaryTextColor":"#1E1B2E","secondaryBorderColor":"#CD9200","tertiaryColor":"#F3F1FA","tertiaryTextColor":"#1E1B2E","tertiaryBorderColor":"#A7A3BC","mainBkg":"#F2E9FE","nodeBorder":"#9148D2","nodeTextColor":"#1E1B2E","lineColor":"#AA69E9","textColor":"#857F9E","edgeLabelBackground":"#F9F5FF","clusterBkg":"#F9F5FF","clusterBorder":"#D6B6FB","titleColor":"#762CB1"}}}%%
 flowchart LR
-  web[Next.js web] --> api[FastAPI REST API]
-  android[Android Kotlin] --> api
-  api --> db[(PostgreSQL)]
-  api --> queue[(MediaProcessingJob queue)]
-  worker[Queue worker<br/>separate process] --> queue
-  worker --> stt{{"ElevenLabs → Deepgram → Whisper<br/>with failover"}}
-  worker --> gem{{Gemini · grid measurement}}
-  split[Long A/V split into PART_n] --> s3[(S3 / MinIO)]
-  web -->|streamed signed PUT| s3
-  android --> split
-  android -->|streamed signed PUT| s3
-  worker --> s3
+  subgraph Clients
+    W["Web<br/>Next.js 16 on Vercel"]
+    A["Android<br/>Kotlin + Compose"]
+  end
+  subgraph AWS["AWS ap-south-1"]
+    CF["CloudFront<br/>dual-stack HTTPS"]
+    NG["nginx<br/>blue / green"]
+    API["API<br/>FastAPI, uvicorn"]
+    WK["Queue worker<br/>fieldrepo-queue"]
+    S3[("S3<br/>media, backups")]
+  end
+  PG[("Postgres 17<br/>managed")]
+  EL["ElevenLabs<br/>Scribe v2"]
+  GM["Gemini<br/>3.8 Flash"]
+  W --> CF
+  A -->|offline outbox| CF
+  CF --> NG --> API
+  API --> PG
+  WK --> PG
+  W -->|presigned PUT| S3
+  A -->|presigned PUT| S3
+  WK --> S3
+  WK -->|audio, consent re-read| EL
+  WK -->|text| GM
+  classDef accent fill:#762CB1,stroke:#5F1C93,color:#FFFFFF
+  classDef gold fill:#FAEECD,stroke:#CD9200,color:#1E1B2E
+  class API accent
+  class PG,EL,GM gold
 ```
 
-## The Workshop Record
+The stage set is declared once, in `backend/app/services/stage_definitions.py`, against the machinery in
+`backend/app/services/stage_schema.py`. Clients fetch `GET /api/design-workshops/schema`, cache it by its
+`version`, and draw every stage from it; validation, the completeness gate, the report and the research
+export read the same declaration. Answers live as JSON in `DwStageEntry.data`, and a short list of
+promoted fields is also written to indexed columns so lists and datasets can filter without scanning.
 
-A design and prototype workshop is captured as a numbered sequence of stages, at three tiers —
-**Basic** (the minimum the report cannot be written without), **Standard** (desirable for most
-workshops) and **Advanced** (where facilities and expertise permit). Only Basic fields may be
-required, so a workshop held in a village with no power can still reach a complete report.
+## <img src="docs/readme-kit/assets/icons/sparkles.svg" width="32" align="top" alt="">&nbsp; The AI suite
 
-**There is no per-stage form code, validator or report section anywhere in this repository.** Every
-stage, entity and field is declared once, as data, in `backend/app/services/stage_definitions.py`
-against the machinery in `backend/app/services/stage_schema.py`. That one declaration drives:
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme-kit/assets/cards-ai-dark.svg">
+  <img src="docs/readme-kit/assets/cards-ai-light.svg" width="100%" alt="The AI suite: transcription, translation, Ask, drafts, quote cards, glossary, measurement and reading, on-device models, and the budget">
+</picture>
 
-- the capture form on both clients — they fetch `GET /api/design-workshops/schema`, cache it by its
-  `version`, and render each stage by walking entities → fields and dispatching on `field.type`;
-- validation and the completeness gate (`validate_entry`, `stage_completeness`);
-- the report, which `report_builder` produces by walking the same declaration and dispatching on
-  each field's `ReportRole`;
-- the research export, with stable keys and declared units.
+**Provider defaults.** Every text job on the deployment's key runs on **Gemini 3.8 Flash** and falls
+back to **Gemini 3.7 Flash** when 3.8 answers 404. OpenAI (**GPT-6 Luna**, `gpt-6-luna`) or Anthropic
+(**Claude Sonnet 5.5**, `claude-sonnet-5-5`) are used only when an operator sets `AI_TEXT_PROVIDER`, or
+when a user runs their own key. Speech-to-text keeps its own ranked chain.
 
-Storage is hybrid on purpose. Answers live as JSON in `DwStageEntry.data`, keyed by field key; a
-short list of fields (`PROMOTED_COLUMNS`) is *also* written onto typed, indexed columns of
-`DesignWorkshop` so the list screen and the dataset API can answer "every workshop on Ikat in Odisha
-in 2026" with an index seek instead of a table scan. Those columns are an **index over the JSON**,
-not a second copy of it — `promoted_values` is their only writer.
+| Capability | Where | Model or engine | Runs |
+|---|---|---|---|
+| Transcription | queue worker | ElevenLabs Scribe v2, key terms from the craft | server |
+| Translation, summary, quotes, craft terms | queue worker | Gemini 3.8 Flash, one structured pass | server |
+| Ask this interview | transcript viewer | Gemini 3.8 Flash, answers cite the turns | server |
+| Draft answers from a recording | questionnaire, transcript viewer | Gemini 3.8 Flash; drafts wait for approval | server |
+| Refine transcript, refine and translate | web and Android | the deployment's text provider | server |
+| Quote cards | transcript viewer | rendered image plus audio clip; withdrawn consent blocks it | server |
+| Craft glossary | transcript viewer | terms Gemini heard, counted per craft | server |
+| Writing help: proofread, expand, summarise, translate | stage fields | the text provider, a daily allowance per person | server |
+| Grid measurement, photo captions, identity OCR | product, tool, artisan forms | `GEMINI_MEASUREMENT_MODEL` (Gemini 3.8 Flash, 3.7 on 404) | server |
+| Photo geometry, identity OCR | Android | on-device geometry and ML Kit text recognition | phone |
+| Dictation | Android | on-device `SpeechRecognizer`, sherpa-onnx omnilingual ASR | phone |
+| Stage writing help offline | Android | Gemma 4 E2B / E4B on LiteRT | phone |
+| Voice Isolator | admin switch | ElevenLabs audio isolation, off by default | server |
 
-Reports go through one document model. `workshop data + template → ReportDocument → .docx / .pdf /
-HTML preview`, where `ReportDocument` (`backend/app/services/report_model.py`) says *what the report
-says* and nothing about how it is drawn. `report_docx.py` writes OOXML with no third-party
-dependency; `report_pdf.py` lays out through ReportLab; the web preview renders the same blocks. On
-Android, `DocxWriter.kt` and `PdfWriter.kt` are **ports** of those two and run with the radio off, so
-a workshop held with no signal still ends with a finished report on the phone. Because they are ports
-rather than a shared library, the model is the only thing preventing drift.
+**Guard rails.** The two switches `AI_FEATURES_ENABLED` and `AI_TRANSCRIPT_INSIGHTS_ENABLED` gate every
+route (404 while off; both are on in production). Consent is opt-out: no answer sends, a recorded
+refusal sends nothing, and it is re-read immediately before every external call. Spend is capped per
+portal at **USD 100 a month** (`AppSetting.transcriptMonthlyBudgetUsd`): admins are told at 80 %, and at
+100 % transcription pauses and translation waits. A provider's 402 holds the job for 15 minutes without
+spending an attempt; a refusal is reported as declined and never retried. Cost and model badges are
+shown only to Admin, Master Admin and Ministry Admin.
 
-One honest limitation: ReportLab does no complex-script shaping, so a **server-side** PDF of Indic
-prose is legible but not correctly shaped. The `.docx` (Word shapes it) and the **on-device** PDF
-(Android's text stack is HarfBuzz) are both correct.
+## <img src="docs/readme-kit/assets/icons/mic.svg" width="32" align="top" alt="">&nbsp; Transcripts
 
-Full account, including the stage table, the report templates and what offline generation required:
-**[docs/DESIGN_WORKSHOP.md](docs/DESIGN_WORKSHOP.md)**.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme-kit/assets/pipeline-transcript-dark.svg">
+  <img src="docs/readme-kit/assets/pipeline-transcript-light.svg" width="100%" alt="How a recording becomes an English transcript: upload, consent, Scribe v2, turns, Gemini 3.8 Flash, the viewer">
+</picture>
 
-## Local Setup
-
-### 1. Start Infrastructure
-
-```powershell
-docker compose up -d
-docker compose ps
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif","fontSize":"15px","primaryColor":"#F2E9FE","primaryTextColor":"#1E1B2E","primaryBorderColor":"#9148D2","lineColor":"#AA69E9","textColor":"#857F9E","noteBkgColor":"#FAEECD","noteTextColor":"#1E1B2E","noteBorderColor":"#CD9200","actorBkg":"#F2E9FE","actorBorder":"#9148D2","actorTextColor":"#1E1B2E","actorLineColor":"#AA69E9","signalColor":"#AA69E9","signalTextColor":"#857F9E","labelBoxBkgColor":"#F2E9FE","labelBoxBorderColor":"#9148D2","labelTextColor":"#1E1B2E","loopTextColor":"#857F9E","activationBkgColor":"#E7D5FE","activationBorderColor":"#9148D2","sequenceNumberColor":"#FFFFFF"}}}%%
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant API
+  participant W as Worker
+  participant S as Scribe v2
+  participant G as Gemini 3.8 Flash
+  C->>API: media/complete, transcribe ticked
+  API-->>C: MediaFile with the choice stored
+  W->>W: consent, budget and pause checked
+  W->>S: audio, or a video's first sound track
+  S-->>W: words, speakers, timings
+  W->>W: TranscriptVersion of turns
+  W->>G: turns keyed by id
+  G-->>W: English, summary, quotes, terms
+  Note over W,G: refusal marks DECLINED, 402 holds 15 minutes
+  C->>API: GET /api/transcripts/id
+  API-->>C: TranscriptView
 ```
 
-This starts:
+| The viewer | What it does |
+|---|---|
+| Tabs | Original, English, Side by side; turns already in English are marked and never sent |
+| Karaoke | the playing word lights up; a video's transcript plays in a video player, synced |
+| Reading mode | a clean page of turns without the controls |
+| Auto-follow | the view keeps the playing turn in sight until you scroll away |
+| Marks | mark a moment on the timeline; all-marks toggle, mark bubbles, per-speaker colours |
+| Speakers | name each speaker once; it applies to every turn, version and copy |
+| Edits | per-turn edit with history; an edited original marks its English out of date |
+| Copy and download | original, English or both; Markdown, Word, `.srt`, `.vtt`, with or without timestamps |
+| Declined English | an editor types or pastes it (`POST /api/transcripts/{mediaId}/english`); others see a neutral notice |
+| Offline | Android keeps opened transcripts for offline reading |
 
-- PostgreSQL 17 at `localhost:55432` on the host, mapped to `5432` inside the container
-- S3-compatible object storage at `localhost:9000` — Silo, a maintained fork of MinIO
-  (`docker.io/pgsty/silo`); the compose service is still called `minio`
-- its console at `localhost:9001`
-- A one-shot bucket initializer for the local media bucket `design-workshop` (it must stay in step
-  with `AWS_S3_BUCKET`; the production bucket is a different, pre-rebrand name that cannot be
-  renamed — see `docs/ENVIRONMENT.md`)
+**Upload choice (0.0.10).** Every non-questionnaire upload shows a *Transcribe and translate* box per
+audio or video file, off by default, plus one toggle for the batch. The choice is stored on the row
+(`transcribeRequested`, `transcribeRequestSource`, `transcribeRequestedAt`) and travels through the
+offline outbox. Video is transcribed as its sound only: ffmpeg extracts the first audio track to the
+work directory, it is sent, and it is deleted; the stored video never changes. Questionnaire takes have
+no box and are always queued.
 
-### 2. Configure And Run Backend
+| Admin switch (Settings, master admin) | Default | Effect |
+|---|---|---|
+| Transcribe and translate all new videos | off | every new video is queued; the upload box shows pre-ticked and locked |
+| Transcribe and translate all new audio | off | the same for audio |
+| Transcribe and translate all previously uploaded media | **off (D40)** | the queue worker queues at most 25 at a time, oldest first, inside the budget; turning it on shows files, hours and cost and needs confirmation |
+| Voice Isolator | off | cleans audio before it is sent |
+| Transcription paused | per portal | the queue selects no transcription job |
 
-Python **3.14** (`backend/pyproject.toml` requires `>= 3.14`; production, the Dockerfile and CI all
-run it):
+## <img src="docs/readme-kit/assets/icons/notebook-pen.svg" width="32" align="top" alt="">&nbsp; Questionnaires
 
-```powershell
-cd backend
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.lock
-pip install -e . --no-deps
-python scripts/generate_prisma_client.py
-python -m prisma migrate deploy --schema=prisma/schema.prisma
-python scripts/seed_admin.py
-uvicorn app.main:app --reload --port 8000
+One questionnaire engine (`backend/app/questionnaire/`) serves both portals, byte-identical and copied
+from here by `scripts/sync_questionnaire.py`. Every feature is a row in
+`shared/questionnaire-features.json` and must be tagged by a test on all four clients (designer web and
+Android, Field Repository web and Android), or Checks fails.
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif","fontSize":"15px","primaryColor":"#F2E9FE","primaryTextColor":"#1E1B2E","primaryBorderColor":"#9148D2","lineColor":"#AA69E9","textColor":"#857F9E","attributeBackgroundColorOdd":"#FFFFFF","attributeBackgroundColorEven":"#F9F5FF","relationColor":"#AA69E9","relationLabelBackground":"#F9F5FF","relationLabelColor":"#1E1B2E"}}}%%
+erDiagram
+  FORM ||--o{ SECTION : has
+  SECTION ||--o{ QUESTION : asks
+  WORKSHOP ||--o{ BINDING : uses
+  FORM ||--o{ BINDING : "bound as"
+  WORKSHOP ||--o{ SESSION : holds
+  SESSION ||--o{ PARTICIPANT : "who was there"
+  SESSION ||--o{ TAKE : records
+  TAKE ||--o| TRANSCRIPT : "heard as"
+  QUESTION ||--o{ ANSWER : "answered by"
+  TAKE ||--o{ ANSWER : "proposes"
 ```
 
-The install and database lines are deliberate, and they replaced an unpinned `pip install -e .` and
-a `prisma migrate dev --name init` that used to be here:
+| Family | Features | Highlights |
+|---|---:|---|
+| A. Forms | 20 | workbook pro-forma and import, author your own, templates, kinds, locks, offline authoring |
+| B. Sessions and takes | 40 | join codes and QR, coverage grid, crash-safe recording, resumable upload, revisions, inbox |
+| C. Answers | 10 | voice notes, *Use as answer*, AI drafts, rich text, GPS place, merge |
+| D. Rules | 4 | three section states, default forms, typed or recorded both count |
+| E. Recording chips and filters | 9 | chips for section, form, artisans, dates, workshop, language, duration; tap a chip to filter; filters survive navigation and work offline on Android |
+| F. Transcription choice | 7 | per-file box, batch toggle, admin switches, backfill, outbox, takes always queued |
+| H, R | 2 | summary edit and regenerate, refine transcript |
 
-- **The lock, then the project with `--no-deps`.** `requirements.lock` is the pinned resolution CI and
-  the EC2 deploy install from; `--no-deps` stops pip re-resolving the project's own ranges past it, so
-  a laptop runs the versions production runs ([docs/CI.md](docs/CI.md) §1.3).
-- **`scripts/generate_prisma_client.py`** runs `prisma generate` — which writes the client every
-  module that reaches the database imports, and talks to no database — and then adds one line to the
-  generated `types.py` without which importing that client on Python 3.14 takes many minutes, then
-  moves its TypedDicts to `types.pyi` so a running process does not hold ~1.4 GB of them. Every automated generate (CI, the deploy, the Dockerfile) runs the same script.
-- **`prisma migrate deploy`, never `prisma migrate dev`.** Migrations in this repository are
-  hand-written, forward-only files under `backend/prisma/migrations/`; `deploy` applies them in order.
-  `dev` would try to author a new migration from any drift it detects, and may offer to reset the
-  database to do it — this is the same rule CI applies before every database-backed test run.
+## <img src="docs/readme-kit/assets/icons/landmark.svg" width="32" align="top" alt="">&nbsp; Ministry
 
-Backend checks:
+Ministry and administrative surfaces are **web only** by decision
+([DECISION-ministry-surfaces-web-only.md](docs/DECISION-ministry-surfaces-web-only.md)); the designer's own
+work is on both clients.
 
-```powershell
-Invoke-RestMethod http://127.0.0.1:8000/health
+| Surface | Web route | Who |
+|---|---|---|
+| Ministry dashboard | `/ministry-dashboard` | Ministry Admin and the directorate |
+| Sanction orders, import from Excel | `/sanction-orders` | Ministry Admin, admins |
+| Annual plan, Excel export | `/annual-plan` | Ministry Admin, admins |
+| Workshop approvals and inspections | `/design-workshop-approvals`, `/design-workshop-inspections` | appointed directors and inspectors |
+| Design review and ratings | `/design-review` | reviewers |
+| Officers and designers registers | `/officers`, `/designers` | Ministry Admin, admins |
+| Monthly export packs | `/ministry-exports` | built, **off** until `MINISTRY_EXPORTS_ENABLED` (D8) |
+| Weekly digest | `/digest` | e-mailed summary |
+
+## <img src="docs/readme-kit/assets/icons/database.svg" width="32" align="top" alt="">&nbsp; Data and exports
+
+| Export | How | Notes |
+|---|---|---|
+| Data browser | `/data`: workshops, users and media types as folders | zip assembled in the browser; audio converted to `.mp4` |
+| Data page report | *Load tables* on click | JSON preview of 200 rows a sheet; the `.xlsx` stays complete; one build at a time, `503` + `Retry-After` when busy (D39) |
+| Transcripts | a sheet in every report, `.md` / `.docx` / `.srt` / `.vtt` per recording | the hand-added English travels with every copy |
+| Datasets | `/api/datasets/{name}.ndjson` and `.csv`, streamed, keyset-paged | `X-Dataset-Total` proves completeness; admin credentials only |
+| Questionnaires | workbook export, artisan record CSV, corpus export | |
+| Ministry packs | monthly registers-only pack | off until D8 |
+
+The **craft master list** is the Ministry's Annexure I, seeded by migration `20261104090000_craft_master_list`
+from `backend/app/data/craft_master_list.json` (byte-identical in both portals). Pickers read
+`GET /crafts/catalogue` (with `ETag`); stage 1 accepts only a craft on the list.
+
+## <img src="docs/readme-kit/assets/icons/wifi-off.svg" width="32" align="top" alt="">&nbsp; Offline and Android
+
+The Android app (`com.designprototype.workshop`, min SDK 26, target SDK 37) keeps working with the radio
+off: forms save to an outbox, media is staged, the report is written on the phone, and everything syncs
+in order when a signal returns. The web has the same outbox in IndexedDB (`frontend/lib/offline.ts`).
+
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif","fontSize":"15px","primaryColor":"#F2E9FE","primaryTextColor":"#1E1B2E","primaryBorderColor":"#9148D2","lineColor":"#AA69E9","textColor":"#857F9E","transitionColor":"#AA69E9","transitionLabelColor":"#857F9E","stateLabelColor":"#1E1B2E","stateBkg":"#F2E9FE","compositeBackground":"#F9F5FF","compositeTitleBackground":"#F2E9FE"}}}%%
+stateDiagram-v2
+  [*] --> Queued: saved with no signal
+  Queued --> Sending: connection returns
+  Sending --> Created: record accepted
+  Created --> Uploading: media for the new id
+  Uploading --> [*]: entry removed
+  Sending --> Queued: unreachable, 5xx, 408, 429
+  Sending --> SignIn: 401
+  SignIn --> Queued: signed in again
+  Sending --> Refused: 4xx, kept for the user
+  Uploading --> Uploading: resumes where it stopped
 ```
 
-Open the interactive API docs at `http://127.0.0.1:8000/docs` — but note they are **off by default**.
-`BACKEND_EXPOSE_DOCS` gates `/docs`, `/redoc` and `/openapi.json`, and it defaults to `false` so a
-deployment does not publish its own schema. Set `BACKEND_EXPOSE_DOCS=true` in `backend/.env` for local
-development; `.env.example` ships the line commented in.
+| Android | |
+|---|---|
+| Version | **0.0.10**, versionCode 35 (the line restarted at 0.0.1 on 21 Oct 2026; codes keep rising) |
+| Toolchain | AGP 9.5, Gradle 9.8.2, Kotlin 2.4, Compose, R8 with a 4 GB Gradle heap |
+| Network | CloudFront over HTTPS, dual-stack, so IPv6-only mobile networks work |
+| Updates | in-app release check against the published APK; `publish-android.yml` refuses a code at or below the live one |
+| Parity | everything a designer does is on both clients; ministry and admin surfaces are web only |
 
-### 3. Configure And Run Frontend
+## <img src="docs/readme-kit/assets/icons/server.svg" width="32" align="top" alt="">&nbsp; Server and infrastructure
 
-Node 24 (`engines.node` in `frontend/package.json`, the major CI, the production build and Vercel all
-run) and npm 12 (`npm install --global npm@12`; no Node release ships it yet). npm 12 runs a
-dependency's install script only when `allowScripts` in `frontend/package.json` approves it, which is
-the policy every workflow installs under.
+| Piece | Today (read 4 Nov 2026) |
+|---|---|
+| API box | `designrepo-api`, **t3.medium** (4 GB), Ubuntu 26.04.1, encrypted gp3 |
+| Runtime | CPython 3.15.2 from python-build-standalone 20261026; the venv is built on the GitHub runner |
+| Processes | `fieldrepo-api@8000` / `@8001` (blue/green behind nginx), `fieldrepo-queue` worker |
+| Memory | API 281 MB + query engine 26 MB, worker 186 MB + 23 MB (PSS); 1.1 GB of 3.8 GB used |
+| Swap | 2 GB `/swapfile` plus a 4 GB release swap; 46 MB in use |
+| Edge | CloudFront in front, origin locked to its prefix list and an `X-Origin-Verify` header |
+| Database | managed Postgres 17.11 in ap-south-1; where it runs is recorded once, in [ENVIRONMENT.md](docs/ENVIRONMENT.md) |
+| Web | Vercel, Node 26.x |
 
-TypeScript is installed twice, on purpose, the TypeScript team's side-by-side arrangement:
-`npx tsc --noEmit` runs TypeScript 7 (`"@typescript/native": "npm:typescript@^7"`), and the
-`typescript` package is the TS 6.0 API (`npm:@typescript/typescript6`), which typescript-eslint,
-`next build` and the two specs that call `transpileModule` import. TypeScript 7 ships no JavaScript
-API, and typescript-eslint supports TypeScript below 6.1. Replace both aliases with a plain
-`typescript` once TypeScript 7.1's API has shipped and typescript-eslint supports it.
-
-```powershell
-cd frontend
-if (-not (Test-Path .env.local)) { Copy-Item .env.local.example .env.local }
-npm install
-npm run dev
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif","fontSize":"15px","primaryColor":"#F2E9FE","primaryTextColor":"#1E1B2E","primaryBorderColor":"#9148D2","lineColor":"#AA69E9","textColor":"#857F9E","edgeLabelBackground":"#F9F5FF"}}}%%
+flowchart LR
+  B[[Release built on the runner]] --> U[Unpack beside the live slot]
+  U --> S{Idle slot healthy?}
+  S -->|yes| N[nginx points at the new slot]
+  S -->|no| K[Old slot keeps serving]
+  N --> Q[Queue worker restarted]
+  Q --> D([Deployed])
+  N -.->|blue_green.sh rollback| R[Previous slot]
+  classDef accent fill:#762CB1,stroke:#5F1C93,color:#FFFFFF
+  class N accent
 ```
 
-`.env.local.example` carries the localhost defaults; `.env.example` documents the production shape
-of the same four variables. `NEXT_PUBLIC_API_URL` is the backend **origin only** — `lib/api.ts`
-appends `/api` itself, so a trailing `/api` makes every request 404.
+The optimisations that made the box fit, each measured before it shipped:
 
-Open the web app at `http://127.0.0.1:3000/login`.
+| Change | Effect |
+|---|---|
+| Prisma types split: `types.py` becomes a shim, the TypedDicts move to `types.pyi` | `import prisma` 1,434 MiB to 128 MiB; API start 87 s to 14 s |
+| `from __future__ import annotations` in the generated client | import on Python 3.14+ from over 17 minutes to seconds |
+| Query optimisation (0.0.2) | batched relation loads; idle sweeps once a minute instead of every pass |
+| Data page report on click (0.0.9) | one build at a time, `malloc_trim(0)` after each; Field Repository API 295 MB to 166 MB |
+| Transcription work directory | `TRANSCRIPTION_WORK_DIR` under the backend, 2048 MB budget, files over 180 minutes swept (D37) |
+| Separate queue worker | heavy jobs never share a process with requests |
 
-### 4. Run Both Apps In Separate Terminals
+**Backups.** `backup-db.yml` dumps the public schema nightly to S3 (21:17 UTC), keeps one a week for a
+year, and a second run (09:23 UTC) fails if the newest dump is older than its slot plus six hours
+(`scripts/ci/backup_freshness.sh`). The bucket replicates to Hyderabad. `monitor.yml` probes the API,
+its readiness and the web sign-in every 15 minutes and opens an issue on an outage.
 
-Terminal A:
+## <img src="docs/readme-kit/assets/icons/shield-check.svg" width="32" align="top" alt="">&nbsp; Security
 
-```powershell
-cd backend
-.\.venv\Scripts\Activate.ps1
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
-
-Terminal B:
-
-```powershell
-cd frontend
-npm run dev -- -H 127.0.0.1 -p 3000
-```
-
-### 5. Open Local Tools
-
-- Web app: `http://localhost:3000`
-- API docs: `http://localhost:8000/docs`
-- Object-storage console (Silo, a MinIO fork): `http://localhost:9001`
-
-The local admin account is seeded by `backend/scripts/seed_admin.py` from `backend/.env`:
-
-- `ADMIN_EMAIL` — defaults to `admin@example.com`
-- `ADMIN_PASSWORD` — **no default.** The script raises
-  `ADMIN_PASSWORD must be set in .env before seeding local admin accounts` rather than seeding a
-  guessable one. Choose a password and put it in your private `.env`.
-
-**Every password the script writes is temporary.** A password sitting in a `.env` file is a shared
-secret, so the seeded accounts carry `mustChangePassword`: the first sign-in asks you to choose your
-own, and until you do the API answers every route except the change-password screen's own with
-`401` and `X-Password-Change-Required: 1`. The one exception is the account at `MASTER_ADMIN_EMAIL`,
-the break-glass, which the server never holds. Re-running the script resets the master admin —
-which ends every session that account has open — and **leaves every other existing account alone**;
-it used to overwrite the `ADMIN_EMAIL` account's password and role. To create any other account from a shell, use
-`python -m scripts.provision_account` from `backend/`: it applies the same rules as the users screen,
-as the existing provisioner `--actor-email` names, reads the password from `PROVISION_PASSWORD` only,
-and changes nothing until you add `--apply`. With `--google-only` it creates no account at all — it
-admits the address on the allow-list at `--role`, and the person's first Google sign-in creates the
-account at that tier. It does not reset an existing account's password; the users screen and password
-links do that, with a record of who did it. See [docs/PERMISSIONS.md](docs/PERMISSIONS.md) §1.2 and
-[docs/DOCKER.md](docs/DOCKER.md) for running it inside the container.
-
-## Android App
-
-The Kotlin Android app lives in `android/` and uses the same backend:
-
-- Default (production) base URL: `https://d3ekigkotd1xa2.cloudfront.net/api/` — the API fronted by **CloudFront over HTTPS**. CloudFront is **dual-stack** (publishes a native IPv6 `AAAA` record), so the app connects on IPv6-only mobile networks (common with Jio/Airtel). The IPv4-only EC2 origin — whether addressed by its bare IP `13.206.216.18` or its AWS hostname `ec2-13-206-216-18.ap-south-1.compute.amazonaws.com` — works on Wi-Fi but fails on such cellular networks ("Failed to connect" for the IP, "No address associated with hostname" for the hostname, because `AI_ADDRCONFIG` drops an IPv4-only name when the phone has no IPv4 and there is no DNS64/NAT64). HTTPS also clears the web app's mixed-content block. Media uploads/reads use the **dual-stack S3 endpoint** (`s3.dualstack.ap-south-1.amazonaws.com`) for the same reason. A live device that still has IPv4 on cellular can be forced by setting the APN protocol to `IPv4/IPv6`.
-- Emulator base URL: set `apiBaseUrl=http://10.0.2.2:8000/api/` in `android/local.properties`.
-- Other physical device / LAN: set an ignored `apiBaseUrl` line in `android/local.properties`, for example `apiBaseUrl=http://192.168.1.20:8000/api/`, add that IP as a temporary `<domain>` in `android/app/src/main/res/xml/network_security_config.xml` (plain HTTP is allowed only to the emulator and loopback hosts), and run the backend with `--host 0.0.0.0`. Use a **debug** build: since the app targets API 37 (2026-10-09), Android 17 blocks traffic to the local network until `ACCESS_LOCAL_NETWORK` ("Nearby devices") is granted, only `android/app/src/debug/AndroidManifest.xml` declares it, and the debug build asks for it at launch. Commit neither change; `android/README.md` has the details.
-- Package name: `com.designprototype.workshop`
-- Google sign-in: Android Credential Manager requests a Google ID token with the same web OAuth client ID used by the Next.js app, then posts it to `POST /api/auth/login`.
-
-Run from Android Studio:
-
-1. Open the `android/` folder.
-2. Let Gradle sync.
-3. Start the backend on `127.0.0.1:8000`.
-4. Run the `app` configuration on an emulator.
-5. Log in with the admin email and password from your private `.env` (and choose your own password when the app asks — the seeded one is temporary), or use Google sign-in after OAuth is configured.
-
-Command-line build, if Android SDK is installed:
-
-```powershell
-cd android
-.\gradlew.bat :app:assembleDebug
-```
-
-The Android client supports email/password login, Google login, dashboard summary, and full field capture at parity with the web app through the same REST endpoints:
-
-- Craft, artisan, workshop, product, tool, process and questionnaire forms capture the complete field set the backend accepts (not just a few columns), including local names, dimensions, costs, market demand, maker/tradition type, status and remarks.
-- Every record form embeds native media capture (pick files, take photo, record video, record audio) that links uploaded media to the record automatically, plus one-tap GPS tagging.
-- Craft and artisan dropdown pickers (with a free-text fallback) auto-fill linked names; the process form cascades artisan → that artisan's products; tools/products cascade craft → that craft's artisans; workshops and questionnaires use an artisan multi-select; workshops use native start/end date pickers.
-- Process documentation records how a product is made: ordered steps (sequential or grouped), per-step media, and an optional "record additional information" notes box per step.
-- "Document using grid" reads **length and breadth from a single top-down photo** and height from a separate side-on photo (Gemini `gemini-2.5-flash-lite`), auto-filling the measurement fields; the grid photos are also stored as media.
-- Long audio/video is **split into `PART_1`, `PART_2`, …** by re-muxing at sync frames before upload, so each part stays under the transcription/upload limits; uploads stream from the content URI so large videos never exhaust the device heap.
-- Previously-uploaded media shows on edit forms with uploader/date provenance and a **Save to device** action; audio uploaded from any form sends a `TRANSCRIPTION` request, queuing transcription through the provider chain on the backend.
-
-## Google OAuth Setup
-
-Backend verification and web sign-in use the web OAuth client ID only. The web client secret is not required for this ID-token login flow and should not be committed.
-
-Local ignored env values:
-
-```powershell
-# backend/.env
-GOOGLE_CLIENT_ID=<google-web-client-id>
-
-# frontend/.env.local
-NEXT_PUBLIC_GOOGLE_CLIENT_ID=<google-web-client-id>
-```
-
-For Android Google sign-in, create an Android OAuth client in Google Cloud Console with:
-
-- Package name: `com.designprototype.workshop`
-- SHA-1 certificate fingerprint: the debug or release signing certificate fingerprint for the build you run
-- Android OAuth client ID: `614092441670-5rckig6t1al6plbfll8irn9prcmp446t.apps.googleusercontent.com`
-
-Get the local debug SHA-1 with:
-
-```powershell
-keytool -list -v -keystore "$env:USERPROFILE\.android\debug.keystore" -alias androiddebugkey -storepass android -keypass android
-```
-
-The Android app keeps the web OAuth client ID in `android/app/build.gradle.kts` as `GOOGLE_WEB_CLIENT_ID` because Credential Manager uses it as the server client ID.
-
-## Roles And Permissions
-
-Eleven-tier role ladder, strictly ordered by privilege. Each tier inherits everything below it;
-per-user grantable booleans (`canManageQuestionnaire`, `canReview`, `canViewProvenance`,
-`canDownloadDataset`) can additionally lift a single capability for a lower tier.
+Eleven tiers, strictly ordered. Each inherits everything below it, and you act only on someone ranked
+strictly below you. Per-user grants (`canManageQuestionnaire`, `canReview`, `canViewProvenance`,
+`canDownloadDataset`) lift one capability for a lower tier.
 
 | Tier | Rank | Powers |
 | --- | --- | --- |
-| `MASTER_ADMIN` | 60 | Reserved for `MASTER_ADMIN_EMAIL`. Everything, plus the three nobody else has: provider key values, repository settings, OTA releases. The only account that may act on a peer's records; on accounts, master admins are peers and none may change or remove another. May be appointed to a post on one workshop, by somebody else (the `ADMIN` row). |
-| `ADMIN` | 50 | Delete accounts; **delete records**; grant capability flags; decide who may sign in; grant workshop access; assign tasks; approve **late** submissions. Creates password accounts and looks after their passwords, as a Ministry Admin does. May be **appointed**, by somebody else, a workshop's designer, Assistant Director, Regional Director or inspector — and writes neither that workshop's content nor its designer team while holding a director or inspector post there. |
-| `MINISTRY_ADMIN` | 48 | **Not an admin** — `is_admin` is a SET (`{ADMIN, MASTER_ADMIN}`), so no deletes, no capability grants, no allow-list decisions, no key store. **Provisions password accounts** through a set of its own (`ACCOUNT_PROVISIONER_ROLES`, 2026-10-09): creates them at or below its tier, sets temporary passwords, requires a change, issues password links and corrects names and addresses, on accounts below it. Names a workshop's designers, directors and inspectors, and may itself be appointed to those posts by somebody else, never over work it authored. The widest review and correction authority short of admin: approve, reject, send back **and rewrite** records created by anyone at Regional Director and below, plus everything a professor can do — which includes reading an artisan's **unmasked Aadhaar number** and taking every row out in an export. |
-| `REGIONAL_DIRECTOR` | 45 | Everything an assistant director can do, one tier wider: an assistant director's records come under review and correction too. Reads design-workshop stage data on screen; cannot export it. |
-| `ASSISTANT_DIRECTOR` | 42 | The first tier above Professor, and therefore the first that may **rewrite** a professor's record as well as review it (`can_edit_others_record`). Craft/workshop/questionnaire management, dataset download, the user table (roles only), and the Professor-floor PII reads. **Runs a workshop it holds** since 2026-09-14 — the directorate tiers are in the design-workshop set — but does not start one. |
-| `PROFESSOR` | 40 | Everything a researcher can do, plus craft/workshop/questionnaire management, dataset download, viewing and promoting users, and editing records created by anyone below them. No account creation, no deletes. |
-| `INSPECTOR` | 37 | Labelled **Inspector / Reviewer**. Inspects and reviews a designer's work: may approve, reject and send back records created by anyone at Designer and below. **Does not run workshops and does not sign reports** — outranking a designer is not the same as being one. May not *rewrite* another person's record either; that floor is Professor. |
-| `DESIGNER` | 35 | Run design & prototype workshops and sign the report: the 22 stages, the custom sections, the AI layers, the report exports. Everything a researcher can do. **NOT a rank threshold** — see the third rule below. |
-| `RESEARCHER` | 30 | **Create** and edit their own records, contribute to others' (fill-empty), run questionnaire interviews. |
-| `FIELD_CONTRIBUTOR` | 20 | Populate existing records — media, answers, comments — and review volunteers. **Cannot create records.** |
-| `CROWDSOURCE_VOLUNTEER` | 10 | Lowest tier and the default for new self-registered Google accounts (`DEFAULT_SIGNUP_ROLE`). Upload media, answer questionnaires, comment. |
+| `MASTER_ADMIN` | 60 | Reserved for `MASTER_ADMIN_EMAIL`. Everything, plus provider keys, repository settings and app releases. |
+| `ADMIN` | 50 | Delete accounts and records, grant capabilities, decide who may sign in, grant workshop access, approve late submissions. |
+| `MINISTRY_ADMIN` | 48 | **Not an admin.** Provisions password accounts below it, names a workshop's posts, reviews and rewrites records from Regional Director down. |
+| `REGIONAL_DIRECTOR` | 45 | An assistant director's powers, one tier wider. Reads stage data on screen; cannot export it. |
+| `ASSISTANT_DIRECTOR` | 42 | First tier that may rewrite a professor's record. Runs a workshop it holds. |
+| `PROFESSOR` | 40 | Craft, workshop and questionnaire management, dataset download, editing records of anyone below. |
+| `INSPECTOR` | 37 | Inspector / Reviewer: approves, rejects and sends back designers' work. Does not run workshops or sign reports. |
+| `DESIGNER` | 35 | Runs workshops and signs the report: the 22 stages, custom sections, AI layers, exports. |
+| `RESEARCHER` | 30 | Creates and edits their own records, runs questionnaire interviews. |
+| `FIELD_CONTRIBUTOR` | 20 | Populates existing records. Cannot create them. |
+| `CROWDSOURCE_VOLUNTEER` | 10 | Default for new Google accounts. Uploads media, answers questionnaires, comments. |
 
-The rules people get wrong:
+Running a workshop is a set (`DESIGN_WORKSHOP_ROLES`), not a rank floor: a professor outranks a
+designer and still cannot run one. Whoever inspects or supervises a workshop never writes it. The full
+matrix and the review state machine: [PERMISSIONS.md](docs/PERMISSIONS.md).
 
-- **A Field Contributor cannot create records.** `can_create_records` requires Researcher. The two
-  tiers below *populate* records rather than open them — that is the reason they exist.
-- **You may only act on someone ranked strictly below you.** You can assign roles at or below your
-  own tier, but you can only manage (or review, or edit the records of) users **below** it. One admin
-  can never rewrite another admin's account or approve their work; only the master admin manages
-  peers.
-- **`DESIGNER` is a rank in the ladder, but running a design workshop is not a rank threshold.**
-  `can_run_design_workshops` is a **SET** — `DESIGN_WORKSHOP_ROLES`: `DESIGNER`, the three directorate
-  tiers, `ADMIN` and `MASTER_ADMIN` (it read `{DESIGNER, ADMIN, MASTER_ADMIN}` here until 2026-10-09,
-  three weeks after the set grew) — not a floor, so a
-  Professor at 40 outranks a designer at 35 and still cannot run a workshop. That is deliberate: the
-  ladder answers "how much may this account do to the repository", and running a workshop is a job
-  somebody was empanelled for, not a privilege earned by seniority. A DESIGNER account may also sign
-  in only while an ACTIVE row in `DesignerRoster` carries its email — two separate facts, `User.role`
-  saying what somebody may do and the roster saying whether the institution still recognises them.
+| Control | State |
+|---|---|
+| Two-factor sign-in | TOTP, six-box code entry; the secret is encrypted with `TWO_FACTOR_ENCRYPTION_KEY` (GitHub secret, SSM backup) |
+| Sessions | a password change ends every other session; temporary passwords must be changed first |
+| Consent | one append-only `Consent` ledger shared by both portals; opt-out, re-read before every send |
+| Aadhaar | offline QR / XML and online OTP built **dark**: `AADHAAR_OFFLINE_VERIFICATION_ENABLED` and `AADHAAR_ONLINE_AUTH_ENABLED` are off until the Ministry's AUA approval (D3) |
+| Database | the app connects only as Postgres; the provider's Data API is not used |
+| Media | SSE on S3, type validated at upload, presigned writes only |
+| Edge | CloudFront-only origin, HSTS forced, rate limits keyed on the viewer |
 
-  Rank 35 sits in the gap the original tens deliberately left, so inserting the tier renumbered
-  nothing and every stored role kept its meaning. `INSPECTOR` was inserted at **37** on
-  2026-08-27 the same way, in the middle of the free 36-39 band so a later tier can still go on
-  either side of it, and it inherits the same non-inheritance: **an inspector is not in that set
-  either**, so rank 37 buys no workshop authority at all. An inspector reaches a design workshop
-  only through a read-only, per-workshop assignment a **Ministry Admin, an admin or the master
-  admin** makes — the inspected does not choose the inspector — and never through the ladder. See
-  [docs/PERMISSIONS.md](docs/PERMISSIONS.md) §1 and §4.5.
+## <img src="docs/readme-kit/assets/icons/git-branch.svg" width="32" align="top" alt="">&nbsp; CI and releases
 
-- **Whoever inspects or supervises a workshop does not write it.** Since 2026-10-09 the three
-  administering tiers may be APPOINTED, by somebody else, as one workshop's designer, Assistant
-  Director, Regional Director or inspector, through the same pickers as everybody else. Nobody
-  appoints themselves, and nobody takes themselves off an inspection or director post — another
-  administrator has to; nobody inspects or supervises a workshop they authored (designer access to
-  it, or stages they wrote — creating it does not count); one person never holds both director posts,
-  nor a director post and the inspection; and while somebody holds a workshop's inspection or a
-  director post, the server refuses them its content and its designer team, admin routes included —
-  its stages, editing or deleting it, its artisan list, filing a record into it and any edit, delete
-  or merge of a record filed under it (the review queue's in-place edit included), its photographs,
-  recordings and transcripts (a new upload into it, a delete, a transcript set, refined or re-run, a
-  retried transcription job, an identity-photograph decision, a relink), filing or deleting its records
-  and files from the unfiled-records report (whose bulk filing leaves them alone for a holder and says
-  so), and who its designers are, by any door (an access-request decision and a join card included).
-  That report no longer treats a design workshop's records and files as unfiled at all, for anybody:
-  it does not list one filed under or tagged to a design workshop, and refuses to delete any it claims.
-  Reading the workshop, appointing other people to its posts or taking them off, restoring it,
-  generating its report, and approving, rejecting or sending back a record filed under it stay open. See
-  [docs/PERMISSIONS.md](docs/PERMISSIONS.md) §4.8.
+Every push runs **Checks** (`checks.yml`): backend tests on a migrated Postgres, web typecheck, lint and
+unit specs, browser runs of the map, questionnaire, transcript viewer and list navigation, the docs
+check, packaging, questionnaire parity across both portals, the unify migration, the deploy scripts and
+the **comment stripper**. The codebase carries no comments; `scripts/tools/strip_comments.py --check`
+fails a push that adds one. `android-build.yml` and `android-emulator.yml` (API 37) prove the app, and
+`readme-check.yml` proves every README asset and diagram.
 
-- **`MINISTRY_ADMIN` is not an admin, and neither are the other two directorate tiers.** `is_admin`
-  is `role in {MASTER_ADMIN, ADMIN}` — set membership, not a rank floor — so a tier at 48 passes no
-  admin gate anywhere in this product. What it holds beyond its rank it holds through named sets of
-  its own — provisioning password accounts, naming a workshop's posts, being appointed to one — each a
-  separate decision ([docs/PERMISSIONS.md](docs/PERMISSIONS.md) §1 and §1.2). It is the one place in this table where a token's English
-  reading and its meaning in the code point in opposite directions, which is why it is written down
-  in four places: here, `deps.ROLE_RANK`'s comment, the tier's migration header, and
-  [docs/PERMISSIONS.md](docs/PERMISSIONS.md) §2's footnote ⁷.
-
-  **And "not an admin" is not "reads nothing sensitive".** All three directorate tiers clear every
-  `has_rank(user, "PROFESSOR")` floor in the codebase, including five that live outside
-  `app/core/deps.py` where nobody greps for them: an artisan's unmasked Aadhaar number, de-masked
-  identity numbers on every encoded record, every uploader's media URLs, an empty download filter,
-  and APPROVED-on-create. [docs/PERMISSIONS.md](docs/PERMISSIONS.md) §2's footnote ⁸ names each with
-  its call site.
-
-Live grantable capability booleans are `canManageQuestionnaire`, `canReview`, `canViewProvenance` and
-`canDownloadDataset`. `canManageCrafts` and `canManageWorkshops` still exist as columns but are
-**deliberately no longer read** — craft and workshop management is Professor by rank alone, because a
-grant that lifts a researcher over the taxonomy is invisible in the role column.
-
-The backend enforces all of this and the web UI mirrors it; the mirrors are checked against each
-other by `node docs/tools/check-docs.mjs`. **Full matrix and the review state machine:
-[docs/PERMISSIONS.md](docs/PERMISSIONS.md).**
-
-## Field Capture, AI And Media
-
-Media capture is embedded in the craft, artisan, workshop, product, tool and questionnaire workflows instead of being a primary menu destination. These record forms support:
-
-- precise browser geolocation capture;
-- MapTiler coordinate picking with `NEXT_PUBLIC_MAPTILER_API_KEY`;
-- multiple images, videos, audio files and documents in one batch;
-- camera/video capture through mobile browser file inputs;
-- browser audio recording with a live level meter;
-- original-file upload so image EXIF data is retained;
-- EXIF summaries in remarks/metadata where image metadata is readable;
-- queued audio transcription through the STT provider chain (see below);
-- collapsed transcript display for completed audio transcripts.
-
-### Transcription Provider Chain
-
-Speech-to-text walks a provider chain in priority order, using whichever keys are configured and
-failing over automatically on provider errors:
-
-1. **ElevenLabs Scribe** (`ELEVENLABS_API_KEY`, model **`scribe_v2`**) — auto language detection,
-   accepts files up to ~1 GB, no chunking needed. Note the model: `ELEVENLABS_STT_MODEL` *defaults*
-   to `scribe_v1` in config, and the code treats that value as "unset" and uses `scribe_v2`. Setting
-   `scribe_v1` explicitly does not pin the old model.
-2. **Deepgram Nova-3** (`DEEPGRAM_API_KEY`, model `nova-3`, `language=multi`) — code-switched
-   Hindi + English handled natively, up to 2 GB.
-3. **OpenAI Whisper** (`OPENAI_API_KEY`, `whisper-1`) — fallback only; files over 24 MB are split
-   into chunks and stitched.
-
-The order is a **master-admin setting**, not a constant: it is ranked in the Settings hub and stored
-on `AppSetting`. Ranking expresses a preference, not a requirement — a provider whose key is unset is
-skipped wherever it sits, and keys resolve through the managed-secret layer, so adding one in the UI
-extends the chain immediately with no restart.
-
-Failure handling distinguishes three cases: `401/403` is a hard failure that names the key an admin
-must fix; `429/503` returns `RATE_LIMITED` and requeues the job **without spending an attempt**,
-behind a growing cooldown; `5xx` is a hard failure under the normal retry budget. An *empty* result
-is kept as a fallback but the next provider still gets a chance. Full semantics with a diagram:
-[docs/ARCHITECTURE.md §6](docs/ARCHITECTURE.md).
-
-The OpenAI key's primary role is **refinement and translation**: raw transcripts are rewritten into
-clean interviewer/interviewee dialogue and translated to English per the master-admin
-`transcriptionMode` setting (`RAW` / `REFINED` / `REFINED_TRANSLATED`). It only *transcribes* when
-reached as the third link in the chain.
-
-The product and tool forms support a "Document using grid" capture alongside manual `lengthInches`, `breadthInches` and height. Tick **Length & breadth** to read both from one top-down photo, and/or **Height** to read it from a side-on photo; each photo is analysed synchronously by Gemini (`GEMINI_MEASUREMENT_MODEL`, default `gemini-2.5-flash-lite`) and the returned inches auto-fill the matching fields (still editable). The grid photos are also stored as media on the record. If `GEMINI_API_KEY` is missing, the fields stay manual.
-
-Decimal columns (measurements, costs) are returned by the API as JSON **strings**; the Android and web clients read them as strings so a record with a measurement never breaks list parsing.
-
-The Tools page also has an **Assign a tool to multiple artisans** section: pick a tool, multi-select crafts, then tick the artisans of those crafts to assign the same documented tool to several artisans across the same or different crafts (`ToolArtisan` join), instead of re-entering the tool per craft.
-
-### Durable Media Queue
-
-`POST /api/media/complete` can include `processingRequests`, currently `TRANSCRIPTION` for audio and `MEASUREMENT` for grid-sheet images. The backend stores a `MediaProcessingJob` row before any AI request is attempted.
-
-**In production the worker is a separate process**, not the web process: a `fieldrepo-queue` systemd
-unit running `python -m app.worker`, with `MEDIA_QUEUE_WORKER_ENABLED=false` on the web service.
-(That unit name is the product's pre-rebrand one and is deliberate — it names a unit installed on the
-live box that `.github/workflows/deploy-backend.yml` restarts by that literal string. The full
-argument is in the module docstring of `backend/app/worker.py`.)
-Running ffmpeg and transcription inside a uvicorn worker is what caused the orphaned-Prisma-engine
-500s. Locally, **set** the flag `true` and the FastAPI lifespan starts it in-process — since
-2026-09-03 the default is `false`, so that is a line you add rather than one you leave alone. Both
-entry points also take a host-wide advisory lock, so a second drain on one box refuses to start
-instead of running silently beside the first. Either way the
-worker:
-
-- recovers stale `PROCESSING` jobs after worker interruption;
-- downloads the already-saved object from S3-compatible storage;
-- calls the transcription chain (or Gemini, for measurement) only after the metadata is durable;
-- retries transient failures with backoff, and requeues a **throttled** job (HTTP 429/503) without
-  spending an attempt, behind a growing cooldown;
-- runs transcription on idle time — outside the off-peak window it still works whenever the box's
-  one-minute load average is low enough — so spare capacity on a burstable instance is used;
-- records unavailable API-key states without deleting uploaded media.
-
-## Questionnaire
-
-The questionnaire module is seeded from `2nd Workshop_Interview Questions.docx` into reusable questions. Run this after migrations:
-
-```powershell
-cd backend
-.\.venv\Scripts\Activate.ps1
-python scripts/seed_questionnaire.py
+```mermaid
+%%{init: {"theme":"base","themeVariables":{"fontFamily":"Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif","fontSize":"15px","primaryColor":"#F2E9FE","primaryTextColor":"#1E1B2E","primaryBorderColor":"#9148D2","lineColor":"#AA69E9","textColor":"#857F9E","edgeLabelBackground":"#F9F5FF","clusterBkg":"#F9F5FF","clusterBorder":"#D6B6FB","titleColor":"#762CB1"}}}%%
+flowchart LR
+  F[Feature branches] --> R[release/x.y.z]
+  R --> C{Checks, Android build,<br/>emulator, README check}
+  C -->|green| M[main, merged locally]
+  M --> DB[deploy-backend<br/>blue/green]
+  M --> DF[deploy-frontend<br/>Vercel]
+  M --> PA[publish-android]
+  classDef accent fill:#762CB1,stroke:#5F1C93,color:#FFFFFF
+  class C accent
 ```
 
-Researchers can create questionnaire interviews, link one interview to many artisans, answer any subset of the questions, and edit questionnaire interviews. Admin users can delete questionnaire interviews.
+One release per platform at a time: everything is batched, checked once and deployed once.
 
-## Core API Endpoints
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme-kit/assets/timeline-dark.svg">
+  <img src="docs/readme-kit/assets/timeline-light.svg" width="100%" alt="Releases: 0.0.3 one questionnaire engine, 0.0.4 the transcript pipeline, 0.0.6 the viewer, 0.0.7 latest runtimes, 0.0.9 old transcripts and the Data page, 0.0.10 video and the upload choice">
+</picture>
 
-### The design workshop
+| Release | Live | Android code | What shipped |
+|---|---|---:|---|
+| 0.0.2 | 22 Oct 2026 | 28 | query optimisation, questionnaire phases 1 and 2, author-or-admin form edits |
+| 0.0.3 | 23 Oct 2026 | 29 | one shared questionnaire engine, the parity registry, questionnaires v2 switched on |
+| 0.0.4 | 31 Oct 2026 | 30 | the Scribe v2 and Gemini 3.8 Flash pipeline: speaker turns, English, summaries, the viewer with karaoke, Ask, autodraft, glossary, quote cards, the budget; recording chips and filters |
+| 0.0.5 | 1 Nov 2026 | 31 | name a speaker from a sample, timeline marks, copy and download without timestamps, a parallel translation lane, the Gemini billing hold, the Voice Isolator switch |
+| 0.0.6 | 1 Nov 2026 | 32 | clean previews, coverage hover, reading mode, marks, auto-follow, transcripts in the data browser, temp-file fix (D37) |
+| 0.0.7 | 1 Nov 2026 | 33 | Python 3.15.2, Node 26, AGP 9.5, Gradle 9.8.2, Next 16.4 |
+| 0.0.9 | 3 Nov 2026 | 34 | old transcripts translate (D38), Data page report on click (D39) |
+| 0.0.10 | Nov 2026 | 35 | video transcription, the upload choice, admin switches, backfill switch (off, D40), Gemini 3.8 Flash first with GPT-6 Luna and Claude Sonnet 5.5 only when selected, refine on every client, AI suggestions on Android, no comments in code, the README kit |
 
-- `GET /api/design-workshops/schema` — the field registry: `{version, enums, stages[]}`. Fetched
-  once and cached by `version`; every stage form on every client is rendered from it
-- `GET /api/design-workshops/templates` — `[{id, name, description}]`
-- `GET /api/design-workshops?page&pageSize&search&statusFilter&craftName&state&mineOnly`
-- `POST /api/design-workshops` — only `title` is required to start
-- `GET /api/design-workshops/{id}` — header + stages + completeness
-- `PATCH /api/design-workshops/{id}`
-- `DELETE /api/design-workshops/{id}` — **soft** delete; nothing in this record is ever hard-deleted
-- `POST /api/design-workshops/{id}/restore` — admin only
-- `GET /api/design-workshops/{id}/stages`
-- `GET /api/design-workshops/{id}/stages/{stageKey}` — `{singleton, collections, completeness}`
-- `PUT /api/design-workshops/{id}/stages/{stageKey}` — a stage is saved **whole**, never field by
-  field: `{entries:[{entityKey, entryId?, ordinal?, data{}}], replaceCollections, submit}` →
-  `{saved, created, updated, removed, errors, droppedKeys, completeness}`
-- `GET /api/design-workshops/{id}/report/preview?templateId` — `{meta, blocks[], warnings[]}`, built
-  from the same `ReportDocument` the files are rendered from
-- `POST /api/design-workshops/{id}/report` — `{templateId, formats:["DOCX"|"PDF"]}` returns the file
-  bytes directly; warnings travel in `X-Report-Warnings`
-- `GET /api/design-workshops/{id}/exports`
-- `POST /api/design-workshops/{id}/exports` — record a report the phone generated offline
+## <img src="docs/readme-kit/assets/icons/box.svg" width="32" align="top" alt="">&nbsp; Built with
 
-### The supporting corpus
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://skillicons.dev/icons?i=nextjs,react,ts,tailwind,py,fastapi,postgres,prisma,kotlin,androidstudio,aws,terraform,docker,githubactions,vercel&theme=dark&perline=15">
+    <img src="https://skillicons.dev/icons?i=nextjs,react,ts,tailwind,py,fastapi,postgres,prisma,kotlin,androidstudio,aws,terraform,docker,githubactions,vercel&theme=light&perline=15" alt="Next.js, React, TypeScript, Tailwind, Python, FastAPI, Postgres, Prisma, Kotlin, Android, AWS, Terraform, Docker, GitHub Actions, Vercel">
+  </picture>
+</p>
 
-- `POST /api/auth/login`
-- `POST /api/auth/logout`
-- `GET /api/me`
-- `CRUD /api/users` — listed and re-roled by Professor and above, **created** and given passwords by
-  the account provisioners (Ministry Admin, Admin, Master Admin), **deleted** by admins; one account
-  per mailbox, so any spelling of a Gmail inbox another account uses is a 409 on create and on an
-  address change alike
-- `POST /api/auth/password-links` — a provisioner issues a set-password link for an account below it
-- `POST /api/auth/change-password` — the signed-in account replaces its own password; the one route
-  besides `/me`, sign-out, the usage-consent pair and the release check that answers an account still
-  holding a temporary password. Answers exactly `{"ok": true}`, and hands the caller a fresh session
-  token in the `X-Session-Token` response header (listed in CORS `expose_headers`), because the change
-  ends every session opened with the old password, this one's old token included. A client that
-  ignores the header meets one plain `401` on its next request and signs in again with the new
-  password ([docs/SECURITY.md](docs/SECURITY.md) §3.6)
-- `CRUD /api/artisans`
-- `CRUD /api/crafts`
-- `CRUD /api/workshops`
-- `CRUD /api/products`
-- `CRUD /api/tools`
-- `GET/POST/DELETE /api/tools/{toolId}/artisans` — assign one tool to many artisans (many-to-many)
-- `CRUD /api/processes` — process documentation with ordered steps (each step has optional notes)
-- `POST /api/media/analyze-measurement?dimension=` — grid measurement (no dimension = length+breadth; `height` = single value)
-- `POST /api/media/presign`
-- `POST /api/media/complete`
-- `GET /api/media`
-- `GET /api/media/jobs`
-- `POST /api/media/jobs/process`
-- `POST /api/media/jobs/{jobId}/retry`
-- `GET /api/dashboard/stats`
-- `GET /api/search`
-- `POST /api/review/{recordType}/{recordId}/approve`
-- `POST /api/review/{recordType}/{recordId}/reject`
-- `GET /api/export/products.csv` — dataset-download permission required
-- `GET /api/export/tools.csv` — dataset-download permission required
-- `POST /api/datasets/token` — exchange **admin** email/password for a read-only `dataset:read` token
-  (refused while the account still holds a password somebody else chose; the token is retired for
-  good by any later change of that password, or by a raised `mustChangePassword`)
-- `GET /api/datasets` — bulk-download catalogue: every dataset, its row count and its URLs
-- `GET /api/datasets/{dataset}` — one page of a dataset (JSON)
-- `GET /api/datasets/{dataset}.ndjson` — the whole dataset, streamed, no row cap
-- `GET /api/datasets/{dataset}.csv` — the whole dataset as CSV, streamed, no row cap
-- `GET /api/data/tree?path=` — admin data browser: one level of the virtual file system
-  (workshops → artisans → products/tools/questionnaire/misc; users → uploads by type; media-types)
-- `GET /api/data/manifest?path=&include=` — flattened subtree manifest filtered by
-  `text,images,videos,audios,transcripts,documents,other`; client zips in the browser
-- `GET /api/data/media/{id}/download?format=mp4` — single file; audio is converted to `.mp4` (AAC)
+| Layer | Stack |
+|---|---|
+| Web | Next.js 16, React 19, Tailwind 4, framer-motion 14, GSAP 3, TypeScript 7 for checks and 6 for tooling |
+| API | FastAPI on Python 3.15, prisma-client-py 0.15, ReportLab, ffmpeg |
+| Android | Kotlin 2.4, Jetpack Compose, ML Kit, LiteRT, sherpa-onnx |
+| Data | Postgres 17, S3 with presigned uploads, CloudFront |
+| Delivery | GitHub Actions, Terraform, Vercel, systemd, nginx |
 
-Researchers can create and manage their own submissions. Admins can view all records, manage users, review submissions and export CSV.
+## <img src="docs/readme-kit/assets/icons/terminal.svg" width="32" align="top" alt="">&nbsp; Quick start
 
-### Bulk Dataset API
+1. Start Postgres 17 and S3-compatible storage: `docker compose up -d` (Postgres on `localhost:55432`).
+2. Backend, Python 3.15:
 
-`/api/datasets` is mass download **for a machine**, behind **admin credentials** — a scheduled
-mirror, an archival snapshot, a statistics pipeline. It streams (`.ndjson` / `.csv`, no row cap,
-constant memory, keyset-paged), it is filtered by the same shared `workshopIds` vocabulary as every
-other screen, and it sends `X-Dataset-Total` before each body so a client can *prove* a download is
-complete rather than assume it. Artisan identity numbers are masked by default and released only to
-a master admin who asks by name. A `dataset:read` token minted from admin credentials reaches this
-router and nothing else in the API. Full reference: [docs/DATASET_API.md](docs/DATASET_API.md).
+   ```sh
+   cd backend
+   cp .env.example .env
+   python -m venv .venv && . .venv/bin/activate
+   pip install -r requirements.lock && pip install -e . --no-deps
+   python scripts/generate_prisma_client.py
+   python -m prisma migrate deploy --schema=prisma/schema.prisma
+   python scripts/seed_admin.py
+   uvicorn app.main:app --reload --port 8000
+   ```
 
-### Data Browser
+3. Web, Node 26 and npm 12:
 
-Users with the dataset-download permission (Professor and above, or an explicit grant) get a
-**Data Browser** (`/data` on the web) that presents the whole repository as a browsable virtual
-file system with three roots:
+   ```sh
+   cd frontend
+   cp .env.local.example .env.local
+   npm install && npm run dev
+   ```
 
-- **workshops/** → per-workshop → per-artisan → `products/` (with per-product `processes/`),
-  `tools/`, `questionnaire/`, `misc/` — plus generated `details.txt`/`answers.txt` files;
-- **users/** → per-uploader → their uploads grouped by record type;
-- **media-types/** → `images/`, `videos/`, `audios/`, `documents/`, `other/`.
+4. Android: open `android/` in Android Studio and set `apiBaseUrl=http://10.0.2.2:8000/api/` in
+   `android/local.properties` for the emulator.
 
-Any folder can be browsed online (image previews, audio playback, inline transcripts) or
-downloaded as a zip assembled in the browser, filtered by content type (text, images, videos,
-audios, transcripts, documents, other — any combination). **Audio downloads are converted to
-`.mp4` (AAC) server-side**, with automatic fallback to the original file if conversion fails.
-The web front-end and the landing page are Vercel-ready (static prerender, no route handlers, no
-server actions, no `fs` access, no `output: "standalone"`). Step-by-step deploy, the environment
-variables to set in the dashboard, the matching backend CORS change and a troubleshooting section
-are in [docs/DEPLOYMENT_VERCEL.md](docs/DEPLOYMENT_VERCEL.md).
+`scripts/generate_prisma_client.py` is required, not `prisma generate`: it adds the future import and
+the `types.pyi` split without which the client takes minutes and gigabytes to import. Migrations are
+hand-written and forward-only; never run `prisma migrate dev`. `ADMIN_PASSWORD` has no default and every
+seeded password must be changed at first sign-in.
 
-## Signed Media Upload Flow
+## <img src="docs/readme-kit/assets/icons/book-open.svg" width="32" align="top" alt="">&nbsp; Documentation
 
-1. On Android, long audio/video is first split into `PART_1`, `PART_2`, … so each segment stays within transcription/upload limits (fail-safe: if the codec can't be re-muxed it uploads whole).
-2. Client calls `POST /api/media/presign` (per file / per part) with file name, MIME type, media type and size.
-3. API returns a signed S3-compatible PUT URL and object key.
-4. Client streams the file directly to object storage with PUT (64 KB chunks, retried on transient errors so it never buffers the whole file in memory).
-5. Client calls `POST /api/media/complete` to store metadata in PostgreSQL and link it to a craft, artisan, workshop, product, tool, process step or questionnaire interview.
-6. For audio or measurement requests, the API writes a durable `MediaProcessingJob` row.
-7. The backend worker processes queued jobs and patches transcript or measurement fields when available.
-
-## Environment Variables
-
-**[docs/ENVIRONMENT.md](docs/ENVIRONMENT.md) is the complete reference** — one table per service
-listing every variable with its default, whether it is required, and whether it is a secret, plus a
-triage table for the usual misconfigurations. Annotated templates: `backend/.env.example`,
-`frontend/.env.example`, `frontend/.env.local.example`, and the aggregate `.env.example` at the
-repository root. The summary below is the short version.
-
-Required backend variables (the app refuses to start without them):
-
-- `DATABASE_URL` — a PostgreSQL connection string. `prisma migrate deploy` reads it raw and needs **session** mode (advisory locks, DDL); the running app reads it through `Settings` and wants the pooled endpoint where a provider publishes one. Which process gets which value is a deployment arrangement — see `DATABASE_USE_TRANSACTION_POOLER` and [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
-- `JWT_SECRET`
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `AWS_S3_BUCKET`
-- `MASTER_ADMIN_EMAIL` — the master administrator's Google account.
-
-Useful optional backend variables:
-
-- `AWS_REGION` (default `us-east-1`; production `ap-south-1`) and `AWS_S3_PUBLIC_BASE_URL` for preview/export links — use the **dual-stack** host so media loads on IPv6-only mobile networks.
-- `AWS_S3_ENDPOINT` only for MinIO or other non-AWS storage; leave it unset on real AWS.
-- `DATABASE_USE_TRANSACTION_POOLER` (default `true`; it *declares* that `DATABASE_URL` is a transaction-mode pooler and adds `pgbouncer=true` to any remote DSN — **set it `false` for a direct endpoint**; no hostname is matched, see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)), `DATABASE_CONNECTION_LIMIT` (code default `10` per worker — raising it once exhausted a pooler's client ceiling and crash-looped startup; **the deployment sets `5`**), `DATABASE_POOL_TIMEOUT` (unset by default → Prisma's own 10 s; **the deployment sets `5`** seconds, so a saturated pool fails rather than hangs). Both deployed values are stated once, with their reasoning, in [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
-- `BACKEND_CORS_ORIGINS` — comma-separated **exact** frontend origins, no trailing slash or wildcard.
-- `NEXT_PUBLIC_APP_URL` — the web app's one public origin, and the base of every set-password, invite and sanction link the API issues. Optional on a laptop (it defaults to `http://localhost:3000`) and **required in production**, where a wrong value issues links that open nowhere useful; see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
-- `GOOGLE_CLIENT_ID` to verify Google OAuth ID tokens; `GOOGLE_ANDROID_CLIENT_ID` to also accept Android OAuth audience tokens if needed.
-- `MASTER_ADMIN_NAME` defaults to `Ankit Kumar`; `DEFAULT_SIGNUP_ROLE` defaults to `CROWDSOURCE_VOLUNTEER`.
-- `ELEVENLABS_API_KEY`/`ELEVENLABS_STT_MODEL`, `DEEPGRAM_API_KEY`/`DEEPGRAM_STT_MODEL`, `OPENAI_API_KEY`/`OPENAI_TRANSCRIPTION_MODEL`/`OPENAI_CHAT_MODEL`, `GEMINI_API_KEY`/`GEMINI_API_KEYS`/`GEMINI_MEASUREMENT_MODEL` (default `gemini-2.5-flash-lite`), `NEXT_PUBLIC_MAPTILER_API_KEY` for optional transcription, refinement, measurement and map picking.
-- `MEDIA_QUEUE_WORKER_ENABLED` (default **false** since 2026-09-03; set it `true` only to drain inside uvicorn for local dev — the separate `fieldrepo-queue` service drains production, and both entry points take a host-wide lock), `MEDIA_QUEUE_INTERVAL_SECONDS`, `MEDIA_QUEUE_BATCH_SIZE`, `MEDIA_QUEUE_JOB_MAX_ATTEMPTS`, `MEDIA_UPLOAD_MAX_BYTES` (default 1 GiB — the ceiling on one uploaded object, refused at presign and re-checked at complete).
-- `MEDIA_PRESIGNED_READS` (default **false**) and `MEDIA_PRESIGNED_READ_TTL_SECONDS` (default `900`) — whether a served media `url` is a 15-minute signed URL instead of the permanent CDN one. Off is exactly today's behaviour and the stored column is never rewritten, so the flip is a redeploy to undo. ⚠ **Do not turn it on ad hoc**: a fielded 0.0.7 handset renders photographs from a cached `url` with no network, so flipping ahead of fleet adoption loses images on a phone nothing can reach. It is one step of the sequenced operator runbook in [docs/SECURITY.md](docs/SECURITY.md).
-- `SUPABASE_REST_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY` — **unused; historical since 2026-08-22.** No code in this repository reads them: the application consumes exactly one thing from its database host — the PostgreSQL DSN — never a provider's HTTP APIs. Kept, unset, only so the names are explained rather than mysterious; see [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md).
-- `ADMIN_EMAIL`, `ADMIN_NAME`, `ADMIN_PASSWORD` for seeding the first admin. Keep the password only in private `.env` files or deployment secrets.
-- Security knobs, all safe at their defaults: `JWT_ALGORITHM` (`HS256`; HS-family only), `ALLOW_WEAK_JWT_SECRET` (local dev only), `DATABASE_REQUIRE_SSL` (unset = `sslmode=require` for remote hosts only), `AWS_S3_SSE_ALGORITHM` (`AES256`; empty for MinIO), and `SECURITY_HSTS_ENABLED`/`SECURITY_HSTS_MAX_AGE`/`SECURITY_FORCE_HSTS` — **set `SECURITY_FORCE_HSTS=true` in production**, because nginx overwrites `X-Forwarded-Proto` and the app otherwise never sees that the viewer used TLS. Details in [docs/SECURITY.md](docs/SECURITY.md).
-
-Frontend variables — all four are `NEXT_PUBLIC_*`, so they are **inlined into the browser bundle at
-build time**: none can be a secret, and changing one on Vercel needs a redeploy to take effect.
-
-- `NEXT_PUBLIC_API_URL` (required) — backend **origin only**, e.g. `https://d3ekigkotd1xa2.cloudfront.net`. `frontend/lib/api.ts` appends `/api`, so a trailing `/api` or `/` turns every call into a 404.
-- `NEXT_PUBLIC_APP_URL` (optional in the web build) — public origin of the web app itself. No code under `frontend/` reads it; it shares its name with the **backend** variable so one value can feed both. The origins that actually have to be configured live on the API: `BACKEND_CORS_ORIGINS`, and the backend's own `NEXT_PUBLIC_APP_URL`, which builds the password links.
-- `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (optional) — blank hides the Google button.
-- `NEXT_PUBLIC_MAPTILER_API_KEY` (optional) — blank falls back to manual latitude/longitude entry.
-
-## PostgreSQL — pointing this at any provider
-
-The application requires **PostgreSQL and nothing more specific**. `backend/prisma/schema.prisma`
-declares `provider = "postgresql"`, no migration installs an extension, and `docker-compose.yml`
-runs `postgres:17-alpine` locally — production's major. Any managed PostgreSQL, or a server you run yourself, is a
-candidate; which one is deployed is a property of the environment, not of the code.
-
-To point a deployment at a different one, set `DATABASE_URL` in `backend/.env` (or the deployment's
-environment) to that server's connection string, and then run:
-
-```powershell
-cd backend
-python -m prisma migrate deploy --schema=prisma/schema.prisma
-python scripts/seed_admin.py
-python scripts/seed_questionnaire.py
-```
-
-Three things to get right, none of them provider-specific:
-
-- **Session mode.** `prisma migrate` takes advisory locks and runs DDL, so `DATABASE_URL` must be a
-  connection that holds a session. If your provider publishes a separate transaction-mode/pooled
-  endpoint, that endpoint is for *runtime* queries, not for migrations.
-- **IPv4.** Some providers hand out an IPv6-only direct host. CI runners and many office networks
-  are IPv4-only, so use whichever endpoint the provider offers for IPv4 clients.
-- **TLS.** Any non-loopback host gets `sslmode=require` appended automatically —
-  `DATABASE_REQUIRE_SSL` forces it either way. Prisma and libpq default to `sslmode=prefer`, which
-  falls back to plaintext without saying so, which is why this is not left to the default.
-
-Clients always call the FastAPI backend. Nothing should write to the database — or to any
-provider-side REST/data API — directly, because validation, review state, role checks, media
-metadata and JWT authorization all live in the API.
-
-**Where it runs today** is recorded in exactly one place, with its evidence and how to re-check it
-without reading a secret: the "The database" section of
-[docs/ENVIRONMENT.md](docs/ENVIRONMENT.md). It is deliberately not repeated here, because it being
-repeated in thirty files is what left this repository describing the wrong provider for months.
-
-### Keep-alive cron — live again since 2026-09-02
-
-`.github/workflows/keep-supabase-active.yml` and `scripts/keep-supabase-active.mjs` ping the
-database nightly. They exist because a free-tier project at the provider hosting production today
-*pauses* after a stretch of inactivity and needs a human to restore it — which is why the cron was
-dormant from 2026-08-22 to 2026-09-02, while the provider of that era suspended idle compute and
-woke it on the next connection by itself. The 2026-09-02 move restored the two `schedule:` lines
-and set the database secret; `workflow_dispatch` is kept for firing the ping by hand. A red run is
-a real signal now. The file's header has the full story; where production runs is recorded in
-[docs/ENVIRONMENT.md](docs/ENVIRONMENT.md)'s database section, deliberately not here.
-
-## Android Data Flow Notes
-
-The Android app uses the same REST endpoints and JWT bearer auth:
-
-- Email/password and Google login both call `POST /api/auth/login`.
-- The returned access token is stored locally and sent as `Authorization: Bearer <token>` on protected API calls.
-- Create forms submit directly to `/api/crafts`, `/api/artisans`, `/api/workshops`, `/api/products`, `/api/tools`, and `/api/questionnaire/interviews`.
-- Native media capture uses the same presign-upload-complete sequence so files do not pass through the backend server.
-- Audio uploaded from Android sends `processingRequests=["TRANSCRIPTION"]`, which queues a job for the provider chain on the backend.
-- Keep GPS capture in a separate location object and submit it with artisan/product/tool/workshop/media payloads.
-
-## Cost Notes
-
-- PostgreSQL stores relational data, JSONB metadata and S3 keys only.
-- Object storage holds large media files.
-- Signed uploads prevent backend bandwidth from scaling with media size.
-- Pagination is implemented for list/search endpoints.
-- Cloudflare R2, Backblaze B2, MinIO or AWS S3 can be used behind the same S3-compatible utility.
-- Add object storage lifecycle rules for old/raw media and future thumbnail/transcription worker outputs.
-
----
+| Question | Answer |
+|---|---|
+| Where do I start? | [docs/README.md](docs/README.md), the index |
+| How do the pieces fit? | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| What are the stages and the report? | [DESIGN_WORKSHOP.md](docs/DESIGN_WORKSHOP.md) |
+| How does a recording become English? | [TRANSCRIPT_PIPELINE.md](docs/TRANSCRIPT_PIPELINE.md) |
+| Which AI runs where, and what does it cost? | [AI_FEATURES.md](docs/AI_FEATURES.md) |
+| Who may do what? | [PERMISSIONS.md](docs/PERMISSIONS.md) |
+| What is stored? | [DATA_MODEL.md](docs/DATA_MODEL.md) |
+| Every environment variable? | [ENVIRONMENT.md](docs/ENVIRONMENT.md) |
+| How does CI and deployment work? | [CI.md](docs/CI.md), [RELEASE.md](docs/RELEASE.md), [backend/DEPLOY_AWS.md](backend/DEPLOY_AWS.md) |
+| How does the box hold up? | [SCALABILITY.md](docs/SCALABILITY.md) |
+| How is data protected? | [SECURITY.md](docs/SECURITY.md), [AADHAAR.md](docs/AADHAAR.md) |
+| How do I hand it to a designer? | [RESEARCHER_GUIDE.md](docs/RESEARCHER_GUIDE.md), [WALKTHROUGH.md](docs/WALKTHROUGH.md) |
+| How many models, routes, tests? | [REPO_FACTS.md](docs/REPO_FACTS.md), generated; no count is written by hand |
+| Why is the code the way it is, now that it has no comments? | [INVARIANTS.md](docs/INVARIANTS.md) |
+| How is this README built? | [readme-kit/README_STYLE.md](docs/readme-kit/README_STYLE.md) |
 
 ## How this document is kept true
 
-This file is an **orientation document**: what the project is, how to run it locally, and where to go
-next. Anything that needs depth belongs in [docs/](docs/README.md), and the maintenance rule follows
-from that — **when this file and a document in `docs/` disagree, `docs/` wins**, and this file is the
-one to fix.
+This file is the front page. Depth lives in [docs/](docs/README.md), and when the two disagree, `docs/`
+wins and this file is the one to fix.
 
-| Claim class | Kept true by |
+| Claim | Kept true by |
 |---|---|
-| Every link and repository path | `node docs/tools/check-docs.mjs` resolves them, including the ones in this file. |
-| Counts of any kind | Not stated here. [docs/REPO_FACTS.md](docs/REPO_FACTS.md) is generated. |
-| The role table | A summary of [docs/PERMISSIONS.md](docs/PERMISSIONS.md), which is the authority and is itself parity-checked against `frontend/lib/permissions.ts`. |
-| The provider chain | A summary of [docs/ARCHITECTURE.md §6](docs/ARCHITECTURE.md); the default order is generated. |
-| Environment variables | A summary of [docs/ENVIRONMENT.md](docs/ENVIRONMENT.md), which has a one-command completeness check. |
-| Local setup commands | Run them on a clean clone. Nothing else verifies a `README` quick-start, and a broken one is the first thing a new contributor meets. The install and migration lines are the ones `.github/workflows/checks.yml` runs (the lock, `prisma generate`, `prisma migrate deploy`), so the workflow is the place to compare them against when either changes. |
-| The endpoint list under "Core API Endpoints" | **Illustrative, not exhaustive** — it is a sample of the surface, and the real inventory is the OpenAPI schema. Treat a route missing from it as normal; treat a route *listed* and absent as a bug. The design-workshop block is the exception: it is the complete router, and is diffable against the `@router` decorators in `backend/app/api/routes/design_workshops.py`. |
-| "The Workshop Record" | A summary of [docs/DESIGN_WORKSHOP.md](docs/DESIGN_WORKSHOP.md), which is the authority and carries its own source-of-truth table for the registry, the storage model and the report pipeline. |
+| Links and repository paths | `node docs/tools/check-docs.mjs` resolves them |
+| Images, `<picture>` pairs, every mermaid block | `readme-check.yml`: the kit is rebuilt and diffed, every SVG checked, every diagram rendered by mermaid-cli, the page rendered by `gh api markdown` |
+| Model names and defaults | `backend/app/services/ai_providers.py` and `backend/app/transcription/transcript/gemini.py` |
+| The transcript contract and strings | `shared/transcript-contract.json`, `shared/strings/transcript.json`, pinned by `backend/tests/test_transcript_contract.py` |
+| The questionnaire feature counts | `shared/questionnaire-features.json`, checked by `backend/tests/test_questionnaire_feature_parity.py` |
+| Counts of models, routes, tests | not stated here; [REPO_FACTS.md](docs/REPO_FACTS.md) is generated |
+| The Tier / Rank / Powers table | `backend/tests/test_role_ladder_parity.py` against `ROLE_RANK` in `backend/app/core/deps.py` |
+| Box sizes, memory, swap, the Python build | read on the boxes through SSM on 4 Nov 2026; `deploy-backend.yml` pins the Python build |
+| The release table | the tags and `android/app/build.gradle.kts` (`appVersionName`, `appVersionCode`) |
 
-**Review triggers:** a new top-level directory, a change to the local-setup commands, a change to the
-design-workshop router, or a change to any of the summaries above in their authoritative document.
+**Review triggers:** a release, a provider or model default change, a new top-level directory, a change
+to the local commands, or a new workflow.
 
-**Known unverified:** the local-setup commands are verified by running them, which nothing automates
-— a dependency bump or a Node/Python version change can break the quick-start while every other
-check here stays green. The live URLs and IP addresses quoted at the top are console and
-infrastructure state, not repository state, and cannot be checked from a clone.
-
-**Known unverified:** the production hostnames, the EC2 IP and the S3 bucket name are recorded from a
-deployment, not read from code. They are correct as of 2026-07-27 to the extent the deployment has
-not changed under them.
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/readme-kit/assets/footer-dark.svg">
+  <img src="docs/readme-kit/assets/footer-light.svg" width="100%" alt="Made for the people who make things by hand. AI CoE, IIT Kharagpur, Ministry of Textiles.">
+</picture>

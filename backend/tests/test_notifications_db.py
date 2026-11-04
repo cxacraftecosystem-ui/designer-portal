@@ -1,10 +1,3 @@
-"""The in-app activity list against a real database: the migration's table, ``notify`` writing a row
-with mail off, and the routes reading and marking it.
-
-ONE SYNC TEST, in the order ``conftest.py`` prescribes: seed in a private ``asyncio.run`` -> drive the
-``TestClient`` -> read back in another private ``asyncio.run`` once the client is closed.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -69,7 +62,6 @@ def test_a_notice_written_with_mail_off_is_listed_and_marked_read(monkeypatch: p
         return {"asha": asha, "bina": bina, "first": first, "second": second}
 
     seeded = _private(seed)
-    # Mail is off: no e-mail, and the notice is in the list all the same.
     assert seeded["first"].in_app and not seeded["first"].emailed
     headers = {"Authorization": f"Bearer {create_access_token(subject=seeded['asha'].id)}"}
 
@@ -99,8 +91,6 @@ def test_a_notice_written_with_mail_off_is_listed_and_marked_read(monkeypatch: p
 
 
 def test_unread_only_paging_after_a_mark_keeps_the_next_older_notice() -> None:
-    """Against Postgres: "Show older" with unreadOnly, anchored on the notice just opened (now read and
-    outside the filter), starts at the very next older unread notice, and same-instant rows page by id."""
     from datetime import UTC, datetime, timedelta
 
     from fastapi.testclient import TestClient

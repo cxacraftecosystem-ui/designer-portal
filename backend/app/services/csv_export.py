@@ -1,25 +1,3 @@
-"""CSV extracts of a record table (the /export/products.csv and /export/tools.csv downloads).
-
-The columns are NOT written out here: they come from the shared field registry
-(:mod:`app.services.record_fields`), the same one the data browser's info panels and every sheet of
-the .xlsx report are built from. Until this module was migrated it carried its own hand-maintained
-``PRODUCT_FIELDS`` / ``TOOL_FIELDS`` lists, which meant a column added to the registry reached the
-browser and the workbook but silently never reached the CSVs — and it emitted raw column values,
-bypassing the coercion (Decimals without trailing zeros, enums as plain words) and, crucially, the
-masking the registry applies to regulated personal data such as an artisan's Aadhaar number.
-
-A CSV is a data extract rather than a reading surface, so one column the registry has no opinion
-about is prepended: the record's ``ID``, the only stable key a downstream sheet can join on.
-
-THE COUPLING IS LOAD-BEARING AND NOT ONLY TIDY, and the dimension cell is the case that shows it.
-``record_fields.dims_with_method`` says in the cell itself when a dimension was a vision model's
-estimate rather than a tape reading. A researcher who downloads this file and costs a production run
-from it in another tool carries that claim with them because the cell comes from the registry — and
-would silently not, on the surface furthest from anybody who could notice, if this module ever went
-back to composing its own columns. ``tests/test_measurement_provenance.py`` asserts the CSV row and
-the screen carry the same words for that reason.
-"""
-
 import csv
 from io import StringIO
 from typing import Any
@@ -29,17 +7,10 @@ from app.services.record_fields import sheet_columns, sheet_row
 
 
 def record_media(record: Any) -> list[Any]:
-    """The media rows loaded alongside a record (``include={"media": True}``)."""
     return list(get_value(record, "media") or [])
 
 
 def records_to_csv(kind: str, records: list[Any], truncated: bool = False) -> str:
-    """CSV text for records of one registry ``kind`` ("product", "tool", ...).
-
-    ``truncated`` appends the same full-width note row the .xlsx report uses when a sheet hits its
-    row cap: a download that silently stops short is worse than one that says so, and keeping the
-    note rectangular means a spreadsheet or a parser still reads the file as a clean table.
-    """
     output = StringIO()
     writer = csv.writer(output)
     columns = ["ID", *sheet_columns(kind)]

@@ -1,24 +1,3 @@
-"""/api/aadhaar — verify a person against UIDAI, for an account or an artisan record.
-
-EVERY ROUTE HERE IS INVISIBLE WHILE ITS FLAG IS OFF: ``flags.require_offline`` /
-``flags.require_online`` answer 404 before anything else runs, including authentication-dependent
-permission checks, so an unflagged deployment is indistinguishable from one that never had the
-feature. See docs/AADHAAR.md.
-
-WHO MAY DO WHAT
-  * Any signed-in account may verify, read and withdraw ITS OWN verification (``/self``).
-  * An artisan may be verified by somebody who may create records AND may edit that artisan — its
-    recorder, an admin, a professor+ outranking the recorder, or an EDIT grantee — and who does
-    not hold an inspecting or directing post on the workshop it is filed under. That is the same
-    bar ``PATCH /artisans/{id}`` sets for changing a populated field, because a verification
-    changes what the record asserts about a person.
-  * Only an ADMIN decides a name mismatch, and never on their own account.
-
-THE PAYLOAD IS NEVER STORED. The QR text, the ZIP, the share code, the mobile number or e-mail
-offered for the hash check, the Aadhaar number or VID, and the OTP live in this request's memory and
-are gone when it returns. What is written is ``records.apply_to_*``'s handful of columns.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -60,7 +39,6 @@ CONSENT_REQUIRED = (
 
 @features_router.get("/features")
 async def get_features(_: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """Which optional features this deployment has switched on. Both clients hide what is off."""
     return feature_flags.features()
 
 
@@ -73,8 +51,6 @@ def _refusal(error: AadhaarError) -> HTTPException:
 def _now() -> datetime:
     return datetime.now(UTC)
 
-
-# ── who the verification is about ───────────────────────────────────────────────────────────
 
 
 async def _self_row(user: Any) -> Any:
@@ -107,8 +83,6 @@ async def _artisan_for_verification(artisan_id: str, user: Any) -> Any:
     await assert_may_write_a_record_filed_under(artisan.designWorkshopId, user)
     return artisan
 
-
-# ── the shared flow: consent, verify in memory, apply, audit ────────────────────────────────
 
 
 async def _run(
@@ -169,8 +143,6 @@ def _offline_xml(body: OfflineXmlBody) -> Any:
     return verify
 
 
-# ── the account holder's own verification ────────────────────────────────────────────────────
-
 
 @router.get("/self", dependencies=[Depends(flags.require_any)])
 async def read_self(current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
@@ -203,17 +175,11 @@ async def withdraw_self(current_user: Any = Depends(get_current_user)) -> dict[s
     return records.summary(await records.withdraw(records.RECORD_USER, row, current_user))
 
 
-# ── an artisan's verification ────────────────────────────────────────────────────────────────
-
 
 @router.get("/artisans/{artisan_id}", dependencies=[Depends(flags.require_any)])
 async def read_artisan(
     artisan_id: str, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    """The artisan's verification. The fields UIDAI signed (name, date of birth, gender, last four)
-    go only to the people who may read the artisan's full Aadhaar number — the recorder, and
-    professor-and-above — on ``artisans._may_read_full_aadhaar``'s rule. Everybody else learns
-    whether the artisan is verified, how, and when."""
     from app.core.deps import has_rank
 
     artisan = await db.artisan.find_unique(where={"id": artisan_id})
@@ -255,8 +221,6 @@ async def withdraw_artisan(
     return records.summary(await records.withdraw(records.RECORD_ARTISAN, artisan, current_user))
 
 
-# ── an admin's decision on a name mismatch ───────────────────────────────────────────────────
-
 
 def _require_admin_decider(current_user: Any) -> None:
     if not is_admin(current_user):
@@ -294,8 +258,6 @@ async def decide_artisan(
         await records.decide(records.RECORD_ARTISAN, row, current_user, body.accept)
     )
 
-
-# ── online OTP authentication (AUA through an ASA) ───────────────────────────────────────────
 
 
 async def _online_otp(

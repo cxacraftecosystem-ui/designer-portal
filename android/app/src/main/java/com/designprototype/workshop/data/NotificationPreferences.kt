@@ -5,15 +5,6 @@ import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.PUT
 
-/**
- * This account's e-mail choices — `GET`/`PUT /preferences/notifications` (2026-10-18), the web's
- * Settings card on the handset.
- *
- * OPT-OUT, and every field defaults to the server's default, so an older server that answers only
- * `available` and `emailReviewNotes` reads as "everything on, one e-mail per hand-in". A save sends
- * only the field that changed (`explicitNulls = false` drops the rest), so a choice this build does not
- * know is never overwritten.
- */
 interface NotificationPreferencesApi {
     @GET("preferences/notifications")
     suspend fun read(): NotificationPreferencesDto
@@ -40,7 +31,6 @@ data class NotificationPreferencesUpdate(
     val emailHandInNotices: String? = null,
 )
 
-/** How an inspector or the approving authority hears of a hand-in. Words held to the web's. */
 object HandInMail {
     const val EACH = "EACH"
     const val DAILY = "DAILY"
@@ -48,11 +38,9 @@ object HandInMail {
 
     val OPTIONS: List<Pair<String, String>> = listOf(EACH to "Each time", DAILY to "Once a day", OFF to "Never")
 
-    /** Anything the server did not send as one of the three reads as [EACH]. */
     fun normalised(value: String?): String = value?.trim()?.uppercase()?.takeIf { it in setOf(EACH, DAILY, OFF) } ?: EACH
 }
 
-/** The three switches, in the web's order and with its words (`EMAIL_SWITCHES` in EmailNotificationsCard.tsx). */
 enum class EmailSwitch(val label: String, val description: String) {
     REVIEW_NOTES("Corrections on my workshops", "When an inspector suggests a correction or sends a workshop back."),
     WORKSHOP_UPDATES("Workshop updates", "When a report is approved or handed on, or you're given a workshop."),

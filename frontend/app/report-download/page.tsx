@@ -1,15 +1,5 @@
 "use client";
 
-/**
- * /report-download — the office opening an approved report it was e-mailed (2026-10-18).
- *
- * PUBLIC, LIKE /set-password: the Development Commissioner (Handicrafts) office has no account. The
- * link's token is the credential; it is read from the address in an effect and then taken OUT of the
- * address bar (`takeLinkTokenFromAddress`, the set-password rule), and travels to the server in a
- * request body, never on a request line. The download is a five-minute signed URL fetched on the
- * press, so a page left open does not hold a usable file address.
- */
-
 import { useEffect, useState } from "react";
 import { Download, FileText } from "lucide-react";
 
@@ -37,7 +27,6 @@ export default function ReportDownloadPage() {
     const taken = takeLinkTokenFromAddress(window.location.href);
     if (taken.address !== null) {
       const address = taken.address;
-      // After every effect of this commit, so the router's own replaceState patch is in place.
       queueMicrotask(() => window.history.replaceState(null, "", address));
     }
     setToken((previous) => previous || taken.token);

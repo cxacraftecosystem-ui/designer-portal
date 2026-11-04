@@ -1,6 +1,6 @@
 # Kubernetes
 
-**Nothing in `infra/k8s/` is running. Production is one EC2 t3.micro behind nginx behind
+**Nothing in `infra/k8s/` is running. Production is one EC2 t3.medium (since 2026-10-10) behind nginx behind
 CloudFront, deployed by `.github/workflows/deploy-backend.yml`, and this directory changes none of
 that.** These manifests exist so that the move is a reviewable decision rather than a weekend of
 guessing. They are written to be applied as-is; they have never been applied.

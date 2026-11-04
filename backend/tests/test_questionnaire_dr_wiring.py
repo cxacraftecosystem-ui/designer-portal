@@ -1,15 +1,3 @@
-"""Designer-portal's wiring of the shared questionnaire (UNIFY_2026-10-21.md, stream U1): no database.
-
-* every port the package asks for is served (the consent gate, the transcription enqueue and the
-  workshop-submission rules are this portal's; U0 shipped them refusing);
-* the v2 routes are mounted, and answer 404 while ``QUESTIONNAIRE_V2`` is off (except the config);
-* the consent gate is the shared ledger rule PLUS the design workshop's dictation consent (C4, DR
-  audit H3): a refused workshop refuses a take's send even when every artisan agreed;
-* the readers (tasks, completeness, stage counts, export, annexure) add nothing, and read nothing,
-  while the switch is off; with it on, a take or a typed answer counts for a task (C10);
-* the old-build shims are this portal's module and run nothing while the switch is off.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -26,14 +14,13 @@ DESIGNER = SimpleNamespace(id="u_designer", role="DESIGNER", name="Nandini")
 
 
 def _routes() -> set[tuple[str, str]]:
-    """Every (method, path) the API serves, through included routers (FastAPI no longer flattens)."""
     from app.api.router import api_router
 
     try:
         from fastapi.routing import iter_route_contexts
 
         routes = list(iter_route_contexts(api_router.routes))
-    except ImportError:  # an older FastAPI keeps them on .routes
+    except ImportError:
         routes = list(api_router.routes)
     have = set()
     for route in routes:
@@ -49,7 +36,7 @@ def test_every_port_is_served_on_designer_portal() -> None:
     impl = ports.impl()
     assert impl.PORTAL == "designer-portal"
     for name in ports.MODULES:
-        module = impl.module(name)  # raises PortUnavailable if a port were still refused
+        module = impl.module(name)
         assert module is not None, name
     assert impl.module("consent_gate").__name__ == "app.services.questionnaire_consent"
     assert impl.module("transcription").__name__ == "app.services.questionnaire_transcription"
@@ -132,10 +119,7 @@ def test_v2_is_dark_when_switched_off_and_the_config_says_so(monkeypatch: pytest
     assert refused.json()["detail"]["code"] == "NOT_FOUND"
 
 
-# ── the consent gate: the ledger rule plus the design workshop's dictation consent (C4) ─────────
 class GateDB:
-    """Answers the gate's reads from a small in-memory picture of one take."""
-
     def __init__(self, *, artisan_state: str | None = None, workshop_state: str | None = None,
                  recording_state: str | None = None) -> None:
         self.artisan_state, self.workshop_state, self.recording_state = artisan_state, workshop_state, recording_state
@@ -170,11 +154,11 @@ class GateDB:
 
 
 @pytest.mark.parametrize("artisan,workshop,recording,expected", [
-    (None, None, None, "ALLOW"),          # opt-out: no answer anywhere is agreement
+    (None, None, None, "ALLOW"),
     ("GRANTED", None, None, "ALLOW"),
-    ("REFUSED", None, None, "REFUSED"),   # an artisan's refusal
-    ("GRANTED", "REFUSED", None, "REFUSED"),  # the design workshop's dictation refusal (DR audit H3)
-    (None, "GRANTED", "REFUSED", "REFUSED"),  # the recording's own refusal always refuses
+    ("REFUSED", None, None, "REFUSED"),
+    ("GRANTED", "REFUSED", None, "REFUSED"),
+    (None, "GRANTED", "REFUSED", "REFUSED"),
 ])
 def test_the_gate_reads_the_subjects_and_the_design_workshop(artisan, workshop, recording, expected) -> None:
     from app.services import questionnaire_consent
@@ -186,7 +170,6 @@ def test_the_gate_reads_the_subjects_and_the_design_workshop(artisan, workshop, 
 
 
 def test_recording_never_asks_the_gate() -> None:
-    """Consent gates SENDS only: the take routes (presign, complete, file, answers) never import it."""
     from pathlib import Path
 
     for name in ("api/routes/media.py", "questionnaire/sessions.py", "questionnaire/answer_lock.py"):
@@ -194,7 +177,6 @@ def test_recording_never_asks_the_gate() -> None:
         assert "questionnaire_consent" not in text, name
 
 
-# ── readers: nothing while off; a take or a typed answer counts for a task while on (C10) ───────
 class Tripwire:
     def __getattr__(self, name: str) -> Any:
         raise AssertionError(f"a reader touched the database while QUESTIONNAIRE_V2 is off ({name})")
@@ -232,7 +214,6 @@ def test_a_typed_answer_or_a_take_counts_towards_a_section_task(monkeypatch: pyt
     assert asyncio.run(tasks._count_sections("u1", None, ["a1"], ["sec1", "sec2"])) == 1, "only the named artisans' pairs"
 
 
-# ── the old-build shims are this portal's and dark while off ───────────────────────────────────
 def test_the_shims_run_nothing_while_v2_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.core.config import get_settings
     from app.questionnaire import shims_dr

@@ -74,19 +74,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/*
- * THE COVERAGE SECTION OF THE MAP SCREEN — the web's Coverage view (`/map?view=coverage`) on a phone.
- *
- * Top to bottom, as the requirement lays it out: a Filters button (a sheet with Crafts, Scheme,
- * Financial year, State, Detail and Colour by — the web's values in the web's order), the legend, the
- * canvas ([CoverageMapCanvas], pinch and double tap to zoom), the depiction caption word for word, the
- * gaps card and the list of every place with a record. Tapping a district opens a sheet named after
- * it with its counts and "Show records", which lists the records; each row opens the record.
- *
- * The data source is passed in, so the same screen serves both portals' repositories.
- */
-
-/** What a coverage record link opens on the phone: the search screen's record vocabulary. */
 fun coverageRecordTarget(href: String): Pair<String, String>? {
     val parts = href.substringBefore('?').trim('/').split('/')
     if (parts.size != 2 || parts[1].isBlank()) return null
@@ -471,7 +458,6 @@ private fun CoverageGapsCard(data: CoverageResponse) {
     }
 }
 
-/** The list fallback: every place with a record, as the web's table. Tapping a row opens its sheet. */
 @Composable
 private fun CoveragePlacesCard(units: List<CoverageUnit>, level: String, onOpen: (CoverageUnit) -> Unit) {
     CoverageCard(title = "Every place with a record") {

@@ -15,32 +15,6 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.util.UUID
 
-/**
- * WRITING A QUESTIONNAIRE WITH NO SIGNAL (2026-10-16).
- *
- * ── THE PROBLEM ─────────────────────────────────────────────────────────────────────────────────
- *
- * A questionnaire is a tree: the questionnaire, its sections, their questions. Each level's create
- * needs the id the server minted for the level above, and an offline queue has no server ids. The
- * outbox could already queue the questionnaire ROW (`OFFLINE_CUSTOM_QUESTIONNAIRE`) and nothing
- * under it, so a designer in a courtyard could start a questionnaire and not write a single question.
- *
- * ── THE MECHANISM: TEMPORARY IDS, RESOLVED AT REPLAY ────────────────────────────────────────────
- *
- * Everything created offline gets a client id, [TEMP_ID_PREFIX] + a UUID, and is used under that id
- * on the phone at once — the screen shows it, and children are queued against it. Every authoring
- * step is one outbox entry of type [OFFLINE_QFORM_OP] carrying a [QFormOp]. The outbox replays in
- * queue order, so a parent's create always runs before its children's; when a create lands, the
- * server id it was given is written to [TempIdMap] (on disk, so a pass killed between the parent and
- * the child resumes correctly), and every later step swaps temporary ids for server ids before it
- * is sent. Each create carries an `Idempotency-Key`, so a create whose answer is lost is not
- * duplicated on the next pass.
- *
- * If a parent is REFUSED, its children cannot be sent; they are refused in their turn with a
- * sentence that says so ([QFormParentMissing]), and nothing is deleted.
- *
- * No server change: the routes are the existing create/patch routes, called in order.
- */
 const val OFFLINE_QFORM_OP = "questionnaireAuthoring"
 
 const val TEMP_ID_PREFIX = "tmp-"
@@ -49,12 +23,10 @@ fun newTempId(): String = TEMP_ID_PREFIX + UUID.randomUUID().toString()
 
 fun isTempId(id: String?): Boolean = id != null && id.startsWith(TEMP_ID_PREFIX)
 
-/** One authoring step. [op] names it; the id fields may hold temporary ids. */
 @Serializable
 data class QFormOp(
     val op: String,
     val questionnaireId: String,
-    /** The temporary id this step CREATES (add section / add question). */
     val tempId: String? = null,
     val sectionId: String? = null,
     val questionId: String? = null,
@@ -65,7 +37,6 @@ data class QFormOp(
     val helpText: String? = null,
     val changeHelpText: Boolean = false,
     val isRequired: Boolean? = null,
-    /** [REUSE] only: the design workshop the copy is for. Null makes an unattached copy. */
     val designWorkshopId: String? = null,
 ) {
     companion object {
@@ -75,20 +46,12 @@ data class QFormOp(
         const val EDIT_QUESTION = "editQuestion"
         const val REMOVE_QUESTION = "removeQuestion"
         const val RENAME_QUESTIONNAIRE = "renameQuestionnaire"
-        /**
-         * Copy this questionnaire as a template (2026-10-17). A create of a NEW questionnaire that
-         * changes nothing on the source, so it is safe to send late; it waits behind any step still
-         * queued for the source, so the copy includes them, and carries an `Idempotency-Key` so a
-         * lost answer is not a second copy.
-         */
         const val REUSE = "reuse"
     }
 }
 
-/** A child whose parent was refused, or never queued: it cannot be sent, and says why. */
 class QFormParentMissing(message: String) : IllegalStateException(message)
 
-/** Temporary id -> server id, for every authoring create that has landed. On disk. */
 object TempIdMap {
     private val json = Json { ignoreUnknownKeys = true }
     private val mutex = Mutex()
@@ -125,20 +88,11 @@ object TempIdMap {
     }
 }
 
-/**
- * M13 (21 Oct 2026): a stable `Idempotency-Key` for one step of adopting a received questionnaire,
- * derived from the received file's id and the step, so every retry of that step sends the same key.
- * Only `[A-Za-z0-9_-]` survive, and the key stays within the server's 8 to 128 characters.
- */
 fun adoptionIdempotencyKey(rowId: String, vararg step: String): String {
     val clean = (listOf("adopt", rowId) + step).joinToString("-") { part -> part.filter { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '_' || it == '-' } }
     return clean.padEnd(8, '0').take(128)
 }
 
-/**
- * What a designer is told when an authoring step is kept on the phone (L11, 21 Oct 2026), named for
- * what is actually holding it. Pure, pinned by a JVM test.
- */
 fun queuedAuthoringMessage(online: Boolean, waitsForParent: Boolean, earlierRefused: Boolean): String = when {
     !online -> "Saved on this phone; added when online."
     earlierRefused -> "Saved on this phone. An earlier change was not accepted; open Saved on this phone to fix it."
@@ -146,15 +100,8 @@ fun queuedAuthoringMessage(online: Boolean, waitsForParent: Boolean, earlierRefu
     else -> "Saved on this phone; added after the changes queued before it."
 }
 
-/** [id] with a temporary id swapped for its server id where one is known. */
 fun resolveTempId(id: String?, map: Map<String, String>): String? = if (isTempId(id)) map[id] ?: id else id
 
-/**
- * Can "Use this questionnaire again" be sent now, or must it wait in the outbox as a [QFormOp.REUSE]?
- * It waits with no signal, while the source (or the workshop it is for) exists only on this phone,
- * and while any earlier step for the source is still queued — so the copy includes those steps.
- * Pure; pinned by `QuestionnaireReuseOutboxTest`.
- */
 fun reuseCanSendNow(
     sourceId: String,
     designWorkshopId: String?,
@@ -165,11 +112,6 @@ fun reuseCanSendNow(
     online && pendingForSource == 0 &&
         !isTempId(resolveTempId(sourceId, map)) && !isTempId(resolveTempId(designWorkshopId, map))
 
-/**
- * The form as the designer should see it: the server's copy with every step still waiting on this
- * phone applied on top — new sections and questions drawn under their temporary ids, renames,
- * edits and removals applied. Pure. Pinned by `QuestionnaireAuthoringTest`.
- */
 fun applyPendingAuthoring(form: CustomQuestionnaireDto, ops: List<QFormOp>, map: Map<String, String>): CustomQuestionnaireDto {
     var sections = form.sections
     var title = form.title
@@ -226,16 +168,11 @@ fun applyPendingAuthoring(form: CustomQuestionnaireDto, ops: List<QFormOp>, map:
     )
 }
 
-/**
- * The section a create just made, out of the whole questionnaire the route answers with: the one
- * titled as asked that no earlier temporary id already claims, last by sort order. Pure.
- */
 fun createdSectionId(result: CustomQuestionnaireDto, title: String, claimed: Collection<String>): String? =
     result.sections
         .filter { it.title.trim() == title.trim() && it.id !in claimed }
         .maxByOrNull { it.sortOrder }?.id
 
-/** The question a create just made in [sectionId], by the same rule as [createdSectionId]. Pure. */
 fun createdQuestionId(result: CustomQuestionnaireDto, sectionId: String, prompt: String, claimed: Collection<String>): String? =
     result.sections.firstOrNull { it.id == sectionId }?.questions
         ?.filter { it.prompt.trim() == prompt.trim() && it.id !in claimed }

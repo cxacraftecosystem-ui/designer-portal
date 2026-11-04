@@ -8,12 +8,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The two-step verification switch tells the truth (owner's report, 2026-10-17: switched on in the
- * emulator, never scanned, came back to "on, use a recovery code or the authenticator code"). It reads
- * On only when the server says `enabled`; setup reads "Setting up…"; an unfinished setup reads Off.
- * The web's `e2e/two-step-switch-unit.spec.ts` is the same table. Also [AppToggleRules].
- */
 class TwoStepSwitchTest {
     private val off = TwoFactorStatusDto(enabled = false, pending = false)
     private val pending = TwoFactorStatusDto(enabled = false, pending = true)
@@ -64,7 +58,6 @@ class TwoStepSwitchTest {
         assertTrue(TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.CANCEL))
         assertTrue(TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.SWITCH_OFF))
         assertTrue(TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.SCREEN_CLOSED))
-        // A short trip to the authenticator app keeps the key; a long absence drops it — the web's rule.
         assertFalse(TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.BACKGROUNDED))
         assertFalse(TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.BACKGROUNDED, 60_000L))
         assertFalse(TwoStepSwitch.leavingDiscards(TwoStepSwitch.Leave.BACKGROUNDED, TwoStepSwitch.AWAY_LIMIT_MILLIS))

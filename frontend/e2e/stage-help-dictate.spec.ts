@@ -2,21 +2,9 @@ import { expect, test } from "@playwright/test";
 
 import { API, apiToken, CREDENTIALS_MISSING, signIn } from "./support/session";
 
-/**
- * DW-14 ON A LIVE STAGE PAGE: the microphone is drawn INSIDE the field's box, and the "i" opens.
- *
- * `stage-help-dictate-unit.spec.ts` holds the pure half (the class strings and the ARIA helpers).
- * This is the half only a browser can see — where the button actually lands — measured at phone
- * width on a freshly created workshop, so it never depends on what an earlier run left behind.
- *
- * A stub recogniser is installed before the page loads, so the control draws in browser mode on
- * any Chromium build (headless included) and nothing is ever sent to a dictation provider.
- */
-
 test.skip(!!CREDENTIALS_MISSING, CREDENTIALS_MISSING);
 
 const STAGE_KEY = "WORKSHOP_SETUP";
-/** `workshopSetup.craftName`: a one-line TEXT box that dictates and carries `details`. */
 const FIELD_LABEL = "Craft";
 
 test.use({ viewport: { width: 390, height: 844 } });
@@ -50,7 +38,6 @@ test("the microphone sits inside the box, and the i opens its panel", async ({ p
 
   const toggle = page.getByRole("button", { name: `About ${FIELD_LABEL}`, exact: true });
   await expect(toggle).toBeVisible();
-  // The toggle's row, then the field's own column: label row, details, box, hint.
   const field = toggle.locator("xpath=../..");
 
   const box = field.locator(".field-input").first();

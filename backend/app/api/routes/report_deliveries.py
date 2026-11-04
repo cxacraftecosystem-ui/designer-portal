@@ -1,13 +1,3 @@
-"""``/api/report-deliveries`` — the office opening an approved report it was e-mailed (2026-10-18).
-
-THE ONLY CALLER HAS NO ACCOUNT. The Development Commissioner (Handicrafts) office is sent a link by
-"Approve and hand on" (``services/report_delivery``); the link's secret is the credential, so both
-routes are anonymous and listed in ``tests/test_anonymous_route_sweep.py``. The token travels in the
-JSON body, never on the request line, so it stays out of access logs (the rule the set-password check
-follows). A link that is unknown answers 404, an expired or re-issued one 410, and nothing about the
-workshop is said beyond what the e-mail already said.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -48,8 +38,6 @@ async def _live_or_refuse(token: str) -> Any:
 
 @router.post("/lookup")
 async def lookup_delivery(payload: DeliveryTokenIn) -> dict[str, Any]:
-    """What the download page shows before the file: the report's title, the file name, the office
-    it was sent to and when the link expires."""
     row = await _live_or_refuse(payload.token)
     workshop = getattr(row, "designWorkshop", None)
     return {
@@ -62,8 +50,6 @@ async def lookup_delivery(payload: DeliveryTokenIn) -> dict[str, Any]:
 
 @router.post("/download")
 async def download_delivery(payload: DeliveryTokenIn) -> dict[str, Any]:
-    """A short-lived signed URL for the file, and the open recorded (the Ministry dashboard's
-    "Received")."""
     row = await _live_or_refuse(payload.token)
     extension = row.fileName.rsplit(".", 1)[-1].lower() if "." in row.fileName else ""
     url = await asyncio.to_thread(

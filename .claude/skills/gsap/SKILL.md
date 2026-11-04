@@ -24,11 +24,13 @@ timeline.fromTo(
   word,
   { yPercent: 108, opacity: 0, rotate: 1.5 },
   { yPercent: 0, opacity: 1, rotate: 0 },
-  // Each word starts 0.28s after the previous STARTED, while the previous is still 0.34s
-  // from finishing. `"<"` is "the previous tween's start"; the number is the offset from it.
   index === 0 ? 0 : "<0.28"
 );
 ```
+
+Each word starts 0.28 s after the previous one STARTED, while that one is still 0.34 s from finishing:
+`"<"` is "the previous tween's start", and the number is the offset from it. That sentence lives here,
+not in the code; the source carries no comments.
 
 If what you want can be written as "these enter one after another, each fully", it is
 `staggerParent`/`riseItem` from `guideMotion.ts`, not a timeline.
@@ -43,10 +45,11 @@ GSAP is ~70 KB. Only this one component needs it, so it must not sit in the bund
 page loads:
 
 ```ts
-import type { gsap as GsapNamespace } from "gsap";   // type-only: erased at build
-// ...
-import("gsap").then(({ gsap }) => { /* build the timeline */ });
+import type { gsap as GsapNamespace } from "gsap";
+import("gsap").then(({ gsap }) => buildTimeline(gsap));
 ```
+
+The `import type` is erased at build; only the dynamic `import("gsap")` reaches the bundle.
 
 A top-level `import { gsap } from "gsap"` ships it to every route that transitively imports the
 component. Keep the value import inside the effect and the namespace import type-only.
@@ -55,7 +58,7 @@ Guard the async race: the effect can be torn down before the module resolves.
 
 ```ts
 let cancelled = false;
-import("gsap").then(({ gsap }) => { if (cancelled) return; /* ... */ });
+import("gsap").then(({ gsap }) => { if (!cancelled) timeline = buildTimeline(gsap); });
 return () => { cancelled = true; timeline?.kill(); };
 ```
 

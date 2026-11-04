@@ -58,78 +58,15 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import retrofit2.HttpException
 
-/**
- * ONE DESIGN & PROTOTYPE WORKSHOP, READ BY THE PERSON INSPECTING IT — and by nobody who can change it.
- *
- * ── THE ONE RULE THIS SCREEN EXISTS TO KEEP ──────────────────────────────────────────────────────
- *
- * **NOTHING HERE MAY OFFER A WRITE TO THE WORKSHOP'S CONTENT, AND NOTHING HERE MAY OFFER A CONTROL
- * THE API WOULD 404.** The one write on this screen is a NOTE — a correction suggestion or a
- * send-back, in [InspectionFeedbackPanel], gated on the payload's own `mayRecordFeedback` and never
- * on `readOnly`, which stays true. The
- * payload says `readOnly: true` on the wire precisely so that a screen cannot mistake it for the
- * designer's read, and [dwInspectionIsReadOnly] fails CLOSED on a payload that predates the key. The
- * refusal is not cosmetic: every stage-editing route, the report, the photo intake, the codes sheet,
- * the AI layers and the provenance view all stand behind `load_workshop_or_404`, which 404s anybody
- * outside `DESIGN_WORKSHOP_ROLES` before it looks at the row — and an INSPECTOR is outside it by
- * construction. A "tap the stage to open it" affordance on this screen would be nine 404s waiting to
- * be found by an inspector who assumes the app is broken. See `DwInspectionDestination`, which
- * enumerates them so that a tenth cannot be added and quietly linked from here.
- *
- * ── WHY IT IS NOT `StageScreen` WITH `enabled = false` ───────────────────────────────────────────
- *
- * Three reasons, argued in full on `dwInspectionFieldReading`, and none of them is tidiness: the
- * designer's controls MOUNT things that 404 (media capture, the reference picker, dictation, the
- * sketch panel, an embedded record form); they cannot resolve the media anyway, so every tile would
- * render its "could not be read" state — indistinguishable from a photograph that failed to load,
- * and not what happened; and they write into a [com.designprototype.workshop.data.WorkshopDraft],
- * which is the store `WorkshopSync` PUSHES. An inspector must never acquire one.
- *
- * What IS reused is every function that decides what a value MEANS — `DwValues`, the rich-text
- * summariser, the enum table, the reference hint and `dwCardRowTitle` — so an inspector and the
- * designer being inspected read one interpretation of the same bytes, plus [DwFieldStampDto.attribution]
- * verbatim, so they read one authorship sentence too.
- *
- * ── THE STAGE LIST COMES FROM THE REGISTRY, NOT FROM THE PAYLOAD'S KEYS ──────────────────────────
- *
- * Iterating `detail.stages.keys` would list only the stages somebody has touched. **AN EMPTY STAGE
- * IS A FINDING ON AN INSPECTION SCREEN**, not a row to omit — "stage 14 was never started" is
- * exactly the sort of thing this surface exists to surface — so the walk is over the 22 stages the
- * registry declares, and a stage with nothing in it renders as a stage with nothing in it. The
- * registry is read from [StageSchemaStore], which is network-free and falls back to the copy bundled
- * in the APK, so this half of the screen works even while the read of the workshop itself is still
- * in flight.
- *
- * ── AND THE SCORE COMES FROM `detail.completeness`, NEVER FROM `StageBucketDto.completeness` ─────
- *
- * That optional key exists on the type and is EMPTY on this payload: only the single-stage route
- * attaches one, and an inspector cannot reach that route. Reading it would print "Nothing recorded"
- * beside every stage of a finished workshop. This screen also does NOT compute a score of its own
- * with `computeWorkshopCompleteness`, which is the obvious-looking alternative: that function scores
- * a DRAFT under a custom definition this device does not hold, and a second arithmetic on the same
- * workshop is how a designer and their inspector come to disagree about what is outstanding.
- */
 @Composable
 fun InspectionDetailScreen(
     repository: WorkshopRepository,
-    /**
-     * The SERVER's workshop id, and never a draft-store id.
-     *
-     * The one screen in this feature family that takes one directly. Every design-workshop screen a
-     * DESIGNER reaches carries the draft store's id — a `local-…` id for a workshop started in a
-     * courtyard — and resolves `remoteId` itself. There is no draft here and there must never be
-     * one: this account did not create the workshop, cannot edit it, and holds nothing about it on
-     * this phone. The id comes from [InspectionListScreen], which is the only list this account can
-     * reach.
-     */
     workshopId: String,
 ) {
     val context = LocalContext.current
     val appContext = remember(context) { context.applicationContext }
 
     val viewer = remember(repository) { repository.cachedUser() }
-    // Re-derived from the cached account, exactly as the list screen does: a nav entry is not a
-    // guard, and nothing is REQUESTED when the answer is already known.
     val mayInspect = remember(viewer) { viewer != null && canInspectDesignWorkshops(viewer.role) }
 
     var schema by remember { mutableStateOf<SchemaResponse?>(null) }
@@ -138,9 +75,7 @@ fun InspectionDetailScreen(
     var reload by remember(workshopId) { mutableIntStateOf(0) }
     var loadError by remember(workshopId) { mutableStateOf<String?>(null) }
     var notOpen by remember(workshopId) { mutableStateOf(false) }
-    /** When the copy on screen was saved on this phone; null while it is a live read. */
     var savedAt by remember(workshopId) { mutableStateOf<String?>(null) }
-    /** Bumped after every read, so the feedback panel re-reads what is queued on this phone. */
     var readCount by remember(workshopId) { mutableIntStateOf(0) }
 
     LaunchedEffect(workshopId, reload, mayInspect) {
@@ -151,16 +86,12 @@ fun InspectionDetailScreen(
         loading = true
         loadError = null
         notOpen = false
-        // The registry FIRST, and off the device: it never fails for want of a connection, so the
-        // headings and the field labels are in hand whatever the read below does.
         schema = runCatching { StageSchemaStore.load(appContext) }.getOrNull()
         runCatching { repository.readWorkshopUnderInspection(appContext, workshopId) }
             .onSuccess { read ->
                 detail = read.detail
                 savedAt = (read as? DwInspectionRead.Saved)?.savedAt
                 readCount++
-                // A LIVE READ IS THE MOMENT TO SEND WHAT WAS WRITTEN WITHOUT SIGNAL: each queued
-                // note is checked against the report as it now stands before it goes.
                 if (read is DwInspectionRead.Live) {
                     runCatching { repository.syncInspectionNotes(appContext, workshopId) }
                         .getOrNull()?.refreshed?.get(workshopId)?.let { detail = it }
@@ -169,13 +100,6 @@ fun InspectionDetailScreen(
             }
             .onFailure { error ->
                 val status = (error as? HttpException)?.code()
-                // A 404 HERE IS DELIBERATELY NOT DIAGNOSED FURTHER, and that is the server's design
-                // rather than this screen giving up. `load_inspectable_workshop_or_404` answers the
-                // SAME "Record not found" for all four of: no such id, a soft-deleted workshop, an
-                // account that is not an inspector, and an inspector with no row on this workshop —
-                // because a 403 would confirm the id exists to exactly the people it is turning
-                // away. Guessing which of the four it was would be this client inventing a fact the
-                // server refused to give it.
                 if (status == 404) notOpen = true else loadError = error.inspectionFailure(DwInspectionAttempt.READ)
             }
         loading = false
@@ -248,11 +172,6 @@ fun InspectionDetailScreen(
             Text(subtitle, color = MaterialTheme.field.body, style = MaterialTheme.typography.bodyMedium)
         }
 
-        // ── THE READ-ONLY STRIP, AND IT IS DRAWN FROM THE WIRE'S OWN FLAG ────────────────────────
-        //
-        // Not from the route this screen happens to call. `dwInspectionIsReadOnly` is what reads the
-        // flag, it fails closed on a payload that predates it, and it is the one place the answer
-        // changes the day this screen is shared with the designer's read.
         savedAt?.let { InspectionNotice(dwSavedInspectionSentence(it), warning = true) }
 
         if (dwInspectionIsReadOnly(record.readOnly)) {
@@ -262,8 +181,6 @@ fun InspectionDetailScreen(
             )
         }
 
-        // ABOVE THE STAGES, as on the web: a panel under twenty-two stages is one an officer scrolls
-        // past on the way in and never finds on the way out.
         InspectionFeedbackPanel(
             repository = repository,
             record = record,
@@ -274,9 +191,6 @@ fun InspectionDetailScreen(
 
         val registry = schema
         if (registry == null || registry.stages.isEmpty()) {
-            // The registry is read from the device and falls back to the copy bundled in the APK, so
-            // this is close to unreachable — but "close to" is not "never", and drawing an empty
-            // page would read as a workshop with no stages rather than as a build with no registry.
             InspectionNotice(
                 "Couldn't load the form layout. Update the app and reopen.",
                 warning = false
@@ -291,7 +205,6 @@ fun InspectionDetailScreen(
                 schema = registry,
                 stage = stage,
                 bucket = record.stages[stage.key],
-                // THE SCORE FROM THE TOP-LEVEL MAP, never `bucket.completeness` — see the KDoc.
                 requiredFilled = record.completeness[stage.key]?.requiredFilled,
                 requiredTotal = record.completeness[stage.key]?.requiredTotal,
             )
@@ -300,13 +213,6 @@ fun InspectionDetailScreen(
     }
 }
 
-/**
- * One of the 22 stages, whether or not anybody has touched it.
- *
- * The singleton first, then each repeating entity in declaration order, then the designer's own
- * custom answers — the same reading order the stage form uses, so an inspector and the designer walk
- * one document.
- */
 @Composable
 private fun InspectionStage(
     schema: SchemaResponse,
@@ -326,8 +232,6 @@ private fun InspectionStage(
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold
         )
-        // The server's own numbers, printed only when the server sent them. A stage the payload
-        // carries no score for says nothing rather than "0 of 0".
         if (requiredTotal != null && requiredFilled != null && requiredTotal > 0) {
             Text(
                 "$requiredFilled of $requiredTotal required fields answered.",
@@ -350,10 +254,6 @@ private fun InspectionStage(
             customCount > 0
 
         if (!anythingAtAll) {
-            // "NOTHING RECORDED" IS A FINDING, and the sentence says which kind. A stage the source
-            // document marks as one a workshop may legitimately skip is not the same as a stage
-            // somebody forgot, and an inspector needs to be able to tell them apart without going to
-            // find the registry themselves.
             Text(
                 "Nothing has been recorded on this stage." +
                     if (stage.optionalStage) {
@@ -391,25 +291,14 @@ private fun InspectionStage(
                 InspectionRecord(
                     schema = schema,
                     entity = entity,
-                    // Titled with the SAME rule the designer's own collection list titles it with,
-                    // so a row an inspector asks about is a row the designer can find by the name
-                    // they know it by.
                     heading = dwCardRowTitle(entity, row, index),
                     row = row,
-                    // Keyed BY ENTRY ID and never by position: the readers of this payload sort
-                    // their rows differently, and a positional lookup would show one participant's
-                    // edits against another participant's name.
                     stamps = bucket?.provenance?.forRow(entity.key, row.entryId()).orEmpty(),
                 )
             }
         }
 
         if (customCount > 0) {
-            // COUNTED, NOT LABELLED, and the sentence says why rather than leaving a gap.
-            // `GET /design-workshops/{id}/custom-sections` sits behind `load_workshop_or_404` and is
-            // a 404 for an inspector, so the QUESTIONS cannot be read at all. Printing the raw
-            // designer-defined keys as if they were labels would put made-up question text on an
-            // inspection.
             Text(
                 "$customCount custom ${if (customCount == 1) "answer" else "answers"} recorded.",
                 color = MaterialTheme.field.muted,
@@ -421,15 +310,6 @@ private fun InspectionStage(
     }
 }
 
-/**
- * One record — the stage's own answers, or one row of a repeating list — with every value it holds
- * and who wrote it.
- *
- * **UNANSWERED FIELDS ARE COUNTED AND NOT DRAWN.** Forty empty rows would bury the answers that
- * exist, and omitting them silently would tell an inspector nothing about the gaps — which is most
- * of what an inspection is looking for. So the count is printed, with the total beside it, and the
- * inspector can see at a glance that a participant row answered six of nineteen.
- */
 @Composable
 private fun InspectionRecord(
     schema: SchemaResponse,
@@ -460,10 +340,6 @@ private fun InspectionRecord(
                         InspectionValue(fieldSpec, reading.text, stamps[fieldSpec.key], media = false)
                     is DwInspectionReading.Media -> InspectionValue(
                         fieldSpec,
-                        // "N files recorded here" AND THE REASON THEY ARE NOT SHOWN, in one
-                        // sentence. A field with nothing in it is `Empty` and is counted as
-                        // unanswered instead, so "no photograph" and "a photograph this read does
-                        // not carry" never collapse into one line.
                         "${reading.count} ${if (reading.count == 1) "file" else "files"}.",
                         stamps[fieldSpec.key],
                         media = true,
@@ -485,15 +361,6 @@ private fun InspectionRecord(
     }
 }
 
-/**
- * One label, one value, and the authorship sentence under it.
- *
- * [DwFieldStampDto.attribution] is used VERBATIM rather than reworded, so an inspector and the
- * designer being inspected read one sentence about one field. It answers null where there is nothing
- * honest to say — an unattributed value on a row written before the column existed — and null is
- * rendered as silence, never as "Unknown", for the reason that function gives: a label reading
- * "Unknown" on every row trains a reader to stop looking at it.
- */
 @Composable
 private fun InspectionValue(
     field: FieldDto,
@@ -510,9 +377,6 @@ private fun InspectionValue(
         )
         Text(
             text,
-            // The MEDIA line is a statement about this read rather than a value the designer typed,
-            // so it is set in the muted colour that every other explanatory sentence on this screen
-            // uses — and the words say so too, because the colour alone is not legible to everybody.
             color = if (media) MaterialTheme.field.muted else MaterialTheme.colorScheme.onSurface,
             style = MaterialTheme.typography.bodyMedium
         )
@@ -529,14 +393,5 @@ private fun InspectionValue(
     }
 }
 
-/**
- * The server's own id for this row, as `_stages_payload` writes it into the object.
- *
- * The bookkeeping keys (`_entryId`, `_ordinal`, `_clientKey`) travel INSIDE the row rather than
- * beside it, and this is the only one this screen reads: it is what addresses the row's stamps in
- * [com.designprototype.workshop.data.DwStageProvenanceDto.forRow]. Null for a row with no server id,
- * which on this surface cannot happen — every row here came off the server — but which the
- * provenance lookup already answers "no stamps" to rather than crashing.
- */
 private fun Map<String, JsonElement>.entryId(): String? =
     (this["_entryId"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotEmpty() }

@@ -102,21 +102,10 @@ from app.core.db import connect_db, db, disconnect_db  # noqa: E402
 from app.services import access_roster  # noqa: E402
 from app.services.designers import canonical_email, normalise_email  # noqa: E402
 
-#: A ceiling on each table read, so a script pointed at a production database cannot pull an
-#: unbounded set into memory. ``access_roster.BARRED_EMAIL_READ_LIMIT``'s number and its reasoning:
-#: far above any plausible programme, and a run that hits it says so rather than quietly reporting a
-#: clean bill of health from half the table — which, for THIS script, is the failure that matters,
-#: because the rows it did not read are exactly the ones nobody else will go looking for either.
-#: Hitting it is also what turns the exit code into 2; see the module docstring.
 READ_LIMIT = 50_000
 
-#: The width of the section rules below. A constant because the headings share it and a report whose
-#: rules are three different lengths reads as three different reports.
 RULE = "=" * 98
 
-# The three answers this script gives its caller, named rather than written as bare integers at four
-# return sites. A pre-deploy gate is read by a shell script somebody else writes, so the meaning of
-# each number is part of this file's contract and belongs where it can be pointed at.
 EXIT_CLEAN = 0
 EXIT_COLLISIONS = 1
 EXIT_UNKNOWN = 2
@@ -181,8 +170,6 @@ async def _read(table: Any, label: str) -> tuple[list[Any], bool]:
     rows = await table.find_many(take=READ_LIMIT + 1)
     truncated = len(rows) > READ_LIMIT
     if truncated:
-        # LOUD, and phrased for what the cut actually costs. A truncated read here does not report a
-        # smaller problem; it reports NO problem for every row past the cut.
         print(
             f"WARNING: {label} holds more than {READ_LIMIT} rows, so this run read only part of it "
             "and any collision past the cut is NOT listed below. Raise READ_LIMIT and run again "
@@ -326,20 +313,11 @@ async def report(*, fix: bool) -> int:
     designers = _group_by_mailbox(designer_rows)
     access = _group_by_mailbox(access_rows)
 
-    # The widest stored address in either table, so both halves of a pair line up under one another
-    # even when only one of them is long. Computed over everything rather than per group: a reader
-    # comparing the COLLIDING section against the ALIAS section below it is comparing addresses, and
-    # two sections indented differently look like two unrelated reports.
     width = max(
         (len(repr(normalise_email(row.email))) for row in designer_rows + access_rows),
         default=8,
     )
 
-    # THE TABLE OBJECT TRAVELS WITH ITS LABEL rather than being picked back out of the label by a
-    # string comparison further down. `--fix` writes through whatever this tuple hands it, and a
-    # `label == "designer roster"` test would mean that re-wording one heading in this report
-    # silently redirects every write to the OTHER roster — a typo whose only symptom is an
-    # allow-list row's email appearing on the designer roster.
     tables = (
         ("designer roster", db.designerroster, designers, _designer_verdict, _designer_status),
         ("allow-list", db.accessroster, access, _access_verdict, access_roster.status_of),
@@ -357,8 +335,6 @@ async def report(*, fix: bool) -> int:
                 continue
             verdicts.append(answer)
             lines.append(f"    {label}: {answer}")
-            # OLDEST FIRST INSIDE A GROUP. The question an operator is answering is "which of these
-            # did somebody mean", and the order the rows were made in is the first evidence for it.
             lines.extend(
                 _describe(label, row, standing(row), width)
                 for row in sorted(group, key=lambda row: row.createdAt)
@@ -368,9 +344,6 @@ async def report(*, fix: bool) -> int:
         block = f"\n  {mailbox}\n" + "\n".join(lines)
         (refusing if any(a.startswith("REFUSING") for a in verdicts) else duplicated).append(block)
 
-    # ORDERED WORST FIRST, because the operator running this by hand is usually running it about
-    # somebody who cannot sign in, and the answer to that question is in the first section or
-    # nowhere.
     _section(
         [
             "COLLIDING, AND REFUSING SOMEBODY RIGHT NOW — two rows for one mailbox disagree and the",
@@ -388,15 +361,6 @@ async def report(*, fix: bool) -> int:
         duplicated,
     )
 
-    # ---------------------------------------------------------------------------------------
-    # The lone alias rows — the only thing --fix touches.
-    # ---------------------------------------------------------------------------------------
-    # A group of exactly one has nothing to choose between, so rewriting its key destroys no
-    # record. It is also the only case where the rewrite is SAFE against the unique index: any row
-    # already holding the canonical spelling would canonicalise to this same key and would therefore
-    # be in this group, making it a collision instead. That is not a happy accident — it is why the
-    # grouping is per table and why the size test is the write's precondition rather than a
-    # separate lookup that could disagree with the report printed above.
     candidates: list[tuple[str, Any, Any, str]] = []
     for label, table, grouped, _verdict, standing in tables:
         for mailbox, group in grouped.items():
@@ -448,17 +412,6 @@ async def report(*, fix: bool) -> int:
     written = 0
     truncated = designer_cut or access_cut
     if fix and truncated:
-        # **A TRUNCATED READ REVOKES ``--fix``, AND IT IS THE SAME ARGUMENT THE EXIT CODE MAKES.**
-        # Exit 2 exists because a gate that goes green on half a table is worse than no gate, since
-        # it is believed. A WRITE decided from half a table is the same mistake with a row attached
-        # to it: "alone in its canonical group" is the entire precondition for a rewrite being safe,
-        # and it is a claim about rows this run has SEEN. A twin sitting past the cut makes the
-        # group a collision — the one thing this script must never write to — and the rewrite then
-        # either lands on the unique index and raises ``UniqueViolationError`` part-way through the
-        # loop, leaving a half-applied run whose printed list stops mid-way, or, where the twin is
-        # in the other table, silently produces exactly the colliding pair this file exists to
-        # report. Refusing every write is the only answer that does not depend on which of those it
-        # would have been.
         print(
             "\n--fix WAS IGNORED: a read hit its cap above, so this run cannot tell a row that is "
             "alone in its canonical group from one whose twin it simply did not read, and being "
@@ -469,12 +422,6 @@ async def report(*, fix: bool) -> int:
         print()
         for label, table, row, _standing in rewritable:
             address = canonical_email(row.email)
-            # A DIRECT UPDATE, AND NOT ``access_roster.follow_email_change``, WHICH LOOKS LIKE THE
-            # RIGHT FUNCTION AND IS NOT. Its early return is ``canonical_email(old) == new`` — "the
-            # admin only re-spelled the same mailbox, so there is nothing to follow" — which is
-            # precisely and always true here, so calling it would be a no-op with a comment claiming
-            # otherwise. That function moves an admission BETWEEN mailboxes; this moves one row's
-            # key WITHIN one mailbox, and only the two of them together cover the column.
             await table.update(where={"id": row.id}, data={"email": address})
             written += 1
             print(f"  canonicalised {label} row {row.id} -> {address!r}")
@@ -483,10 +430,6 @@ async def report(*, fix: bool) -> int:
     print(
         f"\nCOUNT — {len(designer_rows)} designer roster row(s) and {len(access_rows)} allow-list "
         f"row(s) read; {collisions} colliding mailbox(es) ({len(refusing)} refusing somebody), "
-        # ``written`` AND NOT ``fix``, so the word matches what the run actually did. A ``--fix``
-        # run that a truncated read revoked above has written nothing, and calling those rows
-        # "rewritten" on the count line — the one line an operator pastes into a ticket — would be
-        # this report's only outright false sentence.
         f"{len(rewritable)} lone alias row(s) {'rewritten' if written else 'rewritable'}, "
         f"{len(blocked)} left for a human."
     )
@@ -494,14 +437,8 @@ async def report(*, fix: bool) -> int:
         print(f"{written} row(s) rewritten. No row was created, deleted, merged or re-statused.")
     elif not fix and rewritable:
         print("Nothing was written. Re-run with --fix to canonicalise the lone rows.")
-    # The remaining case is ``--fix`` revoked by a truncated read, which says what happened and what
-    # to do about it in full further up. Telling that operator to "re-run with --fix" would be
-    # advising them to repeat the run that was just refused.
 
     if truncated:
-        # AHEAD OF THE COLLISION CODE ON PURPOSE. "I could not see the whole table" outranks
-        # "I found nothing in the part I saw", and a caller that only tests for zero must not read
-        # an incomplete run as a pass.
         print("EXIT 2 — a read hit its cap, so this report is NOT a clean bill of health.")
         return EXIT_UNKNOWN
     if collisions:

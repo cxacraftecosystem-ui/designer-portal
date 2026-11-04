@@ -1,17 +1,3 @@
-"""Two-step verification (TOTP): the arithmetic, the storage, and every door it guards.
-
-The first half needs nothing: RFC 6238's own test vectors, the window, the encryption at rest, the
-recovery-code shape, the QR geometry and the challenge token's signature and purpose. The second half
-drives the real routes against Postgres — every sign-in method challenged (password, Google,
-Microsoft, Yahoo), replay refused, recovery codes single-use, the per-challenge attempt cap, the
-self-service setup/enable/disable/new-codes conversation, and who may reset somebody else's.
-
-Postgres is required for the second half, and the module follows the sync pattern
-``tests/conftest.py`` describes: one ``asyncio.run`` seeds every row before the ``TestClient`` starts,
-the tests are sync and drive the client, and nothing here awaits ``db`` afterwards. Every test that
-spends a code has an account of its own, because a spent step stays spent for that account.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -31,15 +17,8 @@ from app.core.db import db
 from app.core.security import create_access_token, decode_access_token, hash_password
 from app.services import two_factor
 
-# ==================================================================================================
-# The arithmetic — no database
-# ==================================================================================================
-
-#: RFC 6238 Appendix B's SHA-1 seed, "12345678901234567890", in base32.
 RFC_SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
 
-#: Appendix B's SHA-1 column, cut to six digits. HOTP truncates modulo 10^digits, so the six-digit
-#: code is exactly the last six digits of the published eight-digit one.
 RFC_VECTORS = [
     (59, "94287082"),
     (1111111109, "07081804"),
@@ -93,8 +72,6 @@ def test_the_secret_is_encrypted_at_rest_and_tampering_is_refused():
     assert two_factor.encrypt_secret(RFC_SECRET) != stored, "a fresh IV every time"
     assert two_factor.decrypt_secret(stored) == RFC_SECRET
     version, iv, tag, body = stored.split(".")
-    # The FIRST character: the last one of an unpadded base64url body carries padding bits, so
-    # flipping it can decode to the same bytes and the tamper goes unseen (a flake, ~1 run in 16).
     flipped = ("A" if body[0] != "A" else "B") + body[1:]
     assert two_factor.decrypt_secret(".".join((version, iv, tag, flipped))) is None
     assert two_factor.decrypt_secret("v2." + stored[3:]) is None
@@ -138,7 +115,6 @@ def test_the_qr_path_redraws_exactly_the_matrix_and_the_svg_has_the_shape_client
     assert all(len(row) == size for row in matrix)
     border = two_factor.QR_QUIET_ZONE_MODULES
     assert not any(matrix[y][x] for y in range(border) for x in range(size)), "quiet zone"
-    # Replay the path as rectangles; every dark module must be covered exactly once.
     drawn = [[False] * size for _ in range(size)]
     for x, y, run in re.findall(r"M(\d+) (\d+)h(\d+)v1h-\3z", two_factor.qr_path(matrix)):
         for dx in range(int(run)):
@@ -170,16 +146,11 @@ def test_a_challenge_token_needs_its_purpose_its_key_and_its_time():
         with pytest.raises(two_factor.TwoFactorError) as refused:
             two_factor.read_challenge(_sign(bad))
         assert refused.value.detail == two_factor.CHALLENGE_DEAD_DETAIL
-    # A session token is not a challenge, and a challenge is not a session: different keys.
     with pytest.raises(two_factor.TwoFactorError):
         two_factor.read_challenge(create_access_token("u1"))
     with pytest.raises(ValueError):
         decode_access_token(_sign(good))
 
-
-# ==================================================================================================
-# The routes — Postgres
-# ==================================================================================================
 
 _URL = os.environ.get("DATABASE_URL", "")
 _LOCAL = any(host in _URL for host in ("localhost", "127.0.0.1"))
@@ -189,11 +160,8 @@ needs_db = pytest.mark.skipif(
 
 PASSWORD = "a-long-enough-password"
 SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
-#: Two live recovery codes on every seeded account — enough to prove single use without paying for
-#: ten bcrypt hashes per account.
 RECOVERY = ["ab2c-def3", "gh4j-km5n"]
 
-#: Accounts with two-step verification ON, one per test that spends a code.
 ON = (
     "password", "replay", "recovery", "cap", "google", "microsoft", "yahoo", "disable",
     "reset-target", "reset-peer", "regen", "no-leak", "expired", "lock", "dataset",
@@ -201,9 +169,7 @@ ON = (
     "concurrent-http", "race", "escalate", "decay-25", "decay-23", "spend-disable", "spend-regen",
     "reset-lock", "cancel-on",
 )
-#: Seeded at ADMIN rather than RESEARCHER: a peer an admin may not manage, and dataset-token holders.
 ADMIN_SLUGS = ("reset-peer", "dataset", "lock")
-#: Accounts with it OFF.
 OFF = ("plain", "enrol", "researcher", "pending", "stale")
 
 
@@ -293,7 +259,6 @@ def _now_code() -> str:
 
 
 def _next_code() -> str:
-    """The NEXT step's code — inside the ±1 window and above a step this test has just spent."""
     return two_factor.current_totp(SECRET, at=time.time() + 30)
 
 
@@ -316,7 +281,6 @@ def test_a_password_sign_in_is_challenged_and_the_code_opens_the_session(world):
     assert body["user"]["id"] == world["ids"]["password"]
     me = world["client"].get("/api/me", headers={"Authorization": f"Bearer {body['accessToken']}"})
     assert me.status_code == 200, me.text
-    # One challenge opens one session.
     again = _verify(world, token, _next_code())
     assert again.status_code == 401
     assert again.json()["detail"] == two_factor.CHALLENGE_DEAD_DETAIL
@@ -374,7 +338,6 @@ def test_five_wrong_codes_kill_the_challenge(world):
     dead = _verify(world, token, _now_code())
     assert dead.status_code == 401
     assert dead.json()["detail"] == two_factor.CHALLENGE_DEAD_DETAIL
-    # A fresh sign-in gets a fresh challenge, and the right code still works.
     assert _verify(world, _challenge(_password_login(world, "cap")), _now_code()).status_code == 200
 
 
@@ -423,7 +386,6 @@ def test_setup_enable_status_new_codes_and_disable(world):
     secret = body["secret"]
     assert world["address"]("enrol").replace("@", "%40") in body["otpauth_uri"]
     assert body["qr_svg"].startswith("<svg")
-    # Not on yet, and a wrong code does not switch it on.
     wrong = "000000" if two_factor.current_totp(secret) != "000000" else "111111"
     refused = client.post("/api/auth/two-factor/enable", json={"code": wrong}, headers=headers)
     assert refused.status_code == 400
@@ -439,8 +401,6 @@ def test_setup_enable_status_new_codes_and_disable(world):
     assert state["enabled"] is True and state["recovery_codes_remaining"] == 10 and state["enabled_at"]
     assert client.post("/api/auth/two-factor/setup", headers=headers).status_code == 409
 
-    # New codes need a CURRENT authenticator code (the next step: enabling spent this one) and
-    # retire every old code.
     fresh = client.post(
         "/api/auth/two-factor/recovery-codes",
         json={"code": two_factor.current_totp(secret, at=time.time() + 30)},
@@ -459,8 +419,6 @@ def test_setup_enable_status_new_codes_and_disable(world):
     signed_in = _password_login(world, "enrol")
     assert "accessToken" in signed_in.json()
 
-
-# ── A setup is not "on" until a code confirms it ─────────────────────────────────────────────────
 
 
 class _Row:
@@ -505,7 +463,6 @@ def test_an_unconfirmed_setup_is_off_signs_in_without_a_code_and_cancel_discards
 
     state = client.get("/api/auth/two-factor", headers=headers).json()
     assert state["enabled"] is False and state["pending"] is True
-    # A pending-only account is NOT challenged: only a confirmed second factor asks for a code.
     signed_in = _password_login(world, "pending")
     assert signed_in.status_code == 200, signed_in.text
     assert signed_in.json()["accessToken"] and "two_factor_required" not in signed_in.json()
@@ -515,7 +472,6 @@ def test_an_unconfirmed_setup_is_off_signs_in_without_a_code_and_cancel_discards
     assert row.twoFactorPendingSecret is None and row.twoFactorPendingSince is None
     assert row.twoFactorEnabled is False
     assert client.get("/api/auth/two-factor", headers=headers).json()["pending"] is False
-    # Idempotent, and a code from the discarded key switches nothing on.
     assert client.post("/api/auth/two-factor/setup/cancel", headers=headers).status_code == 204
     refused = client.post(
         "/api/auth/two-factor/enable", json={"code": two_factor.current_totp(secret)}, headers=headers
@@ -609,7 +565,6 @@ def test_an_administrator_resets_it_and_the_persons_sessions_end(world):
 def test_who_may_reset_somebody_elses_second_factor(world):
     client = world["client"]
     target = world["ids"]["reset-peer"]
-    # A researcher is no provisioner; an admin may not reset a peer admin, nor their own.
     assert client.delete(
         f"/api/users/{target}/two-factor", headers=_bearer(world["ids"]["researcher"])
     ).status_code == 403
@@ -623,14 +578,6 @@ def test_who_may_reset_somebody_elses_second_factor(world):
         "/api/users/does-not-exist/two-factor", headers=_bearer(world["ids"]["admin"])
     ).status_code == 404
 
-
-# ==================================================================================================
-# The per-account failure budgets, every password-to-credential door, and the serializers
-# ==================================================================================================
-#
-# Mirrors the documentation portal's tests of the same mechanism. Those run against an in-memory fake;
-# these run against Postgres, so the service-level ones are driven on the TestClient's own event loop
-# (``client.portal``), where the app's database connection lives.
 
 
 def _run(world: dict[str, Any], fn: Any, *args: Any, **kwargs: Any) -> Any:
@@ -649,15 +596,12 @@ async def _row(user_id: str) -> Any:
 
 
 def _wrong() -> str:
-    """Six digits that are no code in the ±1 window right now."""
     near = {two_factor.current_totp(SECRET, at=time.time() + 30 * k) for k in (-1, 0, 1, 2)}
     return next(code for code in ("000000", "111111", "222222", "333333", "444444") if code not in near)
 
 
 @pytest.fixture
 def unthrottled(monkeypatch):
-    """The per-account credential BUCKET (ten requests in five minutes, shared with the password
-    doors) is a separate, shorter limit; lifted here so these tests meet the second-factor budget."""
     from app.api.routes import two_factor as routes
 
     monkeypatch.setattr(routes, "account_credential_attempt", lambda _user_id: (True, 0.0))
@@ -673,8 +617,6 @@ def test_the_lockout_backs_off_and_is_capped_at_an_hour():
 
 
 def test_no_serializer_carries_a_secret_user_field():
-    """ONE tuple (``app/core/user_fields.py``), three serializers: both ``serialize_user`` and
-    ``records.public_encode`` at any depth. A fully populated row goes in; none of them comes out."""
     from app.api.routes import auth as auth_routes, users as users_routes
     from app.core.user_fields import SECRET_USER_FIELDS
     from app.services.records import public_encode
@@ -727,7 +669,6 @@ def test_no_serializer_carries_a_secret_user_field():
 
 @needs_db
 def test_fresh_challenges_do_not_buy_more_guesses(world, unthrottled):
-    # Minted before the lock, to show that a challenge already in hand is no way round it.
     stockpiled = _challenge(_password_login(world, "lock"))
     for _ in range(2):
         token = _challenge(_password_login(world, "lock"))
@@ -738,7 +679,6 @@ def test_fresh_challenges_do_not_buy_more_guesses(world, unthrottled):
     locked = _verify(world, stockpiled, _now_code())
     assert locked.status_code == 429
     assert locked.json()["detail"] == two_factor.TOO_MANY_ATTEMPTS_DETAIL == "Too many attempts. Try again later."
-    # ...and the dataset token shares the lock.
     minted = world["client"].post(
         "/api/datasets/token",
         json={"email": world["address"]("lock"), "password": PASSWORD, "twoFactorCode": _now_code()},
@@ -750,7 +690,6 @@ def test_fresh_challenges_do_not_buy_more_guesses(world, unthrottled):
 def test_a_six_digit_lock_still_lets_the_owner_in_with_a_recovery_code(world):
     user_id = world["ids"]["lock-recovery"]
     _run(world, _set, user_id, twoFactorLockedUntil=datetime.now(UTC) + timedelta(minutes=10))
-    # Sign-in still mints a challenge — the recovery codes are a way in — and one of them works.
     token = _challenge(_password_login(world, "lock-recovery"))
     assert _verify(world, token, _now_code()).status_code == 429
     assert _verify(world, token, RECOVERY[0]).status_code == 200
@@ -765,7 +704,6 @@ def test_recovery_codes_have_their_own_smaller_budget(world, unthrottled):
         assert response.status_code == 400, response.text
     row = _run(world, _row, user_id)
     assert two_factor.is_locked(row, two_factor.RECOVERY_BUDGET) and row.twoFactorRecoveryLockouts == 1
-    # The six-digit budget is untouched and independent.
     assert not two_factor.is_locked(row) and row.twoFactorFailedAttempts == 0
     assert world["client"].post(
         "/api/auth/two-factor/disable", json={"code": RECOVERY[0]}, headers=headers
@@ -785,7 +723,6 @@ def test_sign_in_says_too_many_attempts_only_when_every_way_in_is_locked(world):
     assert refused.status_code == 429
     assert refused.json()["detail"] == two_factor.TOO_MANY_ATTEMPTS_DETAIL
     assert "challenge_token" not in refused.text
-    # A wrong password is still the wrong-password answer, not a lock confirmation.
     wrong_password = world["client"].post(
         "/api/auth/login", json={"email": world["address"]("fully-locked"), "password": "not-the-password"}
     )
@@ -830,7 +767,6 @@ def test_the_owner_is_emailed_once_when_a_lock_is_written(world, monkeypatch):
 @needs_db
 def test_a_lapsed_lock_lets_the_right_code_in_and_resets_the_budget(world):
     user_id = world["ids"]["lapsed"]
-    # The state a lock leaves behind: budget spent, window closed, the lock just ended.
     _run(
         world, _set, user_id,
         twoFactorFailedAttempts=two_factor.FAILURE_BUDGET,
@@ -858,13 +794,11 @@ def test_a_claim_outside_the_window_starts_a_new_one(world):
 
 @needs_db
 def test_a_burst_of_concurrent_wrong_codes_gets_only_the_budget(world, monkeypatch, caplog):
-    """Every request claims a slot atomically BEFORE its code is checked, so thirty simultaneous
-    guesses get ten checks, one lock and one audit line — not thirty of each."""
     checked: list[str] = []
 
     async def counting(user: Any, code: str, *, allow_recovery: bool = True) -> None:
         checked.append(code)
-        await asyncio.sleep(0)  # yield, so the burst genuinely interleaves
+        await asyncio.sleep(0)
         return
 
     monkeypatch.setattr(two_factor, "verify_second_factor", counting)
@@ -887,7 +821,6 @@ def test_a_burst_of_concurrent_wrong_codes_gets_only_the_budget(world, monkeypat
 
 @needs_db
 def test_twenty_parallel_wrong_codes_over_http_check_at_most_the_budget(world, monkeypatch, unthrottled):
-    """The same rule from the outside: twenty requests in flight at once on `/disable`."""
     from concurrent.futures import ThreadPoolExecutor
 
     checked = []
@@ -917,15 +850,13 @@ def test_twenty_parallel_wrong_codes_over_http_check_at_most_the_budget(world, m
 
 @needs_db
 def test_a_success_keeps_wrong_codes_that_raced_it(world):
-    """A correct code clears the budget only if nobody claimed a slot after it; otherwise it hands
-    back its own slot and the racing failures stay counted."""
     user_id = world["ids"]["race"]
     _run(world, _set, user_id, twoFactorFailedAttempts=6, twoFactorFailureWindowStartedAt=datetime.now(UTC))
 
     async def race() -> None:
-        mine = await two_factor.claim_attempt_slot(user_id)  # 7
-        await two_factor.claim_attempt_slot(user_id)  # an attacker's wrong code lands: 8
-        await two_factor.claim_attempt_slot(user_id)  # and another: 9
+        mine = await two_factor.claim_attempt_slot(user_id)
+        await two_factor.claim_attempt_slot(user_id)
+        await two_factor.claim_attempt_slot(user_id)
         await two_factor.settle_success(user_id, mine)
 
     _run(world, race)
@@ -934,7 +865,6 @@ def test_a_success_keeps_wrong_codes_that_raced_it(world):
 
 @needs_db
 def test_lockouts_escalate_once_per_lock(world):
-    """Two locks in a row are lockout 1 (15 min) then lockout 2 (30 min), each written once."""
     user_id = world["ids"]["escalate"]
 
     async def spend() -> None:
@@ -945,7 +875,7 @@ def test_lockouts_escalate_once_per_lock(world):
     row = _run(world, _row, user_id)
     first = row.twoFactorLockedUntil - datetime.now(UTC)
     assert row.twoFactorLockouts == 1 and timedelta(minutes=14) < first <= timedelta(minutes=15)
-    _run(world, _set, user_id, twoFactorLockedUntil=datetime.now(UTC) - timedelta(seconds=1))  # lapse it
+    _run(world, _set, user_id, twoFactorLockedUntil=datetime.now(UTC) - timedelta(seconds=1))
     _run(world, spend)
     row = _run(world, _row, user_id)
     second = row.twoFactorLockedUntil - datetime.now(UTC)
@@ -955,7 +885,6 @@ def test_lockouts_escalate_once_per_lock(world):
 @needs_db
 @pytest.mark.parametrize(("ended_hours_ago", "expected"), [(25, 0), (23, 3)])
 def test_the_lockout_count_decays_a_day_after_the_last_lock(world, ended_hours_ago, expected):
-    """A password holder cannot ratchet the owner's lock up for ever."""
     user_id = world["ids"][f"decay-{ended_hours_ago}"]
     _run(
         world, _set, user_id,

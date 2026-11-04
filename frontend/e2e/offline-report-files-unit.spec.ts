@@ -11,18 +11,6 @@ import type { LoadedImage } from "@/lib/offlineReport/docx";
 import { generateOfflineFile, type OfflineWriters } from "@/lib/offlineReport/generate";
 import type { PdfMakeLike } from "@/lib/offlineReport/pdf";
 
-/**
- * THE FILES A BROWSER WRITES WITH NO CONNECTION OPEN, AND SAY WHAT THE WORKSHOP SAYS.
- *
- * The parity spec beside this proves the browser builds the server's document; this proves the two
- * writers turn that document into real files — a .docx Word can unzip and a .pdf with pages and the
- * fonts embedded — from the shared fixture workshop, through `generateOfflineFile`, which is the one
- * door the report screen uses. pdfmake's Node build stands in for its browser build (the same
- * layout code), the fonts are the files the app serves from `public/report-fonts`, and photographs
- * and figures are a one-pixel PNG, because decoding images is the browser's job and is not what is
- * under test.
- */
-
 const ROOT = join(__dirname, "..", "..");
 const fixture = JSON.parse(readFileSync(join(ROOT, "shared", "report-parity", "workshop.json"), "utf8")) as OfflineReportInput;
 const registry = JSON.parse(
@@ -78,7 +66,6 @@ test("the .docx is a Word document carrying the workshop's text, in both scripts
   expect(xml).toContain("ସମ୍ବଲପୁରୀ ଇକତ");
   expect(xml).toContain("Annexure — Recordings and transcripts");
   expect(xml).toContain("₹ 1,20,000.00");
-  // The running foot counts the pages, as every other file renderer does.
   const footers = await Promise.all(
     Object.keys(zip.files)
       .filter((name) => /word\/footer\d*\.xml$/.test(name))
@@ -86,7 +73,6 @@ test("the .docx is a Word document carrying the workshop's text, in both scripts
   );
   expect(footers.join("")).toContain("NUMPAGES");
   expect(Object.keys(zip.files).some((name) => name.startsWith("word/media/"))).toBe(true);
-  // The one photograph the stub could not load is named beside the download, not lost in silence.
   expect(file.warnings.join(" ")).toContain("1 photograph is not on this device");
 });
 
@@ -125,7 +111,6 @@ test("a workshop this device never fetched the sources for still builds, from th
   const file = await generateOfflineFile(registry, bare, "DOCX", { includeTranscripts: true, includeAiLayers: true }, writers(), NOW);
   const xml = await (await JSZip.loadAsync(await file.blob.arrayBuffer())).file("word/document.xml")!.async("string");
   expect(xml).toContain("Fish cushion cover");
-  // Nothing was kept for the annexures, so none is printed — and nothing claims otherwise.
   expect(xml).not.toContain("Annexure — Recordings and transcripts");
   expect(xml).not.toContain("Annexure — Questionnaire responses");
 });

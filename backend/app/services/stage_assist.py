@@ -1,21 +1,3 @@
-"""One-tap suggestions for a stage, built from what the workshop already holds.
-
-``GET /design-workshops/{id}/stages/{stageKey}/assist``. Nothing here writes: every suggestion is
-applied by the designer's tap on either client, only into boxes that are blank, and stays editable.
-
-Two shapes, so one card on each client can draw them all:
-
-``FILL``      set ``values`` on one record — the stage's singleton (``rowKey`` null) or the row whose
-              ``_entryId``/``_clientKey`` is ``rowKey``. Only blank boxes are offered.
-``ADD_ROWS``  append ``rows`` to ``entityKey``. Each row carries its own values; the client mints
-              the client key, exactly as for a row the designer added.
-
-Items covered (owner decisions, 2026-10-17): A14 (stages 20 and 21), A16 (stage 13 costs), C6 ("Fill
-the schedule"), C7 (certificates for those who completed), C10 (stage 17 costs and material lines
-from the prototype), B10 (planned follow-ups and due visits). The counts of C7/C8 are returned in
-``computed`` for display; they are stored by the save, see ``stage_computed``.
-"""
-
 from __future__ import annotations
 
 import calendar
@@ -68,7 +50,6 @@ def _short_date(day: date) -> str:
 
 
 def add_months(start: date, months: int) -> date:
-    """``start`` plus whole months, clamped to the month's last day (31 Jan + 1 month = 28 Feb)."""
     month_index = start.month - 1 + months
     year, month = start.year + month_index // 12, month_index % 12 + 1
     return date(year, month, min(start.day, calendar.monthrange(year, month)[1]))
@@ -104,7 +85,6 @@ def fill(
     *,
     singleton: bool = False,
 ) -> dict[str, Any] | None:
-    """A FILL suggestion over the blank boxes of ``row`` only, or None when nothing is blank."""
     current = row or {}
     offered = {k: v for k, v in values.items() if not _blank(v) and _blank(current.get(k))}
     if not offered:
@@ -136,14 +116,8 @@ def add_rows(
     }
 
 
-# --------------------------------------------------------------------------------------
-# Per-stage builders — pure, over the workshop's grouped data
-# --------------------------------------------------------------------------------------
-
 
 class Workshop:
-    """The grouped stage data one assist call reads: singletons and collection rows by entity."""
-
     def __init__(
         self,
         singletons: Mapping[str, Mapping[str, Any]],
@@ -174,7 +148,6 @@ class Workshop:
 
 
 def schedule_suggestions(w: Workshop) -> list[dict[str, Any]]:
-    """C6 "Fill the schedule": one row per workshop day not yet scheduled, dated from the start."""
     setup = w.one("workshopSetup")
     start = _day(setup.get("startDate"))
     duration = sc.setup_duration(setup)
@@ -198,7 +171,6 @@ def schedule_suggestions(w: Workshop) -> list[dict[str, Any]]:
 
 
 def prototype_cost_suggestions(w: Workshop) -> list[dict[str, Any]]:
-    """A16 on stage 13: a prototype's material cost from its material lines, on a tap."""
     out: list[dict[str, Any]] = []
     for proto in w.rows("prototype"):
         lines = [m for m in w.rows("materialUsage") if _refers(m.get("prototypeRef"), proto)]
@@ -239,7 +211,6 @@ def _prototype_for_sheet(w: Workshop, sheet: Mapping[str, Any]) -> Mapping[str, 
 
 
 def costing_suggestions(w: Workshop) -> list[dict[str, Any]]:
-    """C10 on stage 17: the prototype's costs, and optionally its material lines."""
     out: list[dict[str, Any]] = []
     for sheet in w.rows("costSheet"):
         proto = _prototype_for_sheet(w, sheet)
@@ -294,7 +265,6 @@ def costing_suggestions(w: Workshop) -> list[dict[str, Any]]:
 
 
 def certificate_suggestions(w: Workshop) -> list[dict[str, Any]]:
-    """C7: a certificate row for each participant present every day who has none yet."""
     days = w.days()
     if not days:
         return []
@@ -317,7 +287,6 @@ def certificate_suggestions(w: Workshop) -> list[dict[str, Any]]:
 
 
 def report_suggestions(w: Workshop) -> list[dict[str, Any]]:
-    """A14 on stage 20: the template the workshop was created with."""
     if not w.template_id or w.template_id not in ENUMS["REPORT_TEMPLATE"]:
         return []
     out = fill(
@@ -333,7 +302,6 @@ def report_suggestions(w: Workshop) -> list[dict[str, Any]]:
 
 
 def archive_suggestions(w: Workshop) -> list[dict[str, Any]]:
-    """A14 on stage 21: "report saved" from the record of files made; "media saved" from storage."""
     out: list[dict[str, Any]] = []
     archive = w.one("archive")
     latest = next(iter(w.exports), None)
@@ -378,7 +346,6 @@ def _follow_up_base(w: Workshop) -> date | None:
 
 
 def follow_up_plan(w: Workshop) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """B10: the planned visits to add, and the planned visits now due with no result recorded."""
     base = _follow_up_base(w)
     planned = list(w.rows("plannedFollowUp"))
     done = {
@@ -460,7 +427,6 @@ def follow_up_suggestions(w: Workshop) -> list[dict[str, Any]]:
 
 
 def computed_values(w: Workshop, stage_key: str) -> dict[str, Any]:
-    """The counts a stage draws read-only, as the save will store them."""
     days = w.days()
     if stage_key == sc.ROSTER_STAGE:
         values = sc.roster_values(list(w.rows(sc.PARTICIPANT)), days)
@@ -529,7 +495,6 @@ def build_assist(w: Workshop, stage_key: str) -> dict[str, Any]:
     if stage_key in (sc.ROSTER_STAGE, sc.CLOSING_STAGE):
         payload["attendanceDays"] = w.days()
     if stage_key == sc.ROSTER_STAGE:
-        # A new schedule row's date is the start date plus its day number less one (C6).
         payload["startDate"] = str(w.one("workshopSetup").get("startDate") or "")[:10] or None
     if stage_key == sc.SURVEY_STAGE:
         payload["sittings"] = list(w.sittings)
@@ -538,11 +503,6 @@ def build_assist(w: Workshop, stage_key: str) -> dict[str, Any]:
     return payload
 
 
-# --------------------------------------------------------------------------------------
-# Loading
-# --------------------------------------------------------------------------------------
-
-#: Which stages' rows each stage's assist reads. Read narrowly: a stage open is on the critical path.
 _READS = {
     sc.ROSTER_STAGE: (sc.SETUP_STAGE, sc.ROSTER_STAGE),
     sc.SURVEY_STAGE: (sc.SURVEY_STAGE,),
@@ -585,12 +545,6 @@ def group_rows(
 
 
 async def _sittings(workshop_id: str) -> list[dict[str, Any]]:
-    """Each market-survey form's sitting count and latest date: one form read and one grouped count.
-
-    NO RESPONDENT NAMES. This answers anyone who may read the workshop, a wider audience than the
-    questionnaire's own sittings route admits (owner, admin or co-designer), and neither client
-    shows a name here; ``respondents`` stays in the payload, empty, for clients that read it.
-    """
     from app.core.db import db
 
     forms = await db.questionnaire.find_many(
@@ -604,8 +558,6 @@ async def _sittings(workshop_id: str) -> list[dict[str, Any]]:
     )
     from app.services import questionnaire_readers
 
-    # Forms bound to the workshop (UNIFY U5) join the attached ones, and their sessions count as
-    # sittings (C10). Nothing extra, and no query, while v2 is off.
     known = {f.id for f in forms}
     listed = [(f.id, f.title) for f in forms] + [
         (str(b["id"]), b.get("title")) for b in await questionnaire_readers.forms_for_design_workshop(
@@ -642,7 +594,6 @@ async def _sittings(workshop_id: str) -> list[dict[str, Any]]:
 
 
 def _latest_day(value: Any) -> str | None:
-    """A grouped ``createdAt`` maximum as yyyy-mm-dd; Prisma hands it back as a datetime or text."""
     if value is None:
         return None
     if hasattr(value, "date"):

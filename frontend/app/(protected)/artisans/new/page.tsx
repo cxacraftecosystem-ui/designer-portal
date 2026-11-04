@@ -4,7 +4,6 @@ import { PageHeader } from "@/components/PageHeader";
 export default async function NewArtisanPage({
   searchParams
 }: {
-  /** `?card=` — a Field Repository artisan card scanned elsewhere (lib/artisanCardScan.ts). */
   searchParams: Promise<{ card?: string | string[] }>;
 }) {
   const { card } = await searchParams;

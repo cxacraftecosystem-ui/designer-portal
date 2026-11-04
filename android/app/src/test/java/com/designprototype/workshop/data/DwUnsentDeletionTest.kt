@@ -5,31 +5,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * A DELETION THAT CANNOT TRAVEL WAS REPORTED AS BACKED UP.
- *
- * ── THE DEFECT, IN THE THREE PLACES IT LIVED ─────────────────────────────────────────────────────
- *
- * Deleting the LAST row of a collection is invisible in a stage payload — entries are built from
- * `rowsFor(key)`, which is simply empty — so the deletion has to be STATED, in
- * [StageDraft.emptiedEntities]. `buildStageBody` sends that list only when the draft is authoritative,
- * which is right: asserting a deletion while disclaiming the knowledge that justifies one is how a
- * fortnight of the office's rows gets swept by a phone that never read them.
- *
- * Nothing then counted the deletions that were consequently NOT SENT. `statusOf` never read
- * `emptiedEntities`, and [WorkshopSyncStatus.isFullySynced] had no term for it — so the payload's
- * signature matched, no stage was pending, and a workshop holding a deletion that PHYSICALLY CANNOT
- * TRAVEL scored fully synced with the list row reading "Backed up to the server". The designer deleted
- * six process steps in a courtyard, was told their work was safe, and the six rows are still in the
- * .docx handed to the ministry.
- *
- * ── AND THE SAME SHAPE AS THE REFUSAL DEFECT ONE FIELD ALONG ─────────────────────────────────────
- *
- * [WorkshopSyncStatus.refusedAnswers] was added for exactly this: work this device holds that no future
- * payload will carry, so the signature matches for ever and nothing is ever pending. These pin the
- * deletion's half of it, including the two surfaces that told the refusal's story wrongly before
- * anybody thought to check them — the row's own sentence, and the device-wide banner drawn above it.
- */
 class DwUnsentDeletionTest {
 
     private fun status(
@@ -56,32 +31,18 @@ class DwUnsentDeletionTest {
         unsentDeletions = unsentDeletions,
     )
 
-    // ── The row's own answer ──────────────────────────────────────────────────────────────────────
-
     @Test
     fun `a workshop holding a deletion it cannot send is NOT backed up`() {
-        // THE ASSERTION THE DEFECT FAILED, and the one line that made "Backed up to the server" a lie.
         assertFalse(status(unsentDeletions = 1).isFullySynced)
         assertTrue("and everything else really is clean, which is why nothing else caught it",
             status().isFullySynced)
     }
 
-    /**
-     * IT IS NOT A FAILURE EITHER, and must not be counted as one. A failed stage did not save; this
-     * stage saved everything it had. Folding the two together would send a designer back over a stage
-     * that is fine.
-     */
     @Test
     fun `a deletion is not a refused stage`() {
         assertFalse(status(unsentDeletions = 2).hasFailures)
     }
 
-    /**
-     * WITH NOTHING PENDING IT USED TO PRODUCE A SENTENCE WITH NO SUBJECT. Falling through to the
-     * "waiting to upload" arm, every clause of its `buildList` was false, so the joined string was
-     * EMPTY and the row read " waiting to upload" — a blank sentence over a workshop that is not backed
-     * up, in the one place a designer looks to decide whether they can leave a cluster.
-     */
     @Test
     fun `the row says what is outstanding rather than falling through to a blank sentence`() {
         val summary = status(unsentDeletions = 1).summary
@@ -97,12 +58,6 @@ class DwUnsentDeletionTest {
         )
     }
 
-    /**
-     * BOTH KINDS OF STUCK WORK GET NAMED. The refusal arm ran first and said nothing about the
-     * deletion, so a workshop holding one of each reported only the refusal — and a designer who
-     * corrected the answer would have watched the row go on refusing to say "backed up" with nothing
-     * left on screen explaining why.
-     */
     @Test
     fun `a refusal and a deletion each get their own clause in the row`() {
         assertEquals(
@@ -111,7 +66,6 @@ class DwUnsentDeletionTest {
         )
     }
 
-    /** Pending work still dominates the line, because it is the thing a connection will actually fix. */
     @Test
     fun `pending work still says it is waiting to upload`() {
         assertEquals(
@@ -120,22 +74,6 @@ class DwUnsentDeletionTest {
         )
     }
 
-    // ── The banner above the list ─────────────────────────────────────────────────────────────────
-
-    /**
-     * THE BANNER MUST NOT SAY "IT UPLOADS WHENEVER THERE IS A CONNECTION" OVER THIS.
-     *
-     * Making `unsentDeletions` a term of `isFullySynced` is what puts such a workshop into the caller's
-     * `outstanding` list — and with no counter handed down, the banner would have drawn a workshop it
-     * could not name and fallen through to its pending default. That is word-for-word the defect
-     * [dwDeviceSyncBanner] was written to end, arriving one field along, and the comment on its call
-     * site in `WorkshopListScreen` predicted it.
-     *
-     * A DELETION IS ON THE "NOT WAITING" SIDE OF THE LINE even though its remedy needs signal, because
-     * of what the cloud-off icon claims: that the pass carries it away by itself on the next bar.
-     * `pushStages` only ever PUSHES, so no background pass will ever read a stage, and the deletion sits
-     * there through a hundred passes on perfect Wi-Fi until a person opens the stage.
-     */
     @Test
     fun `a deletion is never described as waiting for a connection`() {
         val banner = dwDeviceSyncBanner(
@@ -179,11 +117,6 @@ class DwUnsentDeletionTest {
         assertTrue(banner.detail, banner.detail.contains("then those stages, with a connection"))
     }
 
-    /**
-     * BOTH AT ONCE CANNOT BE TOLD IN ONE SENTENCE — the same argument the refusal case makes. The
-     * stages and files WILL upload on the next bar of signal; the deletion will not, ever, until
-     * somebody opens the stage.
-     */
     @Test
     fun `pending work and a deletion each get their own clause in the banner`() {
         val banner = dwDeviceSyncBanner(
@@ -199,11 +132,6 @@ class DwUnsentDeletionTest {
         assertTrue(banner.detail, banner.detail.contains("syncing alone will not send it"))
     }
 
-    /**
-     * A REFUSAL AND A DELETION HAVE DIFFERENT REMEDIES — correct an answer, versus open a stage — so
-     * neither sentence can stand in for the other, and the refusal arm running first must not swallow
-     * the deletion.
-     */
     @Test
     fun `a refusal and a deletion are both explained, with their different remedies`() {
         val banner = dwDeviceSyncBanner(
@@ -222,10 +150,6 @@ class DwUnsentDeletionTest {
         )
     }
 
-    /**
-     * The existing callers' sentences are untouched: the parameter is defaulted, so a device with no
-     * deletions anywhere says exactly what it said before.
-     */
     @Test
     fun `a device with no deletions is unchanged`() {
         val banner = dwDeviceSyncBanner(

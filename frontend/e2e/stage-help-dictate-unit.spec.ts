@@ -16,19 +16,6 @@ import {
 } from "@/components/dictation/dictationAdornment";
 import { hasDetails, infoToggleAria, infoToggleLabel } from "@/components/ui/infoToggleAria";
 
-/*
-  DW-14 (UX audit 2026-10-16), owner ruling 2026-10-17: on a phone a stage read as text with
-  occasional boxes. Three things now hold the fix:
-
-  1. Every field's `help` is one short line; the rest is `details`, behind a collapsed "i".
-  2. The "i" is a real disclosure: a button with `aria-expanded`, beside the label, never inside it.
-  3. Dictate is a 44px microphone INSIDE the box's end adornment, with the language in a menu from
-     a caret beside it — no separate "Dictate" button, no underlined "English (India)" link.
-
-  The registry half is read off the SHIPPED Android asset, which is a dump of what the API serves,
-  so this file and `backend/tests/test_stage_help_copy.py` hold the same rule from both ends.
-*/
-
 const ROOT = join(__dirname, "..");
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
@@ -78,15 +65,12 @@ test("the stage form draws the toggle beside the label, collapsed, and mounts th
   const toggle = read("components/ui/InfoDisclosure.tsx");
   expect(toggle).toContain('type="button"');
   expect(toggle).toContain("{...infoToggleAria(fieldLabel, expanded, panelId)}");
-  // 20px glyph, 44px target.
   expect(toggle).toContain("h-5 w-5");
   expect(toggle).toContain("after:-inset-3");
 
   expect(source).toContain("const [detailsOpen, setDetailsOpen] = useState(false);");
   expect(source).toContain("{detailsOpen ? <InfoPanel id={detailsId}>{field.details}</InfoPanel> : null}");
-  // Beside the label element, as a sibling — a <label> would fold the toggle into its control's name.
   expect(source.replace(/\s+/g, " ")).toContain("{label} <InfoToggle");
-  // Both wrappers use the row, so every field type gets it.
   expect(source.match(/\{labelRow\(/g)).toHaveLength(2);
 });
 
@@ -96,10 +80,8 @@ test("the microphone is a 44px icon button named Dictate, with the field and lan
   expect(dictateButtonLabel(true)).toBe("Stop dictating");
   expect(dictateButtonLabel(false, true)).toBe("Transcribing");
   expect(dictateButtonDescription("Remarks", "English (India)")).toBe("Remarks, English (India)");
-  // Recording is visible without motion: a filled disc and a static ring.
   expect(DICTATE_BUTTON_RECORDING).toContain("bg-purple-700");
   expect(DICTATE_BUTTON_RECORDING).toContain("ring-4");
-  // The caret is as tall as the microphone and widened to 44px by its after: box.
   expect(DICTATION_LANGUAGE_BUTTON).toContain("h-11");
   expect(DICTATION_LANGUAGE_BUTTON).toContain("after:-inset-x-2.5");
   expect(dictationLanguageButtonLabel("हिन्दी — Hindi")).toBe("Dictation language: हिन्दी — Hindi");
@@ -113,17 +95,14 @@ test("the adornment sits inside the box: centred on one line, top-right on a tex
   const dictation = read("components/designworkshop/Dictation.tsx");
   expect(dictation).toContain("{children}");
   expect(dictation).toContain("<div className={adornmentPosition(multiline)}>{adornment}</div>");
-  // The language is a menu of radio items opened from the caret, not an underlined link.
   expect(dictation).toContain('aria-haspopup="menu"');
   expect(dictation).toContain('role="menuitemradio"');
   expect(dictation).not.toContain("underline");
   expect(dictation).not.toContain('"Dictate"');
 
   const field = read("components/designworkshop/FieldInput.tsx").replace(/\s+/g, " ");
-  // The plain text box and the textarea are WRAPPED by the control, so the mic is in their end.
   expect(field).toMatch(/<DictationButton [^>]*workshopId=\{workshopId\}> \{textBox\} <\/DictationButton>/);
   expect(field).toMatch(/<DictationButton [^>]*multiline > <textarea/);
-  // No stray stand-alone microphone under a text box any more.
   expect(field).not.toContain('{field.type === "TEXT" ? ( <DictationButton onCommit={appendDictated} disabled={disabled} fieldLabel={field.label} workshopId={workshopId} /> ) : null}');
 });
 

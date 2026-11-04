@@ -7,10 +7,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * "CHECKED, NO CORRECTIONS" ON THE HANDSET (C5, 2026-10-17): the web's verdict, the same words, the
- * same refusal, and the answer folded back into the read the screen holds.
- */
 class DwInspectionClearanceTest {
 
     private fun read(

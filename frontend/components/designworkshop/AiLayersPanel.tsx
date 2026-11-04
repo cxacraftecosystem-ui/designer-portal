@@ -1,92 +1,5 @@
 "use client";
 
-/**
- * WHAT A MACHINE PRODUCED IN THIS WORKSHOP, WHAT IT WAS PRODUCED FROM, AND WHO PUT THEIR NAME TO IT.
- *
- * This is the person-facing half of the layering law (`docs/PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md` §3,
- * `backend/app/services/ai_layers.py`). The model, the service and the five routes landed first and
- * deliberately: provenance goes in "before there is a backlog of unattributed AI text". But rule 3 —
- * *"a layer is inert until a person accepts it, and acceptance is recorded with who and when"* — is a
- * door with no handle until somebody can turn it. Without this screen every layer stays inert for
- * ever, the annexure has nothing to print, and the whole provenance chain is a table nobody can act
- * on.
- *
- * ────────────────────────────────────────────────────────────────────────────────────────────────
- * FIVE THINGS THIS PANEL WILL NOT DO, each of them a defect it would otherwise ship.
- *
- * 1. **IT NEVER WRITES A MODEL'S WORDS INTO A FORM FIELD.** There is no "apply to the stage" button,
- *    no "copy into this entry", no prefill of any kind, and there must never be one. Plan §3: no
- *    AI-produced value may feed a field that is compared across surfaces or any derived or computed
- *    field, because the same audio through Tier 1 on a phone and Tier 3 in the cloud differs
- *    legitimately and for ever — a cross-surface parity test that ever compared them would be failing
- *    on the design rather than on a bug. The server makes this true by construction: every write it
- *    can express is a `LayerWritePlan`, and `DwStageEntry` is absent from `WRITABLE_TABLES`, so
- *    naming it raises. This side keeps it true by having no such control to press. **If somebody adds
- *    one, they are changing the plan, not adding a convenience.**
- * 2. **IT NEVER PRINTS "UNRECORDED" AS BLANK, AND NEVER GUESSES A PROVIDER.** `provider` and `modelId`
- *    are NOT NULL and legitimately hold that literal string, because `media_queue._transcript_write`
- *    has never stored which of the four providers in `services/ai.py` produced a transcript. That is
- *    the common case for every transcript this system has ever produced, not an edge case. It is
- *    rendered as the words "not recorded", in the same quiet type as a recorded value — not blank
- *    (which reads as "there is nothing here"), not red (which would tell a designer their archive is
- *    broken), and never replaced by a plausible provider name, which would be a fabricated provenance
- *    record in the one table built to prevent them.
- * 3. **IT NEVER OFFERS A BUTTON WHOSE ONLY OUTCOME IS A REFUSAL.** Three of these routes refuse on a
- *    condition this screen can already see, and a control offered into a certain refusal teaches
- *    designers that refusals are noise — after which the one that matters is clicked through too.
- *    - **Accept, for a layer already accepted** (409): a second acceptance would overwrite the first
- *      acceptor's name, the single fact about an accepted layer a reader of a submitted report may
- *      need to trace. Withdraw is offered instead.
- *    - **Accept, for a layer whose text is withheld** (403): `textWithheld` on the row and the
- *      refusal in `accept_ai_layer` are the same computation on the same server, so the outcome is
- *      settled before the press. A sentence naming who to ask stands where the button was.
- *    - **Decline, for a layer that live layers derive from** (409): `deletion_plan` refuses while
- *      anything stands on it, and the things standing on it are drawn inside it on this very page.
- *    In all three the refusal's own next move is stated in place of the control, which is the same
- *    information one press earlier.
- * 4. **IT NEVER SHOWS A STATUS CODE.** Every refusal these five routes raise is already a sentence
- *    naming the next move, and `aiLayerProblem` shows the server's own words. The 409 on delete says
- *    "N layer(s) were produced from this one (…) and would be left describing something no longer on
- *    screen. Delete those first" — which is the sentence a designer can act on, and rewording it here
- *    would give one rule two voices.
- * 5. **IT NEVER PUTS THE TIER BEHIND A HOVER.** Plan §2.1: without the tier on the page, a
- *    cloud-diarized interview and a device-guessed one look alike, and a fleet running different tiers
- *    produces two classes of record nobody can tell apart. Every row carries a tier chip that says
- *    what the tier MEANS — "In the cloud", "On the handset" — rather than a numeral, because
- *    `AiTier.number` exists "for prose only, never for a comparison": Tier 1 is the only tier that
- *    works with no signal and Tier 3 is the only one carrying the craft keyterm list, so higher is not
- *    better in either direction.
- *
- * ────────────────────────────────────────────────────────────────────────────────────────────────
- * THE CHAIN IS THE LAYOUT, NOT A DECORATION. A cleaned transcript is drawn INSIDE the raw transcript
- * it was derived from, and a summary inside that. A flat list sorted by date scatters one recording's
- * rungs among another's, and the person deciding whether to accept a summary then has to reconstruct
- * from a column of cuids what it was a summary OF. Where two models read the SAME recording, their
- * chains sit side by side under one heading — that pairing is the whole safeguard §2.1 asks for.
- *
- * REGISTERING IS OFFERED HERE TOO, AND WITH NO PROVENANCE BOXES. `POST .../ai-layers` accepts an
- * optional provider, model id, version and language "for the one caller who genuinely knows — an
- * operator backfilling a period when a single provider was configured". A designer standing in front
- * of a transcript is not that caller: they would be typing a guess into the column that exists to
- * make guessing impossible. So the form has no boxes, the row is registered with the provenance the
- * server records honestly as unrecorded, and the panel says so before the press rather than after it.
- *
- * ────────────────────────────────────────────────────────────────────────────────────────────────
- * AND REGISTERING IS NO LONGER THE ONLY WAY A ROW COMES INTO EXISTENCE. That sentence was true for
- * as long as the five verb routes had no client at all. A designer now produces layers from the
- * rich-text toolbar (`AiVerbSelectionMenu`), from a media tile (`MediaAiVerbs`) and from a stored
- * layer on this very screen — so this panel is one of three doors and the chain it draws routinely
- * roots in words a designer typed rather than in a recording. Those chains are the `notes` group of
- * `groupAiLayers`; before it existed every one of them fell through to `unrooted` with the reason
- * `UNKNOWN_SOURCE`.
- *
- * THE VERB CONTROLS HERE OBEY RULE 3 ONE STEP FURTHER THAN THE ACCEPT BUTTON DOES. `ALLOWED_PARENTS`
- * refuses a proofread of a proofread, a translation of a translation, and anything at all standing
- * on an EXPANDED — and every one of those is decidable from what is already drawn on this page, so
- * the reason stands where the control would have been. `aiVerbPlacementAllows` is the pure mirror of
- * that table and is pinned against the Python by `frontend/e2e/ai-verbs-unit.spec.ts`.
- */
-
 import { Toggle } from "@/components/ui/Toggle";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -161,23 +74,10 @@ import {
 import { listDesignWorkshopTranscripts, type DwTranscriptItem, type DwTranscriptList } from "@/lib/designWorkshops";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/**
- * Each layer's whole decision history, keyed by layer, once it has been read.
- *
- * Filled by "Show its decision history" on a row (`getDesignWorkshopAiLayer`), and refreshed after
- * every accept or withdraw on that row, so the list on screen is always the server's complete one —
- * newest first, with the name of whoever acted. A layer whose history has not been read has no entry
- * here, and its row offers the read rather than implying an empty history.
- */
 type DecisionLog = Record<string, DwAiDecisionRecord[]>;
 
-/**
- * What a row needs from the panel to read ONE layer on its own: its text, and its history.
- */
 type OneLayerReads = {
-  /** The text of each layer read on its own, keyed by layer. */
   texts: Record<string, string>;
-  /** The layer whose single read is on the wire, or null. */
   readingId: string | null;
   onRead: (layer: DwAiLayer) => void;
 };
@@ -187,12 +87,6 @@ export function AiLayersPanel({
   readOnlyReason = null
 }: {
   workshopId: string;
-  /**
-   * Why this reader may read the layers and not act on them, or null — today a post they hold on the
-   * workshop (`useHeldPostRefusal`). Registering, accepting, withdrawing, declining and every verb are
-   * writes of the workshop the server refuses whoever inspects or supervises it, so all of them are
-   * held as a write in flight holds them (`locked`), and the verbs carry this as their reason.
-   */
   readOnlyReason?: string | null;
 }) {
   const { user } = useAuth();
@@ -203,59 +97,24 @@ export function AiLayersPanel({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [includeDeleted, setIncludeDeleted] = useState(false);
-  /**
-   * Whether the full text of EVERY layer has been fetched, in one read of the list.
-   *
-   * A workshop can hold twenty-five interviews, which is megabytes on one bar of signal, so this is
-   * one deliberate press said out loud beside the button. Reading ONE layer is the row's own
-   * "Read this layer" (`getDesignWorkshopAiLayer`), which carries only that layer's text.
-   */
   const [withText, setWithText] = useState(false);
   const [busyLayerId, setBusyLayerId] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<DecisionLog>({});
-  /** Layers read on their own — the text of each, and which read is in flight. */
   const [oneTexts, setOneTexts] = useState<Record<string, string>>({});
   const [readingId, setReadingId] = useState<string | null>(null);
-  /** The workshop's whole decision history, once asked for. */
   const [history, setHistory] = useState<DwAiDecisionHistory | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
-  /** The layer whose withdrawal note is being typed, and the note. See `WithdrawForm` for why. */
   const [withdrawing, setWithdrawing] = useState<string | null>(null);
 
-  /**
-   * What is left of today's allowance, and whether this workshop may send anything at all.
-   *
-   * BOTH READ BEFORE THE PRESS RATHER THAN LEARNED FROM A REFUSAL. A verb costs a provider call
-   * somebody pays for, and `ai_verb_cap.allowance_payload`'s own docstring makes the argument: *"a
-   * client that can learn the ceiling only by being refused has to spend a run to learn it."* The
-   * consent is read from this device's own copy of the workshop, so it answers with no connection.
-   */
   const [verbAllowance, setVerbAllowance] = useState<DwAiVerbAllowanceState | null>(null);
   const consent = useWorkshopConsent(workshopId);
-  /** The layer a verb has just produced, waiting to be read and signed for. */
   const [verbResult, setVerbResult] = useState<DwAiVerbResult | null>(null);
 
   const [transcripts, setTranscripts] = useState<DwTranscriptList | null>(null);
   const [transcriptsFailed, setTranscriptsFailed] = useState(false);
   const [registering, setRegistering] = useState<string | null>(null);
 
-  /**
-   * Which read is the current one. The house convention for a list screen (§14.5 of the frontend
-   * reference: a generation counter, a `cancelled` flag, or an `AbortSignal`, and they are not
-   * interchangeable) — `listDesignWorkshopAiLayers` takes no signal, so what matters is ignoring the
-   * late answer rather than stopping it.
-   *
-   * IT IS NOT DECORATION HERE, because three different things start a read and two of them are
-   * one-key presses a designer will drum on: the "Show declined layers" tick, the "Show the full
-   * text" toggle — which asks for a payload measured in megabytes and therefore takes the longest to
-   * come back — and every action's own refresh. Without this, pressing "Show the full text" and then
-   * "Hide the full text" left the screen showing full transcripts under a button offering to show
-   * them, because the first, slower answer landed last and won; the same race silently un-ticks
-   * "Show declined layers" and, after an accept, can restore the pre-acceptance list over the
-   * post-acceptance one — a screen showing a layer somebody has just signed as unaccepted, and
-   * offering the Accept button again for a row the server would now refuse.
-   */
   const loadSeq = useRef(0);
 
   const load = useCallback(
@@ -275,15 +134,10 @@ export function AiLayersPanel({
         setError(
           aiLayerProblem(
             err,
-            // The disjunction, unresolved on purpose, exactly as the app's 404 page leaves it. A GET
-            // that 404s here is either a server older than these routes or a workshop this account
-            // cannot open, and naming only the first would assert that the workshop exists.
             "Couldn't load the AI layers."
           )
         );
       } finally {
-        // Only the newest read may put the screen back to rest; an overtaken one clearing this would
-        // stop the spinner while its replacement is still on the wire.
         if (seq === loadSeq.current) setLoading(false);
       }
     },
@@ -294,14 +148,6 @@ export function AiLayersPanel({
     void load({ includeDeleted, withText });
   }, [load, includeDeleted, withText]);
 
-  /**
-   * The recordings, so a chain can be headed by the field a designer recorded rather than by a cuid.
-   *
-   * The SAME endpoint the report's transcript annexure panel reads, joined on `mediaId`. A layer's
-   * source is a bare media id and nothing else — naming it "Stage 7 · Interview with the master
-   * weaver" is the difference between a heading and a hash. A failure here is not fatal: the chains
-   * still render under their media ids and the panel says the names could not be fetched.
-   */
   useEffect(() => {
     let cancelled = false;
     void listDesignWorkshopTranscripts(workshopId)
@@ -326,21 +172,7 @@ export function AiLayersPanel({
     };
   }, []);
 
-  /**
-   * Why no verb may be run from this screen right now, or null when one may.
-   *
-   * THE SAME LADDER THE OTHER TWO SURFACES USE, and shared with them rather than re-derived: the
-   * still-reading, consent and no-server-copy rungs, then the ceiling. This screen used to compute
-   * them here in a ternary of its own, which is how it came to carry its own copy of the ceiling
-   * sentence and how the still-reading state ("") ended up on the wrong side of a truthiness test
-   * further down. The placement law stays PER ROW ({@link aiVerbPlacementAllows}), because it
-   * depends on what a given layer is.
-   *
-   * **THREE-VALUED, AND EVERY CONSUMER MUST TEST `!== null`.** "" means "still reading", which is a
-   * refusal to proceed with nothing to say — see {@link verbWorkshopRefusal}.
-   */
   const verbsBlocked =
-    // A post held on the workshop comes first: it is the one refusal no consent or allowance changes.
     readOnlyReason ??
     verbWorkshopRefusal({ ready: consent.ready, serverId: consent.serverId, decision: consent.decision }) ??
     verbAllowanceRefusal(verbAllowance);
@@ -353,20 +185,12 @@ export function AiLayersPanel({
     return byId;
   }, [transcripts]);
 
-  /** Which tiers are actually on this screen — the legend explains those and no others. */
   const tiersPresent = useMemo(() => {
     const seen: string[] = [];
     for (const layer of list?.items ?? []) if (!seen.includes(layer.tier)) seen.push(layer.tier);
     return seen;
   }, [list]);
 
-  /**
-   * Recordings whose transcript is not yet a layer.
-   *
-   * NO LONGER "the only way rows come into existence", which is what this comment said while the
-   * five verb routes had no client. A designer now produces layers from the rich-text toolbar, from
-   * a media tile, and from a stored row on this very screen.
-   */
   const registerable = useMemo(() => {
     const already = new Set(
       (list?.items ?? [])
@@ -378,12 +202,6 @@ export function AiLayersPanel({
 
   const refresh = useCallback(() => load({ includeDeleted, withText }), [load, includeDeleted, withText]);
 
-  /**
-   * ONE layer's text and its whole history, without the text of every other layer.
-   *
-   * Quiet on failure for the history half: the row keeps what it had, and the error banner says the
-   * read did not finish.
-   */
   const readOne = useCallback(
     async (layer: DwAiLayer) => {
       setReadingId(layer.id);
@@ -413,7 +231,6 @@ export function AiLayersPanel({
     }
   }, [workshopId]);
 
-  /** After an accept or withdraw: the row's history and, if it is open, the workshop's. */
   const afterDecision = useCallback(
     async (layer: DwAiLayer) => {
       await readOne(layer);
@@ -424,41 +241,10 @@ export function AiLayersPanel({
 
   const oneLayer: OneLayerReads = { texts: oneTexts, readingId, onRead: (layer) => void readOne(layer) };
 
-  /**
-   * Is ANY write in flight — on this row or on another one?
-   *
-   * EVERY ACTION ON THE PAGE IS DISABLED WHILE ONE RUNS, not merely the row that owns it, and the
-   * reason is that `busyLayerId` holds ONE id. Accept layer A, then press "Decline" on layer B while
-   * A is still on the wire: B's press overwrote the id, A's `finally` then cleared it, and B's own
-   * buttons came back to life with B's DELETE still unanswered. A second press then reached a row the
-   * server had already declined and came back as "That layer is not in this workshop's list any
-   * more — it may have been declined by somebody else while this screen was open", which is a true
-   * sentence about a false situation: it was declined by this person, two seconds ago, from this
-   * screen. The two refreshes also raced, and each handler's error and notice overwrote the other's.
-   *
-   * One at a time is the honest shape for a page whose acts are signatures, and it costs nothing: a
-   * designer accepting a transcript is reading it first.
-   */
   const anyBusy = busyLayerId !== null || registering !== null;
-  /** What every row and the register panel are held by: a write in flight, or a post held here. */
   const locked = anyBusy || Boolean(readOnlyReason);
 
   async function accept(layer: DwAiLayer) {
-    /*
-      THE CONFIRM IS THE FEATURE, NOT A SAFETY RAIL AROUND IT.
-
-      Accepting is the one act in this whole feature that attaches a PERSON to model output. Rule 4
-      says the report prints the accepted layer and names it as such, so what is being agreed to is
-      that this text — which a model wrote, possibly in a language the artisan did not speak — may
-      appear in a document handed to a ministry officer with a name beside it. That has to be said in
-      words before the press, in the same register as the identity-card reader's confirm panel, which
-      spells out that a misread digit belongs to nobody and therefore passes every check the system
-      has. A dialog reading "Accept this layer?" would be a shrug.
-
-      Warning tone rather than danger: this is consequential and recoverable — the withdrawal exists —
-      whereas danger tone puts focus on Cancel and refuses a backdrop dismiss, which is the treatment
-      for something that destroys work.
-    */
     const provenance = layerProvenance(layer);
     const shown = withText ? layer.text : oneTexts[layer.id];
     const readable = typeof shown === "string" && shown.trim().length > 0;
@@ -559,14 +345,6 @@ export function AiLayersPanel({
     setError(null);
     setNotice(null);
     try {
-      /*
-        NO PROVENANCE IS SENT, AND THAT IS THE HONEST ANSWER RATHER THAN THE LAZY ONE. The body accepts
-        five optional fields — `provider`, `modelId`, `modelVersion`, `language` and `producedAt` — and
-        the route substitutes the literal UNRECORDED for the first two when they are absent, leaving the
-        other three null. Nothing on this device knows which of the four providers in `services/ai.py`
-        transcribed this clip — the queue never stored it — so any value typed here would be a guess
-        written into the column that exists to make guessing impossible.
-      */
       const result = await registerDesignWorkshopAiLayer(workshopId, { sourceMediaId: item.mediaId });
       setNotice(
         result.total > 1
@@ -610,10 +388,6 @@ export function AiLayersPanel({
           <span className="text-ink-700">
             <strong className="text-ink-900">{accepted}</strong> accepted
           </span>
-          {/* THE CEILING, WHERE THERE IS ONE. `aiVerbsLimit` is null on an uncapped deployment and
-              nothing is drawn then — "0 of 0 left" and "no ceiling" must not look alike, which is
-              exactly what the obvious `?? 0` makes them. The DAY is named because the allowance
-              turns over at India-time midnight on the SERVER, not on this laptop. */}
           {verbAllowance && verbAllowance.aiVerbsLimit !== null ? (
             <span
               className={
@@ -683,35 +457,6 @@ export function AiLayersPanel({
           ) : null}
         </div>
 
-        {/* WHERE AN ACCEPTANCE ACTUALLY LANDS, READ OFF THE SERVER RATHER THAN REMEMBERED — and the
-            correction of a sentence that stood here and was false in the dangerous direction. An
-            earlier draft of this panel told the person signing that "the report annexure that prints
-            accepted layers has not been built yet", so accepting was a note kept for later. It is
-            built: `services/report_ai_layers.append_ai_layer_annexure` renders the index, the
-            provenance line and the text, `report_builder` calls it for the ANNEXURE_AI_LAYERS
-            section (report_builder.py:1986), `design_workshops.attach_report_ai_layers` loads it
-            through `ai_layers.accepted_layers`, and `apply_report_settings` splices the section into
-            any template when a generate request carries `includeAiLayers`.
-
-            AND THE SWITCH HAS SINCE LANDED TOO. This note went on to say "what is genuinely missing
-            is the switch: `grep includeAiLayers` finds nothing in `frontend/` and nothing in
-            `android/`" — true when written, false within the hour, because the report screen gained
-            an "Include machine-assisted text" checkbox that sends the flag. That is TWICE this one
-            paragraph has had to be repaired, both times for the same reason: it describes what the
-            REST of the system does, from a `grep` taken at one moment, in a tree several lanes were
-            editing at once.
-
-            SO IT NO LONGER DESCRIBES THE PIPELINE AT ALL. What a person signing needs to know is
-            what their signature does, and that has been true throughout and is not going to change:
-            accepting is what makes a layer printable, and a report can carry it. Whether some other
-            screen has a tick box today is not their business and is exactly the kind of claim that
-            goes stale behind their back — on the one screen where a stale reassurance is how model
-            prose ends up in a government document under a name nobody meant to lend it.
-
-            The Android app still cannot ask for the annexure, and that is deliberately NOT stated
-            here either: it is a fact about a different application, it would be read as a caveat on
-            this signature, and it is recorded where it belongs — `ReportSettings.UNSUPPORTED_SECTIONS`
-            on the handset, which says it to the person actually generating the file there. */}
         <p className="flex items-start gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm leading-6 text-ink-700">
           <Info className="mt-1 h-4 w-4 shrink-0 text-ink-500" aria-hidden />
           <span>
@@ -719,28 +464,8 @@ export function AiLayersPanel({
           </span>
         </p>
 
-        {/* BOTH ARE LIVE REGIONS, because both appear in response to a press and neither is anywhere
-            near where the reader is looking: the buttons that produce them sit rows further down the
-            page, inside a chain, and after an accept the focused element is a button that has just
-            been replaced by a different one. A sighted designer sees the banner change colour at the
-            top of the panel; without these, a screen-reader user pressed "Accept this layer", heard
-            nothing at all, and had no way to tell an acceptance that was refused from one that
-            landed. `role="alert"` (assertive) for the refusal and `role="status"` (polite) for the
-            confirmation is the split every other panel in this repository uses — FieldInput.tsx:213
-            and :1454, WorkshopCodeScanner.tsx:486 — and it is the right way round: a refusal is
-            something to act on now, a success may wait for a pause in the reading. */}
         {error ? (
           <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm leading-6 text-red-700">
-            {/*
-              THE LIST 404s ON A WORKSHOP THAT HAS NO SERVER COPY, AND `load`'s SENTENCE IS WRONG
-              ABOUT WHY. It offers an unresolved disjunction — "this server may not offer them yet, or
-              this may not be a workshop this account can open" — which is the honest reading of a 404
-              when nothing else is known, and which is FALSE in both halves here: the routes exist and
-              this is the designer's own workshop, it simply has not been sent up. `load` cannot tell
-              the difference (it is keyed on the route param and runs before the draft is read), so the
-              correction is made where the draft IS known. Same fact as the verbs' fifth pre-press
-              state, in the one voice `WORKSHOP_NOT_ON_SERVER_YET` states it.
-            */}
             {consent.ready && !consent.serverId ? WORKSHOP_NOT_ON_SERVER_YET : error}
           </p>
         ) : null}
@@ -783,8 +508,7 @@ export function AiLayersPanel({
                   ? `${recording.stageTitle} · ${recording.fieldLabel} · ${recording.durationText}`
                   : transcriptsFailed
                     ? "Couldn't load the recording's name."
-                    : // A photograph's OCR chain roots on an IMAGE, which the transcripts endpoint does
-                      // not list at all — so "not in that list" is an ordinary answer, not a fault.
+                    :
                       "A photograph, or a recording you can't access."}
                 {" · "}
                 <span className="font-mono">{group.mediaId}</span>
@@ -826,13 +550,6 @@ export function AiLayersPanel({
       })}
 
       {grouping.notes.length ? (
-        // CHAINS THAT STAND ON WORDS A DESIGNER TYPED, and they are ROOTS rather than orphans.
-        //
-        // Before `groupAiLayers` knew about `SUPPLIED_TEXT` every one of these fell through to the
-        // "could not be attached to a recording" block below, with the reason `UNKNOWN_SOURCE` — so
-        // a designer's own proofread of their own note appeared, on the screen that exists to show
-        // it, under a heading saying it could not be placed. `ai_layers.chain_roots` draws the same
-        // distinction on the server, and the list route switched to it for exactly this reason.
         <div className="panel grid gap-3 p-4">
           <div>
             <h3 className="font-display text-sm font-bold text-ink-900">
@@ -876,9 +593,6 @@ export function AiLayersPanel({
               {grouping.unrooted.length} layer{grouping.unrooted.length === 1 ? "" : "s"} could not be attached to a
               recording
             </h3>
-            {/* SHOWN, NEVER DROPPED. A list that quietly stops is indistinguishable from a workshop
-                with nothing in it, and that confusion is the most repeated defect class in this
-                repository. Each reason gets its own sentence because each has a different next move. */}
             <p className="mt-1 text-sm leading-6 text-ink-muted">
               They are still listed here, so you can review them.
             </p>
@@ -892,10 +606,7 @@ export function AiLayersPanel({
                     : entry.reason === "SOURCE_NOT_LISTED"
                       ? "Its source isn't listed — it may have been declined. Tick “Show declined layers”."
                       : entry.reason === "UNKNOWN_SOURCE"
-                        ? // NOT A FAULT IN THE ROW, unlike the other three, and it must not be worded
-                          // as one: this build simply does not know the kind of thing the server says
-                          // this layer was made from. The honest answer is to say so and to name the
-                          // remedy, which is an update to this app rather than a repair to the data.
+                        ?
                           "Its source can't be shown. Reload to update the app."
                         : "Source can't be found — it can't be printed."}
                 </p>
@@ -945,29 +656,12 @@ export function AiLayersPanel({
         items={registerable}
         failed={transcriptsFailed}
         loaded={transcripts !== null}
-        // "Which recordings have no layer yet" is a question about BOTH lists, and `registerable`
-        // answers it by subtracting one from the other. While the layers are unread — the first
-        // moment of the screen, and for ever if that read failed — the subtraction has nothing to
-        // subtract, so every recording looks unregistered and every button is a 409 waiting to
-        // happen ("This recording is already registered as a Tier 3 raw transcript by the same
-        // model"). Offering them anyway would be inviting the refusal, so the panel says which list
-        // it is missing instead.
         layersKnown={list !== null}
         busyMediaId={registering}
         anyBusy={locked}
         onRegister={register}
       />
 
-      {/*
-        THE REVIEW SURFACE, SHARED WITH THE OTHER TWO CALL SITES.
-
-        A verb run from a row on this page produces a layer whose TEXT is on the 201 — `_finish_verb`
-        passes `include_text=True` — and this list deliberately does not carry text, so the dialog is
-        the only place the new words are readable at all. It is therefore the confirm, and the
-        panel's own `confirm()` is NOT stacked on top of it: that confirm exists precisely because
-        the panel may not have the text on screen, and two dialogs in a row is the "trains people to
-        click" failure this file's header names.
-      */}
       <AiVerbReviewDialog
         open={verbResult !== null}
         workshopId={workshopId}
@@ -982,18 +676,12 @@ export function AiLayersPanel({
         }}
         onClose={() => {
           setVerbResult(null);
-          // Reloaded even on "leave it for now": the row exists on the server whatever the designer
-          // decided, and a list that did not show it would be a layer that is inert AND invisible.
           void refresh();
         }}
       />
     </section>
   );
 }
-
-/* ────────────────────────────────────────────────────────────────────────────
- * One layer, and everything derived from it drawn inside it
- * ──────────────────────────────────────────────────────────────────────────── */
 
 function LayerRow({
   node,
@@ -1015,18 +703,12 @@ function LayerRow({
 }: {
   node: DwAiLayerNode;
   workshopId: string;
-  /**
-   * Why no verb may be run from this screen at all, "" while the consent is still being read, or
-   * null when one may. The PER-ROW half of the decision is `aiVerbPlacementAllows`.
-   */
   verbsBlocked: string | null;
   onVerbProduced: (result: DwAiVerbResult) => void;
-  /** The kind of the layer this one was produced from — null when it stands on the recording. */
   parentKind: string | null;
   withText: boolean;
   userId: string | null;
   busyLayerId: string | null;
-  /** Some write, anywhere on the page, is on the wire. See `anyBusy` in the panel for why it is global. */
   anyBusy: boolean;
   decisions: DecisionLog;
   oneLayer: OneLayerReads;
@@ -1042,23 +724,10 @@ function LayerRow({
   const payload = readAiPayload(layer.payload);
   const busy = busyLayerId === layer.id;
   const declined = layer.deletedAt !== null;
-  /** Null until this layer's history has been read; then the server's complete list, newest first. */
   const history = decisions[layer.id] ?? null;
   const reading = oneLayer.readingId === layer.id;
-  /** The text on screen: the whole list's when that was asked for, else this layer's own read. */
   const text = withText ? layer.text : oneLayer.texts[layer.id];
 
-  /**
-   * The layers still standing on this one — exactly what the DELETE would be refused for.
-   *
-   * `ai_layers.deletion_plan` is given `derived_from(layer_id)`, which is every layer whose
-   * `sourceLayerId` is this one and whose `deletedAt` is null, and it refuses with a 409 naming their
-   * kinds. Those rows are the ones drawn INSIDE this row, so the panel can see the refusal coming
-   * before the press, and the whole point of drawing the chain is that they are already on screen.
-   * Declined children are filtered out because the server ignores them too — a chain whose upper rung
-   * has been declined can have its lower rung declined afterwards, which is the ordinary way a
-   * two-rung registration is undone.
-   */
   const liveChildren = node.children.filter((child) => child.layer.deletedAt === null);
 
   return (
@@ -1077,9 +746,6 @@ function LayerRow({
           <div className="min-w-0">
             <p className="text-sm font-medium text-ink-900">{layerKindLabel(layer.kind)}</p>
             <p className="mt-0.5 text-xs leading-5 text-ink-500">
-              {/* `layerKindNoun`, not `layerKindLabel`: the label degrades to a whole sentence for a
-                  kind this build does not know, and interpolating that produced "Produced from the a
-                  layer kind this screen does not know (DIARIZATION) above it." */}
               {parentKind
                 ? `Produced from the ${layerKindNoun(parentKind)} above it.`
                 : "Produced from the recording or photograph itself."}
@@ -1087,8 +753,6 @@ function LayerRow({
             </p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-            {/* THE TIER, ALWAYS, IN WORDS. Never a numeral and never behind a hover — see the file
-                header. Purple rather than a status tint: it is a fact about the row, not a verdict. */}
             <span className="rounded-full border border-purple-300 bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-800">
               {tierLabel(layer.tier)}
             </span>
@@ -1110,9 +774,6 @@ function LayerRow({
           </div>
         </div>
 
-        {/* PROVENANCE, INCLUDING THE PARTS NOBODY WROTE DOWN. `unrecorded` is drawn in the ordinary
-            muted type rather than as a warning: it is the common case for every transcript this
-            system has produced, and an alarm colour would say the archive is broken. */}
         <dl className="grid gap-x-4 gap-y-1 text-xs leading-5 text-ink-500 sm:grid-cols-2">
           <div className="flex gap-1">
             <dt className="font-medium text-ink-700">Produced by</dt>
@@ -1126,10 +787,6 @@ function LayerRow({
           </div>
           <div className="flex gap-1">
             <dt className="font-medium text-ink-700">Model ran</dt>
-            {/* NOT defaulted to the row's own creation time on either end: a transcript produced last
-                March and registered today would otherwise carry today's date as a statement about
-                when the model ran, which is a fabricated fact of exactly the kind the provenance
-                columns exist to prevent. */}
             <dd>{layer.producedAt ? formatDateTime(layer.producedAt) : "not recorded"}</dd>
           </div>
           <div className="flex gap-1">
@@ -1153,9 +810,7 @@ function LayerRow({
             {layer.acceptedById
               ? layer.acceptedById === userId
                 ? "by you."
-                : // A user id and not a name: this endpoint resolves no accounts, and inventing a name
-                  // from a roster this account may not be allowed to read would be worse than an id
-                  // that can at least be quoted to an administrator.
+                :
                   "by another account."
               : "— who accepted it wasn't recorded."}
             {layer.acceptedById && layer.acceptedById !== userId ? (
@@ -1172,8 +827,6 @@ function LayerRow({
             </span>
           </p>
         ) : typeof text === "string" && text.trim() ? (
-          // Markdown, not a <pre>: transcripts carry bold speaker labels and `---` rules, and raw HTML
-          // stays escaped because this renderer deliberately has no rehype-raw.
           <div className="max-h-80 overflow-y-auto rounded-md border border-line-200 bg-surface-50 px-3 py-2">
             <Markdown text={text} />
           </div>
@@ -1238,18 +891,9 @@ function LayerRow({
           <WithdrawForm busy={busy} onCancel={() => onWithdrawOpen(null)} onSubmit={(text) => onWithdraw(layer, text)} />
         ) : (
           <div className="grid gap-2">
-            {/* A row with no buttons left in it is not rendered at all: a withheld layer that other
-                layers stand on has neither act available, and an empty flex row with a gap is a
-                stray space between two sentences. */}
             {(layer.accepted || !layer.textWithheld) || !liveChildren.length ? (
             <ActionGroup>
               {layer.accepted ? (
-                // WITHDRAW, NEVER A SECOND ACCEPT. The server refuses a second acceptance because it
-                // would overwrite the first acceptor's name, so offering the button would offer a
-                // refusal. Offered even when the text is withheld, deliberately and matching the
-                // server: `unaccept` carries no media gate, because taking a name off states nothing
-                // about the text and must stay reachable after a grant is withdrawn — otherwise an
-                // acceptance is trapped in a report with nobody able to undo it.
                 <button
                   type="button"
                   className="field-button-secondary"
@@ -1262,9 +906,6 @@ function LayerRow({
               ) : layer.textWithheld ? null : (
                 <button type="button" className="field-button" disabled={anyBusy} onClick={() => onAccept(layer)}>
                   {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Check className="h-4 w-4" aria-hidden />}
-                  {/* Worded, not only spun: the reduced-motion rules in globals.css zero every
-                      animation-duration, so a frozen spinner is the whole of the feedback for the
-                      readers who asked for less motion. */}
                   {busy ? "Accepting…" : "Accept this layer"}
                 </button>
               )}
@@ -1282,29 +923,13 @@ function LayerRow({
             </ActionGroup>
             ) : null}
 
-            {/* NEITHER OF THE TWO SENTENCES BELOW IS A DISABLED BUTTON WITH A TOOLTIP. Each replaces
-                a control whose ONLY possible outcome was the server's refusal — the same rule this
-                file's header states for the second acceptance, applied to the two cases it missed. */}
-
             {!layer.accepted && layer.textWithheld ? (
-              // ACCEPT IS A GUARANTEED 403 HERE, not a maybe. `textWithheld` on this row and the
-              // refusal in `accept_ai_layer` are the same computation on the same server —
-              // `media_roots` over the workshop's layers, then `owned_or_granted_where(user,
-              // owner_field="uploadedById")` — so every row carrying the withheld notice above would
-              // answer this button with a 403 and nothing else. Worse, the accept dialog's own advice
-              // ("press Show the full text and read it before you accept") can never be followed for
-              // one of these: `includeText` does not lift the withholding, and the route says so.
               <p className="text-xs leading-5 text-ink-500">
                 You can&apos;t access the source recording. Ask its uploader for access.
               </p>
             ) : null}
 
             {liveChildren.length ? (
-              // AND DECLINING IS A GUARANTEED 409. `deletion_plan` refuses while live layers derive
-              // from this one, naming their kinds, because the derived rows would be left describing
-              // something no screen will show. Those rows are drawn inside this one, so the refusal
-              // is predictable from what is already on the page — with one exception, which the last
-              // sentence names: somebody else may have declined them since this list was read.
               <p className="text-xs leading-5 text-ink-500">
                 First decline{" "}
                 {liveChildren.length === 1
@@ -1324,8 +949,6 @@ function LayerRow({
       </div>
 
       {node.children.length ? (
-        // THE CHAIN, DRAWN AS ONE. A derived layer sits INSIDE its source with a rule down the left,
-        // so "what was this made from" is answered by the layout instead of by a cuid comparison.
         <ul className="mt-3 grid gap-3 border-l-2 border-line-200 pl-3">
           {node.children.map((child) => (
             <LayerRow
@@ -1354,47 +977,6 @@ function LayerRow({
   );
 }
 
-/**
- * RUN A VERB OVER THIS STORED LAYER, and download a stored cue list — the two things this screen can
- * do that no other surface can.
- *
- * ── WHY A VERB OVER A STORED LAYER BELONGS HERE AND NOWHERE ELSE ────────────────────────────────
- *
- * This is where a designer reads a transcript against its source and decides what a report may
- * print. A verb over PROSE BEING TYPED belongs at the caret (`AiVerbSelectionMenu`) and a verb over
- * a FILE belongs beside the tile (`MediaAiVerbs`); a verb over a row that already exists belongs
- * where the row is.
- *
- * ── THE PLACEMENT LAW IS PREDICTED, NOT DISCOVERED ──────────────────────────────────────────────
- *
- * `check_placement` runs BEFORE anything is sent, so a refused placement spends nothing — but a
- * control that is only ever refused is still the defect this panel's rule 3 is about. All three
- * refusals are decidable from what is already drawn on this page, so the reason stands where the
- * control would have been:
- *
- *   · a PROOFREAD may not stand on a PROOFREAD — the second run has no way to tell a correction it
- *     is making from one the first run already made, so a passage drifts away from what was said one
- *     defensible step at a time, with every step individually accepted;
- *   · a TRANSLATION may not stand on a TRANSLATION — pivot translation compounds error invisibly and
- *     the "made from" line would name a row whose own language is not the one the artisan spoke;
- *   · NOTHING may stand on an EXPANDED, because an expansion is invented prose and every rung above
- *     one puts the invention further from the person who could have caught it.
- *
- * ── AND A WITHHELD ROW GETS NO CONTROL AT ALL ───────────────────────────────────────────────────
- *
- * `_verb_source_layer` refuses a verb over a layer whose recording this account may not read, with a
- * 403 whose reasoning is that "the result would put its words in front of you by another route".
- * `textWithheld` on the row and that refusal are the same computation on the same server, so the
- * outcome is settled before the press.
- *
- * ── THE SUBTITLE DOWNLOAD IS NOT GATED ON ACCEPTANCE, AND THAT IS DELIBERATE ────────────────────
- *
- * The route says why: "requiring acceptance first would mean accepting subtitles nobody has
- * watched, which is the opposite of what acceptance is for." This is the designer looking at what
- * the model produced, in the only form in which subtitles can be judged — played against the video.
- * The speaker tick is drawn ONLY where the cues actually carry labels, because asking for labels
- * that do not exist is a 422 by design ("a file with them in would be the same file without").
- */
 function LayerVerbs({
   layer,
   workshopId,
@@ -1403,7 +985,6 @@ function LayerVerbs({
 }: {
   layer: DwAiLayer;
   workshopId: string;
-  /** Consent or the ceiling, decided once for the whole panel. "" = still reading; null = go ahead. */
   blocked: string | null;
   onProduced: (result: DwAiVerbResult) => void;
 }) {
@@ -1439,9 +1020,6 @@ function LayerVerbs({
     setRunning("DOWNLOAD");
     setProblem(null);
     try {
-      // NEVER AN `<a href>`: every media route is bearer-authenticated and an anchor sends no
-      // Authorization header. The file NAME is the server's, because it is what distinguishes the
-      // speaker-labelled file from the anonymised one in a downloads folder.
       const file = await downloadDesignWorkshopSubtitles(workshopId, layer.id, format, speakers);
       saveBlobToDisk(file.blob, file.fileName);
     } catch (err) {
@@ -1451,9 +1029,6 @@ function LayerVerbs({
     }
   }
 
-  // A DECLINED ROW IS A RECORD THAT SOMEBODY SAID NO, and deriving from one would put that judgement
-  // back into a live chain. Nothing is offered on it, and the row's own "Declined" chip already says
-  // as much — so there is no sentence to add here.
   if (declined) return null;
 
   const offersVerbs = canProofread || canTranslate;
@@ -1495,25 +1070,10 @@ function LayerVerbs({
 
       {offersVerbs ? (
         layer.textWithheld ? (
-          // A GUARANTEED 403, so the reason stands where the buttons would have been.
           <p className="text-xs leading-5 text-ink-500">
             You can&apos;t access the source recording. Ask its uploader for access.
           </p>
         ) : blocked !== null ? (
-          /*
-            `!== null` AND NOT TRUTHINESS, WHICH IS THE WHOLE POINT OF THE THREE-VALUED TYPE.
-
-            `blocked` is "" while the consent is still being read, and the empty string is falsy — so
-            `blocked ?` sent that state down the ELSE arm and rendered live, pressable Proofread and
-            Translate buttons during the IndexedDB read. On a NOT_RECORDED workshop that is a press
-            into the 409 this entire ladder exists to prevent, which is the "control offered into a
-            certain refusal" this file's own rule 3 forbids.
-
-            The intent above `verbsBlocked` was SILENCE during that read, and it achieves that here
-            too: the paragraph below renders "" and draws nothing. What it did not achieve was
-            INERTNESS, and the other two call sites got it for free by feeding the same value into
-            `disabled={... || blocked !== null}` rather than into a ternary.
-          */
           <p className="text-xs leading-5 text-ink-500">{blocked}</p>
         ) : (
           <>
@@ -1522,9 +1082,6 @@ function LayerVerbs({
                 <button
                   type="button"
                   className="field-button-secondary"
-                  // `blocked` again, though this arm is only reached when it is null: the gate that
-                  // failed here lived ONLY in a render ternary, and one that also sits on the control
-                  // survives somebody restructuring that ternary. It is what the other two surfaces do.
                   disabled={running !== null || blocked !== null}
                   onClick={() => void run("PROOFREAD")}
                 >
@@ -1548,11 +1105,6 @@ function LayerVerbs({
                 <label className="field-label" htmlFor={`ai-translate-${layer.id}`}>
                   Translate into
                 </label>
-                {/* THE ELLIPSIS IS THE LITERAL CHARACTER, AND IT HAS TO BE. A JSX attribute string
-                    literal is not a JavaScript string literal: it processes no backslash escapes. So
-                    the u2026 escape form — correct in the button labels above, which are `{...}`
-                    expressions, and copied down here from them — rendered its six source characters
-                    into the box for a designer to read. Same for the mid-dot in the cue line above. */}
                 <input
                   id={`ai-translate-${layer.id}`}
                   className="field-input"
@@ -1601,17 +1153,6 @@ function LayerVerbs({
   );
 }
 
-/**
- * The reason a person took their name back off, typed inline rather than in a dialog.
- *
- * A WITHDRAWAL USUALLY HAS A REASON WORTH KEEPING — the schema's own comment gives the example, "the
- * model invented a village name" — and the reason is what stops the same layer being re-accepted by
- * somebody who was not told. `ConfirmOptions` carries no input, and bolting one into the shared
- * confirm dialog to serve one caller would change a primitive fifteen destructive handlers depend on.
- * So this is a small inline form, which also keeps the note visible while it is being written.
- *
- * Accepting, by contrast, needs no note: "I read it and it is right" is the whole message.
- */
 function WithdrawForm({
   busy,
   onCancel,
@@ -1642,7 +1183,6 @@ function WithdrawForm({
       <ActionGroup>
         <button type="button" className="field-button" disabled={busy} onClick={() => onSubmit(note)}>
           {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Undo2 className="h-4 w-4" aria-hidden />}
-          {/* Worded as well as spun — reduced motion freezes the spinner. */}
           {busy ? "Withdrawing…" : "Withdraw my acceptance"}
         </button>
         <button
@@ -1658,7 +1198,6 @@ function WithdrawForm({
   );
 }
 
-/** The structured half of a layer, drawn as what it is rather than summarised into a sentence. */
 function PayloadView({ view }: { view: NonNullable<DwAiPayloadView> }) {
   if (view.shape === "TAGS") {
     return (
@@ -1691,7 +1230,6 @@ function PayloadView({ view }: { view: NonNullable<DwAiPayloadView> }) {
       <pre className="max-h-60 overflow-auto rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-700">
         {view.json}
       </pre>
-      {/* Every truncation says so. A payload that quietly stopped would be read as the whole answer. */}
       {view.truncated ? (
         <p className="mt-1 text-xs leading-5 text-ink-500">
           Showing the start only.
@@ -1701,21 +1239,6 @@ function PayloadView({ view }: { view: NonNullable<DwAiPayloadView> }) {
   );
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Registering what the server already holds
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * The recordings whose transcripts have no layer yet.
- *
- * WITHOUT THIS THE SCREEN IS EMPTY FOR EVER on most deployments. Nothing writes a layer today —
- * generation is steps 7 and 8 of the plan — so the only rows that can exist are transcripts this
- * server produced months ago and has never attributed. That archive IS the "backlog of unattributed
- * AI text" the plan says to get provenance in ahead of, and it is one row deep.
- *
- * REGISTERING PRODUCES NO TEXT AND SPENDS NO PROVIDER CREDIT. The route reaches no model: it reads the
- * transcript the media queue already stored and records it, with its provenance, as one or two layers.
- */
 function RegisterPanel({
   items,
   failed,
@@ -1728,7 +1251,6 @@ function RegisterPanel({
   items: DwTranscriptItem[];
   failed: boolean;
   loaded: boolean;
-  /** Whether this workshop's existing layers have been read — see the call site. */
   layersKnown: boolean;
   busyMediaId: string | null;
   anyBusy: boolean;
@@ -1778,8 +1300,7 @@ function RegisterPanel({
                 <p className="text-xs leading-5 text-ink-500">
                   {item.hasTranscript
                     ? `${item.durationText} · ${item.wordCount} words${item.speakerCount > 1 ? ` · ${item.speakerCount} voices` : ""}`
-                    : // LISTED, not hidden: a designer who made six recordings and sees four concludes
-                      // two were lost, when in fact two are still in the queue.
+                    :
                       `Nothing to register yet — transcription is ${item.status.toLowerCase() || "not finished"}.`}
                 </p>
               </div>
@@ -1787,9 +1308,6 @@ function RegisterPanel({
                 <button
                   type="button"
                   className="field-button-secondary shrink-0"
-                  // Every action on the page, not only the other Register buttons: a registration
-                  // running while an acceptance is in flight would overwrite its notice and race its
-                  // refresh. See `anyBusy` in the panel.
                   disabled={anyBusy}
                   onClick={() => onRegister(item)}
                 >

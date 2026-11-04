@@ -1,14 +1,5 @@
 "use client";
 
-/**
- * /admin/duplicates/[id] — one likely-duplicate pair.
- *
- * Within this portal: choose the record to keep and a side for each field, then Merge. Every history
- * entry, file, workshop link and audit row moves to the kept record, and the merge can be undone for
- * 30 days. With the Field Repository: the two records are never merged — Link them, or say they are
- * not the same person. Admin only, web only (the `/admin` route guard and `require_admin`).
- */
-
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -365,7 +356,6 @@ function CrossPortalPair({
       </section>
       {pair.status === "OPEN" ? (
         <section className="panel grid gap-3 p-4">
-          {/* Consent: an agreement, not a setting, so a checkbox (form primitives rule). */}
           <label className="flex items-start gap-2 text-sm text-ink-700">
             <input type="checkbox" className="mt-0.5 h-4 w-4 accent-purple-700" checked={consent} onChange={(e) => onConsent(e.target.checked)} />
             The artisan agreed to share their details between the portals.

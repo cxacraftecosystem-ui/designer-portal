@@ -1,23 +1,3 @@
-"""The designer-portal form migration (UNIFY_2026-10-21.md section 3.2 and acceptance 12).
-
-Two halves:
-
-* PURE: the lineage and display-code rule (the same as the U0 migration's SQL), the statement
-  splitter for the deferred migrations, and the plan on the production-shaped fixture (2 shared
-  forms, 46 sections, 365 questions, the global 1 + 2, nothing answered).
-* DATABASE: on a throwaway database of its own (``QUESTIONNAIRE_UNIFY_DATABASE_URL``, an EMPTY local
-  database; CI's "Questionnaire unify migration" job creates it). The test migrates it to the schema
-  production runs today (everything before the U0 release), seeds realistic designer-portal data
-  (shared and private forms, a deleted form, a reworded question, sittings typed and uploaded and
-  deleted, global interviews alone, in a group and over several days, clips with and without a
-  target, byte-identical copies, an AI draft, the three section overrides, a workshop consent), and
-  then proves: the dry run on that schema writes nothing and counts what it would create; after the
-  U0 migrations the counts are the same; ``--apply`` refuses without an approved report and when the
-  choices differ; the apply keeps every id and writes the right rows; a second dry run shows 0 and a
-  second apply writes nothing; ``--undo`` restores every affected table EXACTLY and puts the keys
-  back, and refuses once native v2 content exists; and the deferred migrations then apply on top.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -44,7 +24,6 @@ U0 = "20261107090000_questionnaire_unify_additive"
 APPROVAL = "Approved-by: owner@x.test 2026-10-23"
 
 
-# ── pure ───────────────────────────────────────────────────────────────────────────────────────
 def _q(qid, sec, order, *, sup=None, created="2026-08-01T00:00:00+00:00", form="f"):
     return {"id": qid, "sectionCode": sec, "sortOrder": order, "supersededById": sup, "createdAt": created, "questionnaireId": form}
 
@@ -136,7 +115,6 @@ def test_blockers_stop_the_apply() -> None:
     assert "titled 'Same'" in text and "--default-form missing" in text and "--primary dw=a" in text and "outside the three states" in text
 
 
-# ── database ───────────────────────────────────────────────────────────────────────────────────
 needs_unify_db = pytest.mark.skipif(
     not URL or urlsplit(URL).hostname not in ("127.0.0.1", "localhost"),
     reason="QUESTIONNAIRE_UNIFY_DATABASE_URL is not set to an empty LOCAL database of its own (CI: the 'Questionnaire unify migration' job)",
@@ -144,7 +122,6 @@ needs_unify_db = pytest.mark.skipif(
 
 
 def _deploy(tmp: Path, names: list[str]) -> None:
-    """``prisma migrate deploy`` of exactly these migration folders (from prisma/migrations or prisma/deferred)."""
     root = tmp / "prisma"
     (root / "migrations").mkdir(parents=True, exist_ok=True)
     shutil.copyfile(BACKEND / "prisma" / "schema.prisma", root / "schema.prisma")
@@ -194,7 +171,6 @@ SEED = [
     "('dw1', 'Bagru block printing', 'd1', 'GRANTED', '2026-07-01 05:00', 'd1', now()), ('dw2', 'Sanganer', 'd2', 'NOT_RECORDED', NULL, NULL, now())",
     "INSERT INTO \"Artisan\" (\"id\", \"name\", \"place\", \"createdById\", \"updatedAt\") VALUES "
     "('a1', 'Giriraj', 'Bagru', 'd1', now()), ('a2', 'Meena', 'Bagru', 'd1', now()), ('a3', 'Ramesh', 'Bagru', 'd1', now())",
-    # forms: a shared interview and a private market survey on dw1, a deleted one on dw2
     "INSERT INTO \"Questionnaire\" (\"id\", \"title\", \"ownerId\", \"designWorkshopId\", \"isShared\", \"kind\", \"deletedAt\", \"deletedById\", \"createdAt\", \"updatedAt\") VALUES "
     "('f1', '2nd Craft Toolkit', 'owner', 'dw1', true, 'WORKSHOP_INTERVIEW', NULL, NULL, '2026-08-01', '2026-08-05'), "
     "('f2', 'Market survey', 'd1', 'dw1', false, 'MARKET_SURVEY', NULL, NULL, '2026-08-02', '2026-08-02'), "
@@ -213,8 +189,6 @@ SEED = [
     "('f2q1', 'f2sA', 'Who buys?', NULL, false, 1, true, NULL, NULL, NULL, '2026-08-02', '2026-08-02'), "
     "('f2q2', 'f2sB', 'At what price?', NULL, false, 1, true, NULL, NULL, NULL, '2026-08-02', '2026-08-02'), "
     "('f3q1', 'f3sA', 'Draft question', NULL, false, 1, true, NULL, NULL, NULL, '2026-08-03', '2026-08-03')",
-    # sittings: a guest typed in the app (answered by two designers, before and after a reword), a
-    # self-answered upload with long notes, and a deleted one
     "INSERT INTO \"QuestionnaireFormEntry\" (\"id\", \"questionnaireId\", \"title\", \"respondentName\", \"source\", \"notes\", \"createdById\", \"deletedAt\", "
     "\"deletedById\", \"createdAt\", \"updatedAt\") VALUES "
     "('e1', 'f1', 'Lakshmi at the dye pit', 'Lakshmi', 'APP', 'Short note', 'd1', NULL, NULL, '2026-08-04 06:00', '2026-08-06 06:00'), "
@@ -227,13 +201,11 @@ SEED = [
     "('fa4', 'e1', 'f1q4', '   ', NULL, 'd1', '2026-08-04 06:00', '2026-08-04 06:07'), "
     "('fa5', 'e2', 'f1q1', 'Block prints', NULL, 'd2', '2026-08-07 06:00', '2026-08-07 06:00'), "
     "('fa6', 'e3', 'f2q1', 'Exporters', NULL, 'd1', '2026-08-08 06:00', '2026-08-08 06:00')",
-    # the global instrument: one inactive section, three inactive questions (one reworded)
     "INSERT INTO \"QuestionnaireSection\" (\"id\", \"code\", \"title\", \"sortOrder\", \"isActive\", \"updatedAt\") VALUES ('gA', 'A', 'General', 1, false, now())",
     "INSERT INTO \"QuestionnaireQuestion\" (\"id\", \"sectionCode\", \"sectionTitle\", \"prompt\", \"sortOrder\", \"isActive\", \"sectionId\", \"supersededById\", \"createdAt\", \"updatedAt\") VALUES "
     "('g1', 'A', 'General', 'Tell us about your craft', 1, false, 'gA', NULL, '2026-06-01', '2026-06-01'), "
     "('g2', 'A', 'General', 'How long have you worked?', 2, false, 'gA', 'g2b', '2026-06-01', '2026-06-01'), "
     "('g2b', 'A', 'General', 'How many years have you worked?', 2, false, 'gA', NULL, '2026-06-02', '2026-06-02')",
-    # global interviews: alone over two days, a group at two workshops, nobody, deleted
     "INSERT INTO \"QuestionnaireInterview\" (\"id\", \"title\", \"interviewDate\", \"notes\", \"language\", \"createdById\", \"workshopId\", \"designWorkshopId\", "
     "\"artisanSetKey\", \"deletedAt\", \"createdAt\", \"updatedAt\") VALUES "
     "('i1', 'section F', '2026-07-01 04:00', 'Over two mornings', 'Hindi', 'd1', NULL, 'dw1', '||a1', NULL, '2026-07-01 04:00', '2026-07-02 08:00'), "
@@ -252,7 +224,6 @@ SEED = [
 
 SHA = "ab" * 32
 CLIPS = [
-    # id, interview, caption, extraMetadata, checksum, recordedAt, createdAt, uploader
     ("m1", "i1", "Question audio: A1 Tell us about your craft", {"questionId": "g1"}, SHA, "2026-07-01 04:30", "2026-07-01 04:31", "d1"),
     ("m2", "i1", "Section audio: A", None, None, "2026-07-02 05:00", "2026-07-02 05:01", "d2"),
     ("m3", "i1", None, None, SHA, "2026-07-02 05:30", "2026-07-02 05:30", "d1"),
@@ -284,7 +255,6 @@ SOURCES = ("QuestionnaireFormSection", "QuestionnaireFormQuestion", "Questionnai
 
 
 async def fingerprint(client) -> dict[str, str]:
-    """Every affected table and every source table, as text, hashed (those that exist yet)."""
     present = {str(r["t"]) for r in await client.query_raw(
         "SELECT table_name AS t FROM information_schema.tables WHERE table_schema = current_schema()")}
     out = {}
@@ -340,7 +310,6 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
     migrations_dir = tmp_path / "m"
     reports = tmp_path / "r"
     reports.mkdir()
-    # 1. the schema production runs today (no U0 tables), and realistic data on it
     _deploy(migrations_dir, _migrations(before=U0))
     _db(seed)
     before_dry = _db(fingerprint)
@@ -358,18 +327,15 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
     assert pre["toWrite"]["sections"] == 5 and pre["toWrite"]["questions"] == 8 and pre["toWrite"]["primaryBindings"] == 1
     pre_csv = pre_report.with_suffix(".csv").read_text(encoding="utf-8")
 
-    # --apply refuses on that schema
     code, out = _run(["--out", str(reports), "--apply", "--run-id", "early", "--approved-report", str(_approve(pre_report)), *CHOICES], capfd)
     assert code == 2 and "no U0 questionnaire tables" in out
 
-    # 2. the U0 release: the same plan, the global codes the SQL computed equal the dry run's
     _deploy(migrations_dir, _migrations())
     post, report = _dry(reports, capfd, *CHOICES)
     assert post["counts"] == pre["counts"]
     assert report.with_suffix(".csv").read_text(encoding="utf-8") == pre_csv
     assert post["toWrite"]["primaryBindings"] == 1
 
-    # 3. refusals: no report, no approval line, different choices
     code, out = _run(["--out", str(reports), "--apply", "--run-id", "one", *CHOICES], capfd)
     assert code == 2 and "--approved-report" in out
     code, out = _run(["--out", str(reports), "--apply", "--run-id", "one", "--approved-report", str(report), *CHOICES], capfd)
@@ -383,10 +349,9 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
     before = _db(fingerprint)
     idx_before = _db(indexes)
     deferred_keys = (BACKEND / "prisma" / "deferred" / unify.PREREQUISITES[0]).is_dir()
-    if deferred_keys:  # until the switch-on commit, the global keys are still there before the apply
+    if deferred_keys:
         assert {"QuestionnaireSection_code_key", "QuestionnaireSection_sortOrder_key"} <= idx_before
 
-    # 4. apply
     code, out = _run(["--out", str(reports), "--apply", "--run-id", "one", "--approved-report", str(approved), *CHOICES], capfd)
     assert code == 0 and "APPLIED run one" in out, out
     _db(check_applied)
@@ -394,7 +359,6 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
     assert "QuestionnaireSection_code_key" not in idx and "QuestionnaireSection_sortOrder_key" not in idx
     assert {"QuestionnaireSection_questionnaireId_sortOrder_key", "Questionnaire_shared_title_key"} <= idx
 
-    # 5. idempotent: the dry run shows nothing to write, a second apply writes nothing
     again, report2 = _dry(reports, capfd, *CHOICES)
     assert again["changes"] == 0, again["toWrite"]
     assert again["counts"]["sessions"] == 7
@@ -403,7 +367,6 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
     assert code == 0 and "0 changes" in out
     assert _db(fingerprint) == after
 
-    # 6. undo restores every affected table exactly, and the keys
     code, out = _run(["--undo", "--run-id", "one"], capfd)
     assert code == 0 and "UNDONE" in out, out
     assert _db(fingerprint) == before
@@ -411,7 +374,6 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
     code, out = _run(["--undo", "--run-id", "one"], capfd)
     assert code == 2 and "undone already" in out
 
-    # 7. undo refuses once native v2 content exists
     fresh, report3 = _dry(reports, capfd, *CHOICES)
     assert fresh["changes"] == post["changes"]
     code, out = _run(["--out", str(reports), "--apply", "--run-id", "three", "--approved-report", str(_approve(report3)), *CHOICES], capfd)
@@ -432,16 +394,13 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
     assert code == 0, out
     assert _db(fingerprint) == before
 
-    # 8. the switch-on and the later deferred migrations apply on top of the migrated data
     _final, report4 = _dry(reports, capfd, *CHOICES)
     code, out = _run(["--out", str(reports), "--apply", "--run-id", "four", "--approved-report", str(_approve(report4)), *CHOICES], capfd)
     assert code == 0, out
 
-    # 9. authoring still writes the old form tables: the mirror keeps the instrument tables in step
     _db(author_in_the_old_screens)
     _db(check_mirrored)
 
-    # 10. a sitting typed or edited in the old screens before the switch: a second apply takes it in
     _db(sit_in_the_old_screens)
     late, report5 = _dry(reports, capfd, *CHOICES)
     assert (late["toWrite"]["sessionsFromSittings"], late["toWrite"]["revisions"], late["toWrite"]["revisionsChangedAtSource"]) == (1, 1, 1)
@@ -460,7 +419,6 @@ def test_the_migration_dry_runs_applies_repeats_and_undoes_exactly(tmp_path: Pat
 
 async def check_applied(client) -> None:
     q = client.query_raw
-    # ids kept, sections and questions per form, the renumbered duplicate position
     secs = {r["id"]: r for r in await q('SELECT "id", "questionnaireId", "code", "sortOrder" FROM "QuestionnaireSection"')}
     assert {k: (v["questionnaireId"], v["sortOrder"]) for k, v in secs.items() if k.startswith("f")} == {
         "f1sA": ("f1", 1), "f1sB": ("f1", 2), "f2sA": ("f2", 1), "f2sB": ("f2", 2), "f3sA": ("f3", 1)}
@@ -479,7 +437,6 @@ async def check_applied(client) -> None:
     assert forms["f1"]["isDefault"] is True and forms["f2"]["isDefault"] is False and [forms[f]["sortOrder"] for f in ("f1", "f2", "f3")] == [1, 2, 3]
     bindings = {(r["questionnaireId"], r["designWorkshopId"]): r["isPrimary"] for r in await q('SELECT "questionnaireId", "designWorkshopId", "isPrimary" FROM "QuestionnaireBinding"')}
     assert bindings == {("f1", "dw1"): True, ("f2", "dw1"): False, ("f3", "dw2"): False}
-    # sittings -> sessions
     s = {r["id"]: r for r in await q('SELECT "id", "questionnaireId", "designWorkshopId", "origin"::text AS origin, "source"::text AS source, "legacyTitle", '
                                      '"title", "note", "deletedAt", "sessionDate", "sessionDateEstimated", "state"::text AS state, "workshopId", "extraMetadata" FROM "QuestionnaireInterview"')}
     assert (s["e1"]["questionnaireId"], s["e1"]["designWorkshopId"], s["e1"]["origin"], s["e1"]["source"]) == ("f1", "dw1", "LEGACY_RECONSTRUCTED", "APP")
@@ -503,7 +460,6 @@ async def check_applied(client) -> None:
     assert {r["questionLineageId"] for r in alone} == {"g1", "g2"} and {r["attribution"] for r in alone} == {"INDIVIDUAL"}
     assert {r["origin"] for r in alone if r["questionLineageId"] == "g2"} == {"MACHINE_SUGGESTED", "TYPED"}
     assert not [r for r in revs if r["sessionId"] == "i3"], "a response with nobody to own it became an answer"
-    # global interviews in place, one session each, never split
     assert sum(1 for k in s if k.startswith("i")) == 4
     assert str(s["i1"]["sessionDate"])[:10] == "2026-07-01" and s["i1"]["sessionDateEstimated"] is False and s["i1"]["legacyTitle"] == "section F"
     assert s["i2"]["workshopId"] is None and s["i2"]["sessionDateEstimated"] is True
@@ -522,12 +478,10 @@ async def check_applied(client) -> None:
     assert [(d["id"], d["recordingId"], d["questionLineageId"]) for d in drafts] == [("u5-draft-dr1", "u5-rec-m1", "g2")]
     researchers = {(r["interviewId"], r["userId"]): r["role"] for r in await q('SELECT "interviewId", "userId", "role"::text AS role FROM "QuestionnaireInterviewResearcher"')}
     assert researchers[("e1", "d1")] == "LEAD" and researchers[("e1", "d2")] == "CONTRIBUTOR" and researchers[("i1", "d2")] == "CONTRIBUTOR"
-    # the section overrides are kept as they are, the workshop consent is on the ledger
     statuses = {r["id"]: r["status"] for r in await q('SELECT "id", "status"::text AS status FROM "QuestionnaireSectionStatus"')}
     assert statuses == {"ss1": "COMPLETED", "ss2": "NEEDS_REVIEW", "ss3": "NEEDS_REDO"}
     consent = await q('SELECT "subjectId", "state"::text AS state, "actorId" FROM "Consent" WHERE "migratedFrom" = \'DesignWorkshop.dictationConsent:dw1\'')
     assert [(c["subjectId"], c["state"], c["actorId"]) for c in consent] == [("dw1", "GRANTED", "d1")]
-    # the coverage view reads the migrated takes
     view = await q('SELECT count(*) AS n FROM questionnaire_take_v WHERE "sessionId" = \'i2\'')
     assert int(view[0]["n"]) == 2
     rows = await q("SELECT \"title\" FROM \"QuestionnaireInterview\" WHERE \"id\" = 'e1'")
@@ -536,16 +490,13 @@ async def check_applied(client) -> None:
 
 async def author_in_the_old_screens(client) -> None:
     ex = client.execute_raw
-    # a new section at a position another already holds, with a question
     await ex("INSERT INTO \"QuestionnaireFormSection\" (\"id\", \"questionnaireId\", \"code\", \"title\", \"sortOrder\", \"isActive\", \"createdAt\", \"updatedAt\") "
              "VALUES ('f2sC', 'f2', 'C', 'Channels', 1, true, '2026-10-01', '2026-10-01')")
     await ex("INSERT INTO \"QuestionnaireFormQuestion\" (\"id\", \"sectionId\", \"prompt\", \"isRequired\", \"sortOrder\", \"isActive\", \"createdAt\", \"updatedAt\") "
              "VALUES ('f2q3', 'f2sC', 'Where do you sell?', true, 1, true, '2026-10-01', '2026-10-01')")
-    # a reword, the old service's way: the new wording first, then the old row points at it
     await ex("INSERT INTO \"QuestionnaireFormQuestion\" (\"id\", \"sectionId\", \"prompt\", \"sortOrder\", \"isActive\", \"createdAt\", \"updatedAt\") "
              "VALUES ('f1q4b', 'f1sB', 'Which blocks do you carve?', 1, true, '2026-10-02', '2026-10-02')")
     await ex("UPDATE \"QuestionnaireFormQuestion\" SET \"supersededById\" = 'f1q4b', \"isActive\" = false, \"retiredAt\" = '2026-10-02' WHERE \"id\" = 'f1q4'")
-    # a renamed section, a deleted question, a form made after the apply
     await ex("UPDATE \"QuestionnaireFormSection\" SET \"title\" = 'The craft today' WHERE \"id\" = 'f1sA'")
     await ex("DELETE FROM \"QuestionnaireFormQuestion\" WHERE \"id\" = 'f2q2'")
     await ex("INSERT INTO \"Questionnaire\" (\"id\", \"title\", \"ownerId\", \"updatedAt\") VALUES ('f4', 'Made after the apply', 'd1', now())")
@@ -562,7 +513,6 @@ async def check_mirrored(client) -> None:
     assert (qs["f1q4"]["supersededById"], qs["f1q4b"]["lineageId"], qs["f1q4b"]["displayCode"]) == ("f1q4b", "f1q4", "B1")
     assert qs["f1q1"]["sectionTitle"] == "The craft today" and "f2q2" not in qs
     assert (qs["f4q1"]["questionnaireId"], qs["f4q1"]["displayCode"]) == ("f4", "A1")
-    # a form deleted outright (old cleanup paths, account removal) takes its mirrored copy with it
     await client.execute_raw("DELETE FROM \"Questionnaire\" WHERE \"id\" = 'f4'")
     left = await q('SELECT count(*) AS n FROM "QuestionnaireSection" WHERE "questionnaireId" = \'f4\'')
     assert int(left[0]["n"]) == 0
@@ -597,4 +547,4 @@ async def check_deferred(client) -> None:
     gone = await q("SELECT count(*) AS n FROM information_schema.tables WHERE table_schema = current_schema() AND table_name LIKE 'QuestionnaireForm%'")
     assert int(gone[0]["n"]) == 0
     kept = await q('SELECT count(*) AS n FROM "QuestionnaireQuestion" WHERE "questionnaireId" IN (\'f1\', \'f2\', \'f3\')')
-    assert int(kept[0]["n"]) == 9  # 8 copied, f2q3 and f1q4b mirrored in, f2q2 mirrored out
+    assert int(kept[0]["n"]) == 9

@@ -6,65 +6,18 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import java.util.Locale
 
-/**
- * The stage-20 answers, resolved the way the server resolves them — the port of the report half of
- * `report_theme.py` (`resolve_accent`, `resolve_font`, `FONT_PRESETS`) and of
- * `design_workshops.report_meta` / `resolve_template_id`.
- *
- * ONE PRECEDENCE, EVERYWHERE. Every option in this file is read in the same order the whole report
- * pipeline reads everything: an explicit request wins if it said anything, the saved stage-20 answer
- * applies otherwise, and where neither spoke the template's own value stands untouched. That last
- * clause is what keeps this from restyling every report this app has ever generated the moment it
- * ships.
- *
- * AN UNKNOWN TOKEN RESOLVES TO NOTHING, never to a guess — an unknown font preset, an unknown accent
- * preset, an unknown template id. A phone or a record one release ahead of this build must not
- * silently produce a document in a typeface, a colour or a shape this build never chose.
- */
-
-// --------------------------------------------------------------------------------------
-// Reading a stage entry
-// --------------------------------------------------------------------------------------
-
-/**
- * One stage-20 value as the server's `str(raw).strip()` would read it, or "" for "nothing there".
- *
- * Only a primitive is text. An object or an array reaching a TEXT field is a corrupt record rather
- * than a title, and stringifying it would print `{"blocks":[…]}` onto the cover of a submitted
- * report — which is exactly what a naive `toString()` does to a rich-text value.
- */
 internal fun settingText(settings: Map<String, JsonElement>?, key: String): String {
     val raw = settings?.get(key) ?: return ""
     if (raw !is JsonPrimitive || raw is JsonNull) return ""
     return raw.content.trim()
 }
 
-/** A stage-20 value as a colour string, matching Python's `isinstance(value, str)` gate. */
 private fun settingHex(settings: Map<String, JsonElement>?, key: String): String? {
     val raw = settings?.get(key) ?: return null
     if (raw !is JsonPrimitive || raw is JsonNull || !raw.isString) return null
     return normaliseHex(raw.content)
 }
 
-// --------------------------------------------------------------------------------------
-// Typefaces
-// --------------------------------------------------------------------------------------
-//
-// WHAT A FONT CHOICE CAN AND CANNOT REACH ON A HANDSET, stated here because the honest answer is
-// "one of the two files", and a picker that pretended otherwise would be worse than no picker.
-//
-//   .docx  HONOURS IT. [DocxWriter] writes the family name into `w:rFonts` and Word resolves it on
-//          the machine that opens the document — which is a departmental desktop, not this phone.
-//          This is the file that is submitted and the file an officer edits, so it is the one that
-//          matters most, and it is why the setting is worth honouring at all on a device that has
-//          none of these faces installed.
-//   .pdf   DOES NOT, on this device even more absolutely than on the server. [PdfWriter] draws
-//          every run with `Typeface.DEFAULT`, because the PDF has to carry Odia, Devanagari and the
-//          rupee sign and the system face is the only one on an Android handset that can. There is
-//          no Garamond on a field phone to substitute in. So the mismatch is REPORTED as a warning
-//          rather than silently produced — see [reportWarnings].
-
-/** key -> (label, heading family, body family). `report_theme.FONT_PRESETS`, in the same order. */
 val FONT_PRESETS: Map<String, Triple<String, String, String>> = linkedMapOf(
     "DEFAULT" to Triple("Template default", "", ""),
     "CALIBRI" to Triple("Calibri", "Calibri Light", "Calibri"),
@@ -76,16 +29,8 @@ val FONT_PRESETS: Map<String, Triple<String, String, String>> = linkedMapOf(
     "GARAMOND" to Triple("Garamond (serif)", "Garamond", "Garamond"),
 )
 
-/** The answer meaning "leave the template's own typeface alone". */
 const val DEFAULT_FONT: String = "DEFAULT"
 
-/**
- * The (heading, body) families this report is set in, or null to leave the template's own.
- *
- * `uppercase(Locale.ROOT)` and not `uppercase()`: on a handset set to Turkish the default locale
- * maps "i" to "İ", so a designer whose phone is in Turkish would have "times" resolve to nothing
- * while the same record resolves on the server. The report must not depend on the device's language.
- */
 fun resolveFont(requested: String?, settings: Map<String, JsonElement>?): Pair<String, String>? {
     val candidates = listOf(requested ?: "", settingText(settings, "fontPreset"))
     for (candidate in candidates) {
@@ -97,14 +42,6 @@ fun resolveFont(requested: String?, settings: Map<String, JsonElement>?): Pair<S
     return null
 }
 
-/**
- * Which accent this report is written in, or null to leave the template's own palette alone.
- *
- * On the stage, `themeAccent` (the hex) is the authority and `themePreset` (the name) is read only
- * when it is missing. Both are stored because the name is what a designer recognises on their
- * return to the screen, but a preset whose hex this build does not know — a token from a newer
- * client — resolves to nothing rather than to a guess.
- */
 fun resolveAccent(requested: String?, settings: Map<String, JsonElement>?): String? {
     normaliseHex(requested)?.let { return it }
     settingHex(settings, "themeAccent")?.let { return it }
@@ -115,19 +52,6 @@ fun resolveAccent(requested: String?, settings: Map<String, JsonElement>?): Stri
     return null
 }
 
-/**
- * Which template this report is built from: the request, then stage 20, then the workshop header.
- *
- * STAGE 20'S OWN PICKER WAS READ BY NOTHING, on the server and then again here. "Report template" is
- * required and BASIC, so the completeness gate demands it — and both surfaces resolved the template
- * from the header alone, skipping the answer entirely. A designer worked through 22 stages, reached
- * stage 20, chose "Photo catalogue" because the form insisted, generated the report and got the DCH
- * standard one, with nothing anywhere saying the field was inert.
- *
- * AN UNKNOWN ID IS IGNORED RATHER THAN OBEYED. [reportTemplate] falls back to the DCH standard for
- * anything it does not know, which would turn "this build has not heard of that template" into
- * "your chosen template is the default" with no way to tell the two apart.
- */
 fun resolveTemplateId(
     requested: String?,
     settings: Map<String, JsonElement>?,
@@ -141,23 +65,11 @@ fun resolveTemplateId(
     return recordTemplateId.trim()
 }
 
-/** Whether this report should carry the transcript annexure — `workshop_transcripts.wants_transcripts`. */
 fun wantsTranscripts(requested: Boolean?, settings: Map<String, JsonElement>?): Boolean {
     if (requested != null) return requested
     return askedSetting(settings, "includeTranscripts") == true
 }
 
-// --------------------------------------------------------------------------------------
-// The cover and the running furniture
-// --------------------------------------------------------------------------------------
-
-/**
- * What the workshop header knows about itself.
- *
- * The server reads these from the database row; this device reads them from the draft's own title
- * and from stage 1, which is where the designer typed them. The field names are the server's so the
- * two can be read side by side — this is `design_workshops.report_meta`'s `record`.
- */
 data class ReportRecord(
     val id: String,
     val title: String,
@@ -173,15 +85,6 @@ private val MONTHS = listOf(
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 )
 
-/**
- * `2026-02-10` -> `10 Feb 2026`. Unparseable input is printed verbatim — `report_builder._format_date`.
- *
- * THE NEGATIVE INDEX IS PART OF THE CONTRACT AND IS NOT A BUG BEING COPIED FOR FUN. Python's
- * `_MONTHS[month - 1]` with a month of 0 reads the LAST element, so the server prints "05 Dec 2026"
- * for "2026-00-05". A port that bounds-checked instead would print the string verbatim, and the
- * cover of the phone's copy and the office's copy would name different months for the same record.
- * The pinned case table carries that exact date.
- */
 fun formatReportDate(iso: String): String {
     val parts = iso.trim().take(10).split("-")
     if (parts.size != 3) return cleanText(iso)
@@ -194,14 +97,6 @@ fun formatReportDate(iso: String): String {
     return String.format(Locale.ROOT, "%02d %s %d", day, name, year)
 }
 
-/**
- * "Submitted to X on 4 March 2031" — stage 20's two addressee fields, on the cover.
- *
- * Both were stored on this device and printed nowhere. A designer filled in "Submitted to" and a
- * submission date and the generated document named neither: the one page of the report whose job is
- * to say who it is for said nothing about who it is for. One line because they are one fact, and
- * each half stands alone when the other is blank.
- */
 fun submissionLine(settings: Map<String, JsonElement>?): String {
     val to = settingText(settings, "submittedTo")
     val on = settingText(settings, "submissionDate")
@@ -211,17 +106,6 @@ fun submissionLine(settings: Map<String, JsonElement>?): String {
     return if (whenText.isNotEmpty()) "Submitted on $whenText" else ""
 }
 
-/**
- * The cover page and the running furniture — `design_workshops.report_meta`.
- *
- * Every value stage 20 can carry is an OVERRIDE of something derived from the record, and each one
- * falls back to exactly what this produced before the overrides existed, so a workshop that never
- * opened stage 20 gets the same cover it always got.
- *
- * "Report title" was the worst of the ignored ones. A designer whose workshop is recorded as
- * "DPDW Barpali Jan-26" and who typed a proper title for the submitted document watched the report
- * print the internal shorthand, every time, with no indication that the field was inert.
- */
 fun reportMetaFor(
     record: ReportRecord,
     templateId: String,
@@ -237,9 +121,6 @@ fun reportMetaFor(
         else -> ""
     }
 
-    // The page size is an enum on the wire and a free string in the stored entry, so an unknown
-    // token falls back rather than throwing: a report that prints on the wrong paper is a nuisance,
-    // and a report that refuses to print because a phone sent "A4 " is a lost afternoon.
     val requestedSize = settingText(settings, "pageSize")
     val pageSize = PageSize.entries.firstOrNull { it.name == requestedSize } ?: template.pageSize
 
@@ -263,42 +144,16 @@ fun reportMetaFor(
     )
 }
 
-// --------------------------------------------------------------------------------------
-// What this device can and cannot do with the answers — the ledger
-// --------------------------------------------------------------------------------------
-
-/** How far a stage-20 answer reaches on THIS device. */
 enum class SettingReach {
-    /** Honoured in both files, the same way the server honours it. */
     APPLIED,
 
-    /** Honoured in the .docx and impossible in the .pdf. The designer is told, per export. */
     DOCX_ONLY,
 
-    /** Not honoured at all here. The designer is told whenever the answer would have mattered. */
     NOT_ON_DEVICE,
 }
 
-/** One stage-20 key and what actually becomes of it on this device. */
 data class SettingSupport(val key: String, val reach: SettingReach, val note: String)
 
-/**
- * EVERY key the registry declares for stage 20's `reportSettings`, with what this device does with
- * it. `ReportSettingsLedgerTest` asserts this list against the shipped registry in both directions.
- *
- * THE LIST IS THE POINT, not the documentation. A setting that is neither applied nor named here as
- * unsupported is exactly the bug this whole area exists to end: a switch the form saves, the sync
- * carries and the report ignores, which a designer discovers — if ever — by comparing their file
- * with the office's. The test fails the build when the registry gains a key nobody decided about,
- * so the decision cannot be skipped by forgetting.
- *
- * WHAT THIS LEDGER CANNOT SEE, recorded here because it was the largest on-device gap and it has no
- * row: the locator MAP and the front-page INFOGRAPHICS are not stage-20 switches at all. They are
- * template sections — DCH_STANDARD, the default, carries both — so no entry below could ever have
- * named them and a reader working down this list would have concluded the file was complete. They
- * are built now; the map's artisan pins are the one part that is not, for a reason that is about the
- * DATA on this handset and not the drawing (see `renderMap`).
- */
 val STAGE_20_SETTINGS: List<SettingSupport> = listOf(
     SettingSupport("templateId", SettingReach.APPLIED,
         "Chooses the template: which sections print, in what order, under what heading, at which " +
@@ -353,70 +208,14 @@ val STAGE_20_SETTINGS: List<SettingSupport> = listOf(
     SettingSupport("submissionDate", SettingReach.APPLIED, "The cover's submission line."),
 )
 
-/**
- * The special sections this device cannot build, each with the sentence said to the designer at
- * export — or null, where the section is simply not drawn here and nothing is said about it.
- *
- * A section absent from this map is one [buildWorkshopDocument] emits. Keeping the two together
- * means a section that becomes renderable is deleted from here in the same edit, and one that never
- * was cannot be quietly forgotten.
- *
- * THE NULL ENTRY IS A GAP, NOT A DECISION. The machine-assisted text annexure is not built on a
- * handset; customer-facing copy does not narrate that (2026-10-10). The transcript annexure left this
- * map when the phone gained a copy of the transcripts (DA-29) — see `DwTranscriptStore`.
- */
 val UNSUPPORTED_SECTIONS: Map<SpecialSection, String?> = mapOf(
-    // THE ANNEXURE IS DRAWN ON THIS DEVICE NOW — see `renderQuestionnaireAnnexure` — and this entry
-    // survives because it stopped being universally true rather than because it stopped being true.
-    // `DwQuestionnaireStore` holds the answers this handset has been shown, and the section prints
-    // from that copy; but a handset that has never once read this workshop's questionnaire list holds
-    // nothing, and for that state the old sentence is still the honest one. So the entry stays and is
-    // GUARDED, exactly as the transcript entry is, by the one thing that decides it — see
-    // [unsupportedSectionsIn] and [DwQuestionnaireCopy].
-    //
-    // ITS REASON HAS CHANGED AND IS REWRITTEN ACCORDINGLY. "This device keeps no copy of them" was
-    // the root cause and is now false; leaving it would send a designer to wait for the office over a
-    // gap they can close themselves in one tap with a bar of signal. What remains true is the
-    // conditional PHRASING, and for the reason it always had: attaching the questionnaire IS the
-    // request, there is no stage-20 switch to guard it with, and a device that has never read the
-    // list cannot tell an unattached workshop from an attached one. An unconditional "the answers are
-    // missing from this file" would be a false alarm on the majority of exports, which is how a
-    // designer learns to stop reading warnings.
     SpecialSection.ANNEXURE_QUESTIONNAIRES to
         "If a questionnaire is attached to this workshop, its answers are not in this file. Open " +
             "the questionnaire on this phone once while you have a connection, and its answers are " +
             "included in every report made here afterwards, even offline.",
-    // Not drawn on a handset, and not narrated — see the KDoc above.
     SpecialSection.ANNEXURE_AI_LAYERS to null,
 )
 
-/**
- * Which of [template]'s special sections this build does not draw, in the template's own order.
- *
- * ONE WALK, TWO READERS — [reportWarnings] and [fieldCopyNote]. They were written separately at
- * first and immediately disagreed about the transcript annexure, which every template carries and
- * which prints nothing at all unless the designer asked for it: the warning was correctly silent and
- * the note in the file was not, so a report nobody had asked transcripts for carried a line
- * apologising for their absence.
- *
- * Driven by the sections the RESOLVED template actually carries, not by the stage-20 toggles: those
- * switches only ever REMOVE a section, so a toggle turned on for a template that does not carry that
- * annexure changes nothing on the server either and must not be reported here.
- *
- * TWO GUARDS NOW, ONE PER ANNEXURE, and neither is a preference. The transcript one is the designer's
- * own `includeTranscripts` answer. The questionnaire one is [questionnaires]: what this handset
- * actually holds for this workshop. Both exist to stop a warning that is true in general from being
- * printed in the cases where it is false, which is the failure mode a warning nobody reads comes
- * from.
- *
- * @param questionnaires what this device can say about the questionnaires attached to this workshop.
- *   [DwQuestionnaireCopy.UNKNOWN] — the default, and the honest answer for any caller that has not
- *   consulted `DwQuestionnaireStore` — keeps the conditional warning. Told that the answers are here
- *   ([DwQuestionnaireCopy.ATTACHED]) or that there are none to have
- *   ([DwQuestionnaireCopy.NONE_ATTACHED]), it drops: in the first case the annexure prints, and in the
- *   second there is nothing anywhere to print, so warning about either would be disowning a section
- *   the designer is in fact getting.
- */
 internal fun unsupportedSectionsIn(
     template: ReportTemplate,
     settings: Map<String, JsonElement>?,
@@ -434,53 +233,10 @@ internal fun unsupportedSectionsIn(
     return found
 }
 
-/**
- * The cover's provenance line: where and when this file was made.
- *
- * [template] and [settings] are no longer read: the line used to go on to list the sections this
- * copy lacked, and a document handed to an officer does not narrate gaps (2026-10-10). They stay in
- * the signature so no caller has to change.
- *
- * WHAT THIS ENDS. The officer handed the phone's PDF read it as THE report. Same cover, same running
- * foot, a self-consistent contents page — and nothing anywhere in it said which of the two copies of
- * that workshop was in their hands. `ReportScreen` exists partly so an office can match a delivered
- * file against its export log, and if the two copies are ever compared, a section present in one and
- * absent from the other with neither file admitting it looks like the designer altered the document.
- * Offline it is worse: the export-log call is best-effort, so the log the office would check is
- * empty.
- *
- * IT REPLACES the server's "Generated on <date>" in the same cover slot rather than being added
- * beside it, and carries the same date. One provenance line where the office's copy has one; the
- * whole of the divergence between the two lines is the fact that makes this one worth printing.
- *
- * IT IS NOT A WARNING AND MUST NOT READ AS ONE. `ReportPlan.warnings` are advisory, dismissible and
- * shown beside the file — they belong to the act of generating and are gone by the time the document
- * is read. This is a statement of fact about the file, addressed to its reader, and it shortens by
- * itself as the sections above land: when [unsupportedSectionsIn] is empty it says only where and
- * when the file was made.
- *
- * A COVER FOOTER LINE, not a heading, so it never enters the table of contents and never renumbers
- * anything.
- */
 fun fieldCopyNote(
     template: ReportTemplate,
     settings: Map<String, JsonElement>?,
     generatedOn: String,
-    /**
-     * The handset could not read the workshop from the server while building this file, so it holds
-     * only what that handset itself had. See `ReportPlan.serverCopyUnread`.
-     *
-     * THE SAME KIND OF FACT AS THE SENTENCE BELOW IT and it belongs in the same slot for the same
-     * reason: what separates this copy from the office's is exactly what makes a provenance line
-     * worth printing. A device-only export is the largest such difference there is — a workshop of
-     * twenty-two stages can come out as three — and it is the one the reader cannot detect from the
-     * file, because a short report is internally consistent: right cover, right contents, fewer
-     * sections. The screen says so to the designer; only this says so to the officer.
-     *
-     * Defaulted false so that every caller that has no way to know keeps the sentence off. Saying
-     * "some of this may be missing" over a file that is whole would make the line noise, and a
-     * provenance line nobody believes is worse than none.
-     */
     serverCopyUnread: Boolean = false,
 ): String {
     val stamp = if (generatedOn.isBlank()) "" else " on $generatedOn"
@@ -490,33 +246,15 @@ fun fieldCopyNote(
     return made + unread
 }
 
-/**
- * What to tell the designer about the file they are about to hand over.
- *
- * SILENCE IS THE FAILURE MODE. A setting that cannot be honoured must be named — the server says
- * the same things through `X-Report-Warnings` — because a difference the designer is told about is
- * a decision they can take (send the .docx instead, generate the office copy later) and the same
- * difference unmentioned is a defect they will be blamed for by whoever notices it first.
- *
- * Advisory only. Nothing here blocks an export; the file is written either way.
- */
 fun reportWarnings(
     requestedTemplateId: String,
     template: ReportTemplate,
     settings: Map<String, JsonElement>?,
     format: String,
-    /**
-     * What this device holds about this workshop's questionnaires; see [unsupportedSectionsIn].
-     *
-     * DEFAULTED TO UNKNOWN so that a caller which has not looked keeps the conditional warning rather
-     * than silently promising an annexure it has nothing to draw. The report screen looks.
-     */
     questionnaires: DwQuestionnaireCopy = DwQuestionnaireCopy.UNKNOWN,
 ): List<String> {
     val said = ArrayList<String>()
 
-    // The substitution warning `build_report` raises: a record naming a template this build has
-    // retired still prints, and the designer is told which one it actually came out as.
     if (requestedTemplateId.isNotEmpty() && requestedTemplateId != template.id) {
         said += "Template '$requestedTemplateId' is not available, so the report was generated " +
             "with '${template.name}' instead."
@@ -528,9 +266,6 @@ fun reportWarnings(
             "print correctly. The Word document uses ${fonts.second}."
     }
 
-    // [unsupportedSectionsIn] carries the "which sections" judgement, including the reason the
-    // transcript annexure is conditional: every template carries it and it prints nothing unless the
-    // designer asked for it, so warning unconditionally would put a false alarm on every export.
     for (special in unsupportedSectionsIn(template, settings, questionnaires)) {
         val reason = UNSUPPORTED_SECTIONS[special] ?: continue
         if (said.none { it == reason }) said += reason

@@ -4,10 +4,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/**
- * The Places | Coverage answer lasts one sign-in session: another account on the same phone is asked
- * again, and signed out nothing is kept.
- */
 class CoverageEntitlementTest {
     @Test
     fun answerIsKeptForItsSessionOnly() {

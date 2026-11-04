@@ -9,11 +9,6 @@ import { reviewEditableFields } from "@/components/review/reviewEditFields";
 import { addCraftHref, safeReturnPath } from "@/lib/craftAddDraft";
 import type { DwField } from "@/lib/designWorkshops";
 
-/*
-  THE CRAFT FINDINGS OF 2026-10-20 (REQUIREMENTS_2026-10-20 §2.4–§2.6), held as pure calls and
-  source reads: there is no React renderer in this repository.
-*/
-
 const ROOT = join(__dirname, "..");
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8").replace(/\r\n/g, "\n");
 
@@ -40,7 +35,6 @@ test.describe("Add it to the list saves the form's draft first", () => {
       expect(source, file).toContain("onLeave={resetDirty}");
     }
     const boundary = read("components/forms/CraftAddDraftBoundary.tsx");
-    // The anchor is caught before it navigates: a plain navigation would fire the unload prompt.
     expect(boundary).toContain("onClickCapture");
     expect(boundary).toContain("event.preventDefault()");
     expect(boundary).toContain("writeCraftAddDraft(");
@@ -66,9 +60,7 @@ test.describe("no typed craft on the review edit or on stage 1", () => {
     const craftName = { key: "craftName" } as DwField;
     const craftRef = { key: "craftRef", refModel: "Craft" } as DwField;
     expect(stageCraftNameLocked({ fields: [craftName, craftRef] }, craftName)).toBe(true);
-    // A craft name copied from a tool or product record has no craft link beside it.
     expect(stageCraftNameLocked({ fields: [craftName] }, craftName)).toBe(false);
-    // The handset says the same words.
     const android = readFileSync(
       join(ROOT, "..", "android", "app", "src", "main", "java", "com", "designprototype", "workshop", "ui", "designworkshop", "FieldRenderer.kt"),
       "utf8"

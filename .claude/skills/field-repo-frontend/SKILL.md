@@ -9,6 +9,12 @@ This file is the **contract**, not a summary. It exists so a change can be made 
 re-reading twenty components, and every number in it was read off the code. Where a rule looks odd,
 the reason follows it — those reasons are almost always a bug that shipped once.
 
+**No comments, ever (owner rule, 0.0.10).** No source file in this repository carries a comment or a
+docstring, in any language: TypeScript, Kotlin, Python, shell, YAML, XML, CSS. Checks runs
+`python scripts/tools/strip_comments.py --check` and fails on a new one. A reason, an invariant or a
+trap goes in `docs/` (the traps in `docs/INVARIANTS.md`), in this document, or in the commit message;
+never above the code. Names carry the meaning a comment used to.
+
 **Sources of truth, in this order.** `frontend/tailwind.config.ts` + `frontend/app/globals.css` own the
 visual language. **Android owns wording and information architecture**
 (`D:\Portal_Development_Designer\android`). The backend owns permissions
@@ -261,10 +267,8 @@ waived:
   confirming button inside a dialog is the second half of the act whose trigger the reader just
   pressed on the page, and an unstamped overlay ships one action in two accent colours.
 
-⚠ **Two comments outside this document still describe the pre-ruling world** —
-`tailwind.config.ts`'s `ministry` block ("`.field-button`, `.field-input`, the focus ring … are
-UNTOUCHED") and `ministrySurface`'s docstring in `lib/permissions.ts` ("FOUR routes carry the flag
-today"). Read `globals.css` and the guard table, not either of those.
+The source carries no comments since 0.0.10, so `globals.css` and the guard table are the only
+statement of this ruling.
 
 ---
 
@@ -811,9 +815,9 @@ translate class — see §9.6. `inset-y-6` lines the track's ends up with the fi
 
 ```tsx
 <ol className="relative grid gap-4 [--guide-rail:2rem] sm:[--guide-rail:3rem]">
-// card: grid grid-cols-[var(--guide-rail,2rem)_minmax(0,1fr)] gap-x-4
-// bubble: a grid item in column 1 with justify-self-center
 ```
+Each card is `grid grid-cols-[var(--guide-rail,2rem)_minmax(0,1fr)] gap-x-4`; each bubble is a grid
+item in column 1 with `justify-self-center`.
 Track, fill, node and every numbered bubble share one centre line **by construction**. This replaced three
 independent guesses reconciled by `-translate-x-1/2` — a three-way agreement that had to be re-derived
 by hand every time a size or breakpoint moved, and had already broken. The `,2rem` fallback keeps a
@@ -976,10 +980,10 @@ Clicking a mark is obvious on the graphic and invisible in the list, so:
 
 ```ts
 const { registerRow, containerRef, reveal, flashKey } = useRevealRow();
-// container: <div ref={containerRef as React.RefObject<HTMLDivElement>} className="… lg:overflow-y-auto …">
-// row:       <div ref={registerRow(key)} data-flash={flashKey === key ? "true" : undefined} className="fr-flash-row …">
-// trigger:   reveal(key)
 ```
+The container takes `ref={containerRef as React.RefObject<HTMLDivElement>}` with `lg:overflow-y-auto`;
+each row takes `ref={registerRow(key)}`, `data-flash={flashKey === key ? "true" : undefined}` and
+`fr-flash-row`; `reveal(key)` triggers it.
 - `FLASH_MS = 1400` — long enough to be seen after a smooth scroll, short enough not to read as a
   persistent selected state (the row has its own permanent selected styling).
 - `EDGE_PADDING = 24` — the slack that decides "already visible", so a row peeking in by 3px still
@@ -1169,7 +1173,7 @@ default offset 6, `CLOSE_ON_SCROLL_GRACE_MS 600`. Data attributes: `data-anchore
   gender, tier, units) and only accidentally for a list of rows: crafts are nine here, three on a new
   pilot, forty next year, so with the count in charge the same control gains and loses its filter box
   as the repository fills. **Options from a fetched list → pass `searchable`. Options from a constant
-  → leave it alone** (and say so in a comment when the asymmetry is visible on one screen).
+  → leave it alone**.
   `searchable={false}` overrules a long list on purpose — **and a call site that does MUST pass a
   `capHint`**, because the render cap still bites: the footer's default last clause is "Keep typing to
   narrow the list", which on a panel with no filter box instructs the reader to use a control that is
@@ -1391,10 +1395,9 @@ subtlety below is a bug already paid for once.
 - **Android has TWO renderers of this gesture, not one** — true as of 2026-08-27; re-check with
   `grep -rln detectDragGestures android/app/src/main/java`. `ui/designworkshop/DwRankableList.kt` is
   the design-review cards, and the collection rows inside `ui/designworkshop/StageScreen.kt` are the
-  handset's counterpart of `EntityForm`. Both carry the same five rules. `DwRankableList` says in a
-  comment why it uses `detectDragGestures` on a dedicated grip rather than
-  `detectDragGesturesAfterLongPress` on the row — the row there is a whole review card with a
-  five-way control and two text boxes in it — and `StageScreen` PORTS the arithmetic rather than
+  handset's counterpart of `EntityForm`. Both carry the same five rules. `DwRankableList` uses
+  `detectDragGestures` on a dedicated grip rather than `detectDragGesturesAfterLongPress` on the
+  row because the row there is a whole review card with a five-way control and two text boxes in it, and `StageScreen` PORTS the arithmetic rather than
   calling it, because `DwRankableList` renders a ~162dp leading rail that would multiply the scroll
   length of a nine-row costing table. (Before that date this bullet named only the first, and a
   reader comparing the stage forms would have concluded the handset had no grip on the screen that
@@ -2456,7 +2459,8 @@ which names the ARRAY and not the sentence, and sends the next reader looking fo
 brace that does not exist. **That failure actually happened during this change**, to the very
 paragraph that was documenting the rule. (The Python one never strips comments at any point — it is
 a bare substring assertion over the raw source — so a predicate name written in a comment there
-fails it exactly as a real call site would.)
+fails it exactly as a real call site would.) The source has carried no comments since 0.0.10, so today
+the trap can only be sprung by a string literal; the rule stands.
 
 **Menu extras** (in `NAV_ITEMS`, no tile): Walkthrough · My questionnaires · My Activity · Browse
 records · Assign tools to artisans · Review · Cross-workshop analytics (admin) · Settings — the
@@ -2550,9 +2554,6 @@ Android already ships. **Never "restore parity" by deleting a tile on the streng
 `DashboardTileParityTest` is the register, it fails in both directions, and a card there with no web
 tile is a destination a designer can find on their phone and not on the laptop they write the report
 on. If you are about to write another such claim, write the GREP that settles it beside the claim.
-⚠ The `tiles` array's own comment still carries the four-cards-missing world in full ("AND FOUR OF
-THESE TILES HAVE NO ANDROID *CARD*") — **outside this document, now stale, not mine to edit.** Read
-the Kotlin, not that prose.
 
 Grid: `grid-cols-2 md:grid-cols-3` — 2 per row on phones, 3 on tablets and laptops.
 Card anatomy (Android `DashboardActionCard`): white `rounded-2xl` card, small dark-purple icon tile
@@ -2581,7 +2582,8 @@ placeholder or a "coming soon" toast.
 **When a feature lands on both clients**, the shared vocabulary must come from the **server**
 (`rungCopy`, `reasonCopy`, `childLevel`, `levels`, `overridesAreRepositoryWide` …) so the two cannot
 describe one decision differently. Where a platform genuinely differs — hover does not exist on a
-phone; a phone has no room for two panes — say so in a comment and pick the equivalent moment or shape,
+phone; a phone has no room for two panes — record the difference in the feature's row in
+`shared/questionnaire-features.json` (or in this document) and pick the equivalent moment or shape,
 never a paraphrase of the copy.
 
 ---
@@ -2612,8 +2614,6 @@ Each of these looks wrong and is deliberate. Most were a shipped bug.
 - **"Surface accent only — no orange on any action control" was OVERRULED on 2026-09-20** (§3.7).
   The ministry block now repaints `.field-button`, `.field-button-secondary`, `.field-input`,
   `.file-trigger` and `.section-band` as well as the header chip and the eyebrow.
-  `tailwind.config.ts`'s ramp comment and `ministrySurface`'s docstring still say otherwise — stale,
-  and outside this document.
 - **`shadow-cta` cannot be scoped.** It is a Tailwind token compiled to a utility class, not a custom
   property, so no `[data-surface="ministry"]` rule re-points it and an orange button spending it
   throws a purple glow. Spend `shadow-cta-ministry` (§4) on a ministry surface.
@@ -2779,8 +2779,8 @@ Each of these looks wrong and is deliberate. Most were a shipped bug.
   the document is assembled server-side and nothing under `frontend/` or `android/` ever sees the
   result, so a claim about it cannot be verified from the surface you are writing on.
 - **The authority is three files.** `backend/app/services/report_templates.py` — `SpecialSection`
-  (:45) is the complete list of things a report can contain, and each member's own comment says what
-  it prints **and when it prints nothing**; `TEMPLATES` (:360) says which of the six templates
+  (:45) is the complete list of things a report can contain, and `report_builder.py` shows what
+  each member prints **and when it prints nothing**; `TEMPLATES` (:360) says which of the six templates
   carries which. Then `report_builder.py` for what a section actually renders, and
   `report_annexures.py` for the transcript blocks. Two members are carried by **no** template
   (`ANNEXURE_AI_LAYERS`, `CUSTOM_SECTION`, spliced in per report), so "the report has X" can be
@@ -2801,15 +2801,8 @@ Each of these looks wrong and is deliberate. Most were a shipped bug.
   closed", an error that names the array and not the sentence. The array's ORDER is pinned on both
   clients; the four-mega-card grouping is a `group` scalar regrouped at render time, precisely so
   that nothing had to move.
-- **Kotlin block comments NEST, unlike Java's.** So an unbalanced `/*` anywhere inside a KDoc — and
-  the one that bites is a mime wildcard, `image/*` or `*/*`, written out in prose — opens a second
-  comment, the block's own `*/` closes only that one, and the outer comment swallows the rest of the
-  file. The failure is a compile error a long way from the sentence you typed, and on a 900-line
-  screen file it does not read as a comment problem at all. The tree's own convention is to write the
-  concept in words — "the match-anything wildcard" (`QuestionnaireBundle.kt`), "the image wildcard is
-  in the picker's list" (`DesignerProfileScreen.kt`) — and where an opener really must appear it is
-  **closed on the same line**, which is why `MainActivity.kt`'s quoted `` `/** Right-side navigation
-  drawer …*/` `` compiles. Same rule for a glob or a regex in a comment: balance it or reword it.
+- **No KDoc, no comments.** The Kotlin tree carries none since 0.0.10 and Checks fails on a new one.
+  A mime wildcard such as `image/*` belongs in a string literal, where it is safe.
 
 ---
 
@@ -2876,7 +2869,8 @@ think to check are the ones that have shipped as "the feature is still not there
 ### New cross-client feature
 - [ ] wording, order and copy come from the **server**, not from each client
 - [ ] both clients gate on the same predicate, mirroring `deps.py`
-- [ ] platform differences are commented, not paraphrased
+- [ ] platform differences are recorded in the parity registry or this document, not paraphrased
+- [ ] no comments or docstrings added (`python scripts/tools/strip_comments.py --check`)
 - [ ] `npm run typecheck && npm run lint` (frontend) · `ruff check app && pytest -q` (backend) ·
       `./gradlew.bat :app:compileDebugKotlin` (Android)
 
@@ -2895,14 +2889,14 @@ label already says it. Calm and plain — a careful product designer, not a chat
 
 - **Remove:** how the software works, history and rationale, hedging, repeating the label,
   multi-sentence paragraphs, internal terms ("the server", "this device's store", endpoints, record
-  ids), and gap admissions. The reasoning belongs in a code comment, not on the screen.
+  ids), and gap admissions. The reasoning belongs in `docs/`, not on the screen and not in a code comment.
 - **Keep, tightened:** legally or operationally required wording (Aadhaar, dictation and recording
   consent, data handling), validation messages (short and specific), the numbers and dates a person
   needs, and the *meaning* of any warning that prevents data loss.
 - **Offer the next step as a control, not a paragraph.** A refusal that names a fix gets a link or a
   button with that fix as its label.
 - Rule 10 still holds — a cap or a truncation is stated — in a few words ("Showing the latest 200.").
-- **Shorten, never drop, the fact a test pins.** When a spec's comment says why a clause matters
+- **Shorten, never drop, the fact a test pins.** When a spec pins why a clause matters
   (which date orders a list, that counted files may not be listed, that a refusal comes from an
   admin-only gate), keep the clause in short form and keep the assertion. A sentence that is held
   byte-for-byte against the server or Android (route-guard refusals, §3.5's list-state sentences,
@@ -2938,8 +2932,8 @@ and `false` ignored) and lays them out:
 - In a row that also holds a status line, wrap only the buttons:
   `<ActionGroup className="max-sm:w-full">…</ActionGroup>` and keep the status outside it.
 - Not a button row, and left alone: a single button aligned to the bottom of a form grid cell
-  (`flex items-end`), toolbars, toggles, selects, segmented tabs and the calendar. Say so in a
-  one-line comment at the row ("a pager, not an action row") so the next sweep does not re-flag it.
+  (`flex items-end`), toolbars, toggles, selects, segmented tabs and the calendar. Add such a row to
+  this list, not a comment at the row, so the next sweep does not re-flag it.
 - Android's twin is `ActionRow` (`ui/ActionRow.kt`), with the same three rules: compact means the
   row's own width is under 600dp (measured, not the window size class); mark destructive actions
   with `Modifier.destructiveAction()`, and put only the buttons inside it — status text stays outside.

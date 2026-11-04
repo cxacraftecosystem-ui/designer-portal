@@ -20,27 +20,6 @@ import {
   type GreyPlane
 } from "../lib/imageQuality";
 
-/**
- * Calibration and unit tests for lib/imageQuality.ts.
- *
- * WHY THE IMAGES ARE GENERATED AND NOT CHECKED IN. A threshold test that leans on binary fixtures
- * rots quietly: nobody can see what changed in a .jpg in a diff, and a fixture re-saved by an image
- * editor moves every score in the suite with no visible cause. Everything measured below is drawn
- * from code — a deterministic pattern, a box blur of that same pattern, a seeded 1/f noise field —
- * so the numbers can be re-derived from the source alone.
- *
- * WHY THE SCORES ARE ASSERTED AND NOT JUST THE BOOLEANS. `expect(isBlurred(sharp)).toBe(false)`
- * passes for a threshold of 1 and for a threshold of 100000; it proves nothing about where the line
- * is. The assertions below pin the measured VALUES and the gap between the sharp and blurred
- * populations, so the test fails if the measurement drifts even while the verdicts happen to survive
- * — which is the only way a threshold test is worth running.
- */
-
-// ---------------------------------------------------------------------------
-// Deterministic image generation (pure, no browser)
-// ---------------------------------------------------------------------------
-
-/** Mulberry32 — a tiny seeded PRNG, so "noise" is the same noise on every machine and every run. */
 function seededRandom(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -60,7 +39,6 @@ function plane(width: number, height: number, fill: (x: number, y: number) => nu
   return { data, width, height };
 }
 
-/** Hard-edged checkerboard: the highest-frequency content an 8-bit image can carry at this cell size. */
 function checkerboard(width: number, height: number, cell: number, amplitude = 255): GreyPlane {
   const mid = 128 - amplitude / 2;
   return plane(width, height, (x, y) =>
@@ -68,19 +46,9 @@ function checkerboard(width: number, height: number, cell: number, amplitude = 2
   );
 }
 
-/**
- * A 1/f ("pink") noise field — the standard statistical model of a natural photograph.
- *
- * This matters more than the checkerboard for calibration. Real photographs have most of their
- * energy at low spatial frequencies and comparatively little at the top of the band, so a synthetic
- * pattern made of hard edges scores an order of magnitude higher than any camera ever will. Setting
- * a threshold against checkerboards alone would put the line far above where real photographs live,
- * and every real photograph would be reported as blurred.
- */
 function pinkNoise(width: number, height: number, seed: number, amplitude = 1): GreyPlane {
   const random = seededRandom(seed);
   const field = new Float64Array(width * height);
-  // Sum successively finer octaves at successively lower weight: amplitude ∝ 1/frequency.
   for (let octave = 0; octave < 7; octave += 1) {
     const step = 1 << (6 - octave);
     const weight = 1 / (octave + 1);
@@ -96,7 +64,6 @@ function pinkNoise(width: number, height: number, seed: number, amplitude = 1): 
         const gx = x / step;
         const x0 = Math.floor(gx);
         const fx = gx - x0;
-        // Bilinear interpolation between lattice points — a smooth octave, not blocky noise.
         const a = grid[y0 * cols + x0];
         const b = grid[y0 * cols + x0 + 1];
         const c = grid[(y0 + 1) * cols + x0];
@@ -120,12 +87,6 @@ function pinkNoise(width: number, height: number, seed: number, amplitude = 1): 
   });
 }
 
-/**
- * A separable box blur of `radius`, applied `passes` times.
- *
- * Three passes of a box blur is the standard cheap approximation of a Gaussian, so this produces a
- * defocus that looks like a real one rather than the directional smear a single pass gives.
- */
 function boxBlur(source: GreyPlane, radius: number, passes = 3): GreyPlane {
   let current = source;
   for (let pass = 0; pass < passes; pass += 1) {
@@ -153,23 +114,11 @@ function boxBlur(source: GreyPlane, radius: number, passes = 3): GreyPlane {
   return current;
 }
 
-/** The working size every measurement is taken at, so the numbers below are the real ones. */
 const W = WORK_EDGE_PX;
 const H = Math.round((WORK_EDGE_PX * 3) / 4);
 
-// ---------------------------------------------------------------------------
-// The measured corpus
-// ---------------------------------------------------------------------------
-
 test.describe("imageQuality — measured calibration of the blur threshold", () => {
   test("sharp and blurred populations are separated by more than an order of magnitude", () => {
-    /**
-     * The 1/f fields are the population that decides the threshold, because they are the only ones
-     * here with the spatial statistics of a photograph. The checkerboards are kept as a synthetic
-     * CEILING — they show how much headroom exists above a real photograph — and deliberately take
-     * no part in the assertions: a hard checkerboard softened by one pixel is not a blurred
-     * photograph, it is a slightly softer checkerboard, and it still scores in the thousands.
-     */
     const realistic = { photoLike: pinkNoise(W, H, 1337), photoLikeAlt: pinkNoise(W, H, 90210) };
     const synthetic = { checkerboard8: checkerboard(W, H, 8), checkerboard4: checkerboard(W, H, 4) };
 
@@ -181,8 +130,6 @@ test.describe("imageQuality — measured calibration of the blur threshold", () 
       )
     );
 
-    // Printed so a future reader can see the corpus this threshold was actually set against,
-    // without having to re-derive it.
     console.log("SHARP (photo-like) ", JSON.stringify(sharpScores));
     console.log("BLURRED            ", JSON.stringify(blurredScores));
     console.log(
@@ -193,33 +140,22 @@ test.describe("imageQuality — measured calibration of the blur threshold", () 
     const worstSharp = Math.min(...Object.values(sharpScores).map((entry) => entry.blur));
     const bestBlurred = Math.max(...Object.values(blurredScores).map((entry) => entry.blur));
 
-    // THE ASSERTION THAT MATTERS: the threshold sits strictly between the two populations, and the
-    // sharp side clears it by the wide margin the constant's comment claims. If a change to the
-    // measurement narrows this gap, this fails long before a designer sees a false warning.
     expect(worstSharp).toBeGreaterThan(BLUR_VARIANCE_FLOOR * 10);
     expect(bestBlurred).toBeLessThan(BLUR_VARIANCE_FLOOR);
     expect(worstSharp / Math.max(bestBlurred, 1)).toBeGreaterThan(100);
 
-    // Sharp synthetic patterns are far above the line too — no configuration of this measure should
-    // ever call a hard-edged, high-contrast image blurred.
     for (const image of Object.values(synthetic)) {
       expect(laplacianVariance(image)).toBeGreaterThan(BLUR_VARIANCE_FLOOR * 100);
     }
   });
 
   test("a sharp but LOW-CONTRAST photograph is never called blurred", () => {
-    // The dangerous false positive: undyed cotton on a white sheet is sharp and nearly flat, so its
-    // Laplacian variance is low for reasons that have nothing to do with focus. The amplitude here
-    // is chosen to land the sample just INSIDE the trap — a blur score below the floor — so the test
-    // proves the guard is doing the work rather than testing an image that would have passed anyway.
     const flat = pinkNoise(W, H, 1337, 0.28);
     const measured = { blurScore: laplacianVariance(flat), contrast: contrastStdDev(flat) };
     console.log("LOW-CONTRAST SHARP", JSON.stringify(measured));
 
-    // It really does score below the blur floor — that is the trap, stated as a measurement.
     expect(measured.blurScore).toBeLessThan(BLUR_VARIANCE_FLOOR);
     expect(measured.contrast).toBeLessThan(MIN_CONTRAST_STDDEV);
-    // ...and the contrast guard is the only thing stopping it becoming a warning.
     expect(isBlurred(measured)).toBe(false);
   });
 
@@ -228,7 +164,6 @@ test.describe("imageQuality — measured calibration of the blur threshold", () 
     const soft = boxBlur(source, 4);
     const measured = { blurScore: laplacianVariance(soft), contrast: contrastStdDev(soft) };
     console.log("BLURRED NORMAL-CONTRAST", JSON.stringify(measured));
-    // Blurring barely touches contrast (it is a low-frequency property), so the guard stays open.
     expect(measured.contrast).toBeGreaterThan(MIN_CONTRAST_STDDEV);
     expect(isBlurred(measured)).toBe(true);
   });
@@ -241,7 +176,6 @@ test.describe("imageQuality — perceptual hashing", () => {
 
     const hashA = differenceHash(a);
     const hashSelf = differenceHash(a);
-    // "The same shot twice": the same subject, very slightly softer and shifted a pixel.
     const nearly = boxBlur(a, 1, 1);
     const hashNear = differenceHash(nearly);
     const hashB = differenceHash(b);
@@ -253,8 +187,6 @@ test.describe("imageQuality — perceptual hashing", () => {
 
     expect(identical).toBe(0);
     expect(near).toBeLessThanOrEqual(NEAR_DUPLICATE_MAX_DISTANCE);
-    // Unrelated images must clear the threshold by a wide margin, or the check would report two
-    // different products as the same shot — the false positive that discredits the whole feature.
     expect(unrelated).toBeGreaterThan(NEAR_DUPLICATE_MAX_DISTANCE * 3);
   });
 
@@ -280,7 +212,6 @@ test.describe("imageQuality — findings", () => {
     expect(finding.flag).toBe("LOW_RESOLUTION");
     expect(finding.message).toContain("1024x768");
     expect(finding.message).toContain(String(MIN_LONG_EDGE_PX));
-    // A portrait photograph of the same pixel count is judged on its LONG edge, so it passes.
     expect(findQualityIssues({ measurement: { ...sharp, width: 1300, height: 4000 } })).toEqual([]);
   });
 
@@ -294,11 +225,9 @@ test.describe("imageQuality — findings", () => {
     expect(findings[0].flag).toBe("DUPLICATE");
     expect(findings[0].message).toContain("loom-front.jpg");
 
-    // A legacy row with no checksum must not match, and must not be reported as anything.
     expect(
       findQualityIssues({ measurement: sharp, checksum: "sha256:abc", attached: [{ label: "old.jpg", checksum: null }] })
     ).toEqual([]);
-    // Neither may an unknown checksum on OUR side produce a claim.
     expect(
       findQualityIssues({ measurement: sharp, checksum: null, attached: [{ label: "x.jpg", checksum: "sha256:abc" }] })
     ).toEqual([]);
@@ -346,27 +275,13 @@ test.describe("imageQuality — missing views, only where the registry has real 
   });
 
   test("entities with no named view slots produce nothing, invented or otherwise", () => {
-    // Stage 11's sketch has a single `image`; stage 16's finalProduct has galleries. Neither has
-    // named views, and this check must never claim otherwise.
     expect(findMissingViews("sketch", { image: "a" })).toEqual([]);
     expect(findMissingViews("finalProduct", { finalPhotos: ["a"] })).toEqual([]);
   });
 });
 
-// ---------------------------------------------------------------------------
-// The browser half: the real decode path, and what it actually costs
-// ---------------------------------------------------------------------------
-
-/**
- * The module is compiled and injected rather than imported by the page, because there is no route
- * that exposes it and adding one would be app surface built purely for a test. `transpileModule`
- * only strips types, so what runs in the browser is this module's real source. It comes from the
- * `typescript` package, which is the TS 6.0 API (`npm:@typescript/typescript6`): TypeScript 7, the
- * `tsc` that type-checks this repository, ships no JavaScript API.
- */
 async function browserModuleSource(): Promise<string> {
   const ts = await import("typescript");
-  // Relative to the Playwright root (frontend/), which is where the runner is invoked from.
   const source = readFileSync(resolve(process.cwd(), "lib/imageQuality.ts"), "utf8");
   const compiled = ts.transpileModule(source, {
     compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.ESNext }
@@ -392,7 +307,6 @@ test.describe("imageQuality — the browser decode path and its on-device cost",
         } | null>;
       };
 
-      /** Draw a detailed, high-frequency scene, optionally through a real Gaussian blur. */
       async function makeJpeg(width: number, height: number, blurPx: number): Promise<File> {
         const canvas = document.createElement("canvas");
         canvas.width = width;
@@ -400,8 +314,6 @@ test.describe("imageQuality — the browser decode path and its on-device cost",
         const context = canvas.getContext("2d")!;
         context.fillStyle = "#f2efe6";
         context.fillRect(0, 0, width, height);
-        // A deterministic woven-cloth-like pattern: fine stripes, blocks and text, i.e. exactly the
-        // sort of detail a craft photograph carries and a blur destroys.
         const step = Math.max(2, Math.round(width / 160));
         for (let x = 0; x < width; x += step * 2) {
           context.fillStyle = "#3a2f2a";
@@ -436,11 +348,9 @@ test.describe("imageQuality — the browser decode path and its on-device cost",
       const sharpSmall = await api.measureImageFile(await makeJpeg(1600, 1200, 0));
       const blurredSmall = await api.measureImageFile(await makeJpeg(1600, 1200, 6));
 
-      // A full 12 MP frame, the size a modern handset actually produces.
       const bigFile = await makeJpeg(4000, 3000, 0);
       const big = await api.measureImageFile(bigFile);
 
-      // Timed again, separately from the first (cold) run, so the number is not a one-shot outlier.
       const runs: number[] = [];
       for (let index = 0; index < 3; index += 1) {
         const measured = await api.measureImageFile(bigFile);
@@ -455,20 +365,13 @@ test.describe("imageQuality — the browser decode path and its on-device cost",
     console.log("BROWSER 12MP 4000x3000   ", JSON.stringify(results.big), "bytes:", results.bigBytes);
     console.log("BROWSER 12MP repeat runs (ms)", JSON.stringify(results.runs));
 
-    // The decode path reports the ORIGINAL pixel dimensions, which is what the resolution check and
-    // the report's plate sizing both depend on — not the working size it measured at.
     expect(results.big?.width).toBe(4000);
     expect(results.big?.height).toBe(3000);
     expect(results.sharpSmall?.width).toBe(1600);
 
-    // The real, encoded, browser-decoded versions separate exactly as the synthetic ones do.
     expect(results.sharpSmall!.blurScore).toBeGreaterThan(BLUR_VARIANCE_FLOOR * 3);
     expect(results.blurredSmall!.blurScore).toBeLessThan(BLUR_VARIANCE_FLOOR);
 
-    // THE ON-DEVICE BUDGET. This runs on a desktop CI machine, so the number here is not a phone's
-    // number; the ceiling is set well above the measured desktop cost precisely so it stays a
-    // regression guard (it catches "somebody made this convolve at full size") rather than a
-    // hardware benchmark that fails on a slow agent.
     const slowest = Math.max(...results.runs);
     expect(slowest).toBeLessThan(1500);
   });

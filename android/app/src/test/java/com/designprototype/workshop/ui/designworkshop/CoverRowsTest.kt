@@ -3,11 +3,6 @@ package com.designprototype.workshop.ui.designworkshop
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/**
- * Owner decision C1: the sanctioned amount prints on the cover. The port of
- * `report_builder.cover_rows`, pinned to the same cases as
- * `test_cover_rows_reserves_a_row_for_a_pinned_field_and_keeps_declared_order`.
- */
 class CoverRowsTest {
     @Test
     fun aPinnedFieldKeepsARowInsideTheCapAndDeclaredOrderHolds() {

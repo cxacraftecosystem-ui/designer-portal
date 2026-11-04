@@ -1,15 +1,3 @@
-"""Online Aadhaar authentication: ask UIDAI for an OTP, then authenticate with it (or run e-KYC).
-
-THE TWO STEPS ARE STATELESS ON THIS SERVER. Between "send me a code" and "here is the code" nothing
-is stored — not the number, not the transaction. The OTP step answers with UIDAI's ``txn`` and a
-short-lived token, an HMAC under AADHAAR_THROTTLE_SALT over (caller, record, hash of the number,
-txn, expiry); the client sends the number, the code, the txn and the token back, and the token
-proves the txn was issued to this caller for this number on this record within ten minutes.
-
-WHAT IS NEVER KEPT OR LOGGED: the Aadhaar number or VID, the OTP, the PID block, the session key,
-and UIDAI's raw answer. Log lines name the txn, the outcome and UIDAI's error code only.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -41,8 +29,6 @@ logger = logging.getLogger("app.aadhaar.online")
 
 TOKEN_TTL_SECONDS = 600
 
-#: The HTTP transport to the ASA. None is httpx's real network transport; the tests put a fake ASA
-#: here (``tests/aadhaar_support.py``) and nothing else ever sets it.
 transport: httpx.AsyncBaseTransport | None = None
 
 INVALID_UID = (

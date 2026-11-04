@@ -1,13 +1,3 @@
-"""Time the two imports that dominate a cold start, with the TypedDict stub installed.
-
-RUN IT, DO NOT IMPORT IT:  python tests/scale/_probe_import.py
-
-Every "unused import" ruff can see in this file is the thing being measured — the import IS the
-measurement, and the name it binds is deliberately never used. They are marked rather than removed,
-because removing them would delete the probe. See `_lean_prisma_types` for what the stub does and
-for the 839-second MemoryError it exists to avoid on Python 3.14.
-"""
-
 import pathlib
 import sys
 import time

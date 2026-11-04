@@ -8,15 +8,6 @@ import { DueBadge, ProgressGapMeter, ScopeChips, TaskKindBadge, TaskStatusPill }
 import type { FieldTask, TaskStatus } from "@/components/tasks/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/**
- * One task as the person who has to do it sees it.
- *
- * The scope arrives fully resolved from the server — workshop title, artisan names, section codes —
- * so the card can say what the work IS rather than showing the ids it was scoped by. The reported
- * figure is editable here and only here: it belongs to the assignee, while the repository-derived
- * count beside it belongs to the database, and the card deliberately shows both so nobody is
- * surprised later by a gap an admin can see and they cannot.
- */
 export function MyTaskCard({
   task,
   editable,
@@ -25,7 +16,6 @@ export function MyTaskCard({
   onReport
 }: {
   task: FieldTask;
-  /** False for a cancelled task, or when the viewer is not the assignee. */
   editable: boolean;
   busy: boolean;
   onStatus: (status: TaskStatus) => void;
@@ -33,7 +23,6 @@ export function MyTaskCard({
 }) {
   const [reported, setReported] = useState(String(task.progressCount ?? 0));
 
-  // Follow the server's value after a save (and after "Mark done" fills a quota for us).
   useEffect(() => {
     setReported(String(task.progressCount ?? 0));
   }, [task.progressCount]);

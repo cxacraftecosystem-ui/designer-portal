@@ -4,7 +4,6 @@ import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** M2 and M3 (audit 21 Oct 2026): what a re-upload kept and did not import is said on the handset. */
 class ReuploadReportKeptTest {
 
     @Test

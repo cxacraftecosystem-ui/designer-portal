@@ -1,30 +1,5 @@
 "use client";
 
-/**
- * "Two-step verification" — the account's own switch for a second sign-in step (TOTP).
- *
- * Every role may turn it on and nobody is made to. It is a `Toggle` (owner's ruling, 2026-10-17: a
- * setting is a switch, never the word "Off" beside a button), and the switch tells the truth:
- *
- *   Off → switch on  → setup opens (QR, key, six boxes). The switch is NOT on: it reads "Setting up…".
- *                      Only when the server accepts a code (`/enable`) does it read On; then the ten
- *                      recovery codes are shown, once.
- *   Leaving setup    → Cancel, switching it back off, navigating away, reloading or closing the tab,
- *                      and coming back to a tab hidden for more than five minutes DISCARD the
- *                      unconfirmed key (`POST /auth/two-factor/setup/cancel`). A short hide does not:
- *                      on a phone the person goes to their authenticator app mid-setup
- *                      (`leavingSetupDiscards`). A setup the server still holds from an earlier visit
- *                      is cleared on load and reads Off — never On, never a request for a code nobody
- *                      saved.
- *   On  → switch off → a current code (six boxes) or a recovery code, then it is off.
- *
- * The status line under the switch is plain words: "On since 17 Oct 2026 · 8 recovery codes left"
- * (`twoStepSwitchView`, lib/twoStepSwitch.ts — Android's table too).
- *
- * The QR square is drawn by the server (finished SVG) and shown as a `data:` image, so no HTML from a
- * response ever reaches the DOM as markup and nothing here encodes a QR code.
- */
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, Download, ShieldCheck } from "lucide-react";
 
@@ -49,7 +24,6 @@ import { leavingSetupDiscards, twoStepSwitchView, type TwoStepPhase } from "@/li
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { exportFilename } from "@/lib/naming";
 
-/** Which part of the conversation is on screen. */
 type Step =
   | { kind: "idle" }
   | { kind: "setup"; setup: TwoFactorSetup }
@@ -75,14 +49,11 @@ export function TwoStepVerificationCard() {
   const [notice, setNotice] = useState<string | null>(null);
   const setupBox = useRef<OtpCodeInputHandle | null>(null);
   const entryBox = useRef<TwoStepCodeEntryHandle | null>(null);
-  /** True while an unconfirmed key is on screen — read by the leave handlers, which outlive renders. */
   const settingUp = useRef(false);
 
   const load = useCallback(async () => {
     try {
       let answer = await fetchTwoFactorStatus();
-      // A setup left over from an earlier visit (or another tab) and never finished: it is Off, and
-      // with no setup on THIS screen nobody can finish it, so forget the key now rather than keep it.
       if (!answer.enabled && answer.pending && !settingUp.current) {
         await cancelTwoFactorSetup().catch(() => undefined);
         answer = { ...answer, pending: false };
@@ -102,10 +73,6 @@ export function TwoStepVerificationCard() {
     settingUp.current = step.kind === "setup";
   }, [step]);
 
-  // LEAVING SETUP DISCARDS IT: a reload or a closed tab (`pagehide`, sent with keepalive so it outlives
-  // the page), a navigation inside the app (this component unmounting), and coming back to a tab that
-  // was hidden for longer than SETUP_AWAY_LIMIT_MS. A shorter hide is a trip to the authenticator app
-  // and keeps the key — see `leavingSetupDiscards`.
   useEffect(() => {
     let hiddenAt: number | null = null;
     function onPageHide() {
@@ -168,7 +135,6 @@ export function TwoStepVerificationCard() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    // NAMING 2.1: <Portal>_Account_2026-10-18_Recovery-Codes.txt — never the e-mail address.
     link.download = exportFilename("Account", "Recovery-Codes", "txt");
     link.click();
     URL.revokeObjectURL(url);
@@ -195,7 +161,6 @@ export function TwoStepVerificationCard() {
     try {
       await cancelTwoFactorSetup();
     } catch {
-      // The server forgets an unconfirmed key by itself after 15 minutes, and it never counted as on.
     }
     await load();
   }
@@ -236,8 +201,6 @@ export function TwoStepVerificationCard() {
   const view = twoStepSwitchView(status, phase);
 
   function onSwitch(next: boolean) {
-    // While setting up the switch reads off, so a press arrives as "on": it means back out, not
-    // start again — a fresh key would orphan the authenticator entry just scanned.
     if (step.kind === "setup") {
       void leaveSetup();
     } else if (next) {
@@ -262,18 +225,13 @@ export function TwoStepVerificationCard() {
         label="Two-step verification"
         description="After you sign in, also enter a 6-digit code from an authenticator app on your phone, such as Google Authenticator or Microsoft Authenticator."
         checked={view.checked}
-        // The switch may be pressed to LEAVE setup or a turn-off — that is the way back — so only a
-        // request in flight or a status still loading makes it inert.
         busy={busy || status === null}
         busyLabel={busy ? "Working…" : "Loading…"}
-        // "Setting up…" / "Enter a code to turn it off." while a step is open; the plain state otherwise.
         status={view.busy && view.busyLabel ? view.busyLabel : view.statusLine}
         disabled={status === null && loadError !== null}
         onChange={onSwitch}
       />
 
-      {/* Both regions mounted from first paint and emptied rather than removed, so what they say is
-          announced — `ChangePasswordCard`'s pattern. */}
       <div
         role="alert"
         className={

@@ -1,58 +1,3 @@
-"""**AN INSPECTION IS A READ AND NOTHING ELSE.** The tripwire for that. No database required.
-
-WHAT THIS FILE IS DEFENDING, AND WHY IT IS A WHOLE MODULE FOR ONE IDEA
-=====================================================================
-
-The INSPECTOR tier sits between DESIGNER (35) and PROFESSOR (40) and inspects a designer's work
-without running workshops. The obvious way to give it access to a workshop is a
-``DesignWorkshopViewer`` row, or a ``level`` column on one — and it was designed and rejected,
-because **a viewer row confers STAGE WRITES**. ``load_workshop_or_404(..., for_edit=True)`` performs
-no role check whatsoever: the creator, an admin, or ANY viewer grantee passes, and that one helper
-is what FOURTEEN write routes pair with ``_require_designer``, what the export ledger stands behind
-alone, and what the report route stands behind alone. (Fourteen, not the eighteen this paragraph
-first said: eighteen is every route ``_require_designer`` guards, two of which are GET allowance
-probes that write nothing and never touch the loader. The fourteen are named and counted at the top
-of ``app/services/design_workshop_inspectors.py``.)
-
-So the design is a SEPARATE TABLE that no write path consults, reached through a SEPARATE loader
-that has no ``for_edit`` parameter to pass. This module is the assertion that keeps that true. It is
-the mirror image of ``test_design_workshop_provisional_isolation``, which asserts that a foothold is
-a stranger to every READ gate; this asserts that an inspection is a stranger to every WRITE gate.
-
-**IT RUNS IN CI, AND THAT IS THE POINT OF ITS SHAPE.** ``test_dw_inspector_scope`` needs Postgres
-and skips itself wherever there is not a local one — which is every CI run, deliberately, because
-the deployed database is not a scratch pad. It ALSO skips until the INSPECTOR tier reaches
-``ROLE_RANK``, which is a second lane's work. So the assertions that an inspector cannot write would
-never be made on the one machine that gates a merge. They are made here instead, over the real
-routers, with ``db`` replaced by a tripwire — and they are correct whether or not the tier has
-landed, because nothing here reads a database or an enum.
-
-FOUR THINGS ARE PINNED, and each is a way this scope could ship looking finished while being wrong.
-
-1. **THE DOORS.** Whoever may HOLD an inspection reaches the read surface — the INSPECTOR tier and,
-   since the owner's ruling of 2026-10-09, the three administrator tiers, who may be appointed to
-   inspect one workshop at a time; everybody else is refused there with a sentence naming the route
-   they actually want. The administration of who inspects what belongs to the assigners, and an
-   INSPECTOR is refused it: the inspected must not choose the inspector, and neither may the
-   inspector choose themselves.
-
-2. **THE WRITE REFUSALS, EACH ASSERTED RATHER THAN DOCUMENTED.** Six write doors on
-   ``/design-workshops`` refuse an inspector BEFORE any database read. "We never built the UI for
-   it" is not enforcement, and a scope whose limits are untested is a scope that will quietly widen.
-
-3. **THE TWO PREDICATES CANNOT SEE EACH OTHER.** An inspection row does not satisfy
-   ``has_viewer_grant`` (the chokepoint four read-and-write paths consult) and a viewer row does not
-   satisfy ``has_inspection_scope``. Asserted against the REAL functions over fake tables, so it
-   stays an assertion about the codebase rather than about this file.
-
-4. **NOTHING OUTSIDE THE FEATURE NAMES ITS PREDICATES.** A source sweep. The day somebody writes
-   ``or await has_inspection_scope(...)`` beside a ``has_viewer_grant`` call — which is the single
-   most plausible way this scope becomes a write grant — this is what goes red.
-
-IF YOU ARE HERE BECAUSE THIS MODULE WENT RED after "simplifying" the inspection into a flag on the
-viewer row: that is what it is for. The security property was in the separation.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -74,18 +19,9 @@ from app.api.routes import design_workshop_inspections as inspection_routes
 from app.core import deps
 from app.services import design_workshops as workshop_service
 
-#: A cuid-shaped id that names nothing. Nothing in the first two sections reaches a database, so it
-#: never needs to.
 WORKSHOP_ID = "cminspectorgate000000000w"
 STAGE_KEY = "WORKSHOP_SETUP"
 
-#: Every tier the ladder holds today, plus the one this feature is for. Written as a literal rather
-#: than read from ``ROLE_RANK`` ON PURPOSE, and this is the one place in the repository where that is
-#: the right call: these strings are the INPUT to a gate, and the gates under test are SET
-#: MEMBERSHIP, so a list derived from the ladder would stop exercising INSPECTOR on a deployment
-#: where the tier has not landed — which is exactly the deployment this file has to be correct on.
-#: ``tests/test_role_ladder_parity`` is what keeps the ladder's own copies honest; this is not a
-#: mirror of it.
 EVERY_OTHER_TIER = (
     "CROWDSOURCE_VOLUNTEER",
     "FIELD_CONTRIBUTOR",
@@ -100,40 +36,25 @@ EVERY_OTHER_TIER = (
 )
 INSPECTOR = "INSPECTOR"
 
-#: The administrator tiers that may be APPOINTED to inspect a workshop (owner's ruling, 2026-10-09).
-#: Literal for the reason ``EVERY_OTHER_TIER`` gives; the test of the holder set below compares the
-#: two spellings, so they cannot part silently.
 SERVING_ADMINS = ("MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN")
 
-#: Every tier that may hold no inspection at all — the surface's refusals.
 CANNOT_HOLD_AN_INSPECTION = tuple(t for t in EVERY_OTHER_TIER if t not in SERVING_ADMINS)
 
 
 class _DatabaseTouched(Exception):
-    """Raised by the tripwire. Escaping the request means the handler got past every guard."""
+    pass
 
 
 class _Tripwire:
-    """Stands in for ``db``. Reading any delegate off it means a database read was about to happen."""
-
     def __init__(self) -> None:
         object.__setattr__(self, "touched", False)
 
     def __getattr__(self, name: str) -> Any:
-        # ``__getattr__`` and not ``__getattribute__``, so ``touched`` above stays readable.
         object.__setattr__(self, "touched", True)
         raise _DatabaseTouched(name)
 
 
 class _Outcome:
-    """Either "a read was attempted" or "the request was answered", never a bare status code.
-
-    The distinction is the whole point of the first two sections: a 403 that reached the database and
-    a 403 that did not are the same three digits and two different properties. Here it is sharper
-    still — "reached" is how the ADMITTING cases are asserted, because "not 403" would also be
-    satisfied by a 422 from an unrelated cause.
-    """
-
     def __init__(self, *, reached: bool, status_code: int | None = None, detail: Any = "") -> None:
         self.reached = reached
         self.status_code = status_code
@@ -153,14 +74,10 @@ def _build_app() -> FastAPI:
     return application
 
 
-#: Assembled once. Every router with its response models costs a couple of seconds to build, and
-#: nothing request-scoped lives on it — the caller comes from ``_CURRENT``, the database from the
-#: fixture.
 _APP = _build_app()
 
 
 def _user(role: str) -> SimpleNamespace:
-    """A user row as ``require_admin``, ``is_admin`` and ``role_value`` read one."""
     return SimpleNamespace(
         id=f"u-{role.lower()}", email=f"{role.lower()}@example.test", name="Gate Test", role=role
     )
@@ -168,18 +85,6 @@ def _user(role: str) -> SimpleNamespace:
 
 @pytest.fixture
 def api(monkeypatch: pytest.MonkeyPatch):
-    """The real API with every module's ``db`` rebound to the tripwire.
-
-    Rebinding BY IDENTITY rather than by module name: the modules do ``from app.core.db import db``,
-    so each holds its own reference, and patching only ``app.core.db`` would leave every one of them
-    pointing at the real client. Finding them by identity also keeps working when a module is added —
-    which matters here, because this feature added three.
-
-    THE HARNESS IS BORROWED FROM ``test_design_workshop_access_gate`` AND DELIBERATELY RE-TYPED
-    RATHER THAN IMPORTED, on that module's own written reasoning: a test module that imports another
-    test module's harness makes two files fail together for one cause and makes neither runnable on
-    its own.
-    """
     tripwire = _Tripwire()
     real_db = core_db.db
     monkeypatch.setattr(core_db, "db", tripwire)
@@ -210,22 +115,11 @@ def api(monkeypatch: pytest.MonkeyPatch):
     _CURRENT["user"] = None
 
 
-# --------------------------------------------------------------------------------------
-# 1. THE DOORS
-# --------------------------------------------------------------------------------------
-
 
 @pytest.mark.parametrize(
     "path", ["/design-workshop-inspections", f"/design-workshop-inspections/{WORKSHOP_ID}"]
 )
 def test_an_inspector_reaches_their_own_read_surface(api, path):
-    """Open to the tier, and reaching the database is what proves it.
-
-    "Not 403" would also be satisfied by a 422 from an unrelated cause, which is why the outcome here
-    is "a read was attempted" rather than a status code. What that read then ANSWERS — an empty page
-    for an inspector with no scope row, a 404 for a workshop they were not assigned — is asserted
-    over a real database in ``test_dw_inspector_scope``.
-    """
     outcome = api.call("GET", path, as_role=INSPECTOR)
     assert outcome.reached, outcome
 
@@ -235,14 +129,6 @@ def test_an_inspector_reaches_their_own_read_surface(api, path):
 )
 @pytest.mark.parametrize("role", CANNOT_HOLD_AN_INSPECTION)
 def test_every_tier_that_cannot_hold_an_inspection_is_refused_the_surface(api, path, role):
-    """403 for every tier that may hold no inspection, decided before any database read.
-
-    THE TWO DIRECTORATE POSTS AND THE PROFESSOR ARE THE ROWS A RANK INSTINCT GETS WRONG: all three
-    outrank an inspector, and the ruling of 2026-10-09 named the three administrator tiers and nobody
-    else. So the refusal NAMES THE OTHER DOOR, and that sentence is asserted rather than left to a
-    code review: somebody told only "forbidden" on a READ surface will reasonably conclude something
-    is broken and file a bug against it.
-    """
     outcome = api.call("GET", path, as_role=role)
     assert outcome.status_code == 403, outcome
     assert api.tripwire.touched is False, "the refusal must fire before any database read"
@@ -259,15 +145,6 @@ def test_every_tier_that_cannot_hold_an_inspection_is_refused_the_surface(api, p
 )
 @pytest.mark.parametrize("role", SERVING_ADMINS)
 def test_an_administrator_reaches_the_surface_and_the_rows_decide_what_they_see(api, path, role):
-    """**ADMINS WERE REFUSED HERE UNTIL 2026-10-09, AND THIS IS THE ROW THAT RULING TURNED.**
-
-    A Ministry Admin, an admin and the master admin may now be APPOINTED to inspect a workshop, so
-    the surface admits them and their own inspection rows decide what it shows — an empty list until
-    somebody appoints them, which is the truth rather than a broken page. "Reached the database" is
-    the whole assertion that can be made here, and the right one: what the read then answers — rows
-    only, never "everything, because they are an admin" — is asserted over Postgres in
-    ``test_admin_serve_as``.
-    """
     outcome = api.call("GET", path, as_role=role)
     assert outcome.reached, outcome
 
@@ -283,37 +160,11 @@ def test_an_administrator_reaches_the_surface_and_the_rows_decide_what_they_see(
         "DESIGNER",
         "PROFESSOR",
         INSPECTOR,
-        # THE TWO DIRECTORATE TIERS THE 0.0.12 RULING DID **NOT** ADMIT, and they are the rows that
-        # make the widening a decision rather than a drift. ``OVERSIGHT_ASSIGNER_ROLES`` excludes a
-        # REGIONAL_DIRECTOR even though they outrank an Assistant Director, because the supervised
-        # must not choose the supervisor — the same sentence one rung up from "the inspected must
-        # not choose the inspector". A rank floor written in place of the set would admit both.
         "ASSISTANT_DIRECTOR",
         "REGIONAL_DIRECTOR",
     ],
 )
 def test_only_an_assigner_reads_or_writes_the_inspection_roster(api, role, method, body):
-    """403 for everybody outside ``OVERSIGHT_ASSIGNER_ROLES``, and the database never touched.
-
-    **THIS TEST WAS NAMED ``..._only_an_admin_...`` UNTIL 0.0.12 AND IS RENAMED RATHER THAN
-    DELETED.** The three administration routes moved from ``require_admin`` = {ADMIN, MASTER_ADMIN}
-    to ``require_workshop_assigner`` = {MINISTRY_ADMIN, ADMIN, MASTER_ADMIN} on an owner's ruling,
-    because a MINISTRY_ADMIN is not an admin anywhere in this codebase and the ministry could
-    therefore stage a workshop into PRE_SUBMISSION and then cause nobody at all to inspect it. Every
-    row below is still refused, and two more were added rather than the set being loosened.
-
-    **THE INSPECTOR IS IN THIS LIST AND IT IS THE MOST IMPORTANT ROW.** An inspector who could write
-    this roster could assign themselves to any workshop in the repository, which turns a scope an
-    administrator controls into one its holder does. DESIGNER is the second most important: the
-    inspected must not choose the inspector, or the inspection is worth nothing — that is the entire
-    value of an independent review and it is enforced here rather than by there being no button for
-    it.
-
-    PROFESSOR is here for the reason the sibling queue's test gives: they outrank a designer on the
-    ladder and are still not an administrator, which is the row a rank comparison written in place of
-    a set would get wrong. ASSISTANT_DIRECTOR and REGIONAL_DIRECTOR are here for the same reason one
-    rung further up, and they are the rows that keep the 0.0.12 widening honest.
-    """
     outcome = api.call(
         method, f"/design-workshop-inspections/{WORKSHOP_ID}/inspectors", as_role=role, body=body
     )
@@ -323,15 +174,6 @@ def test_only_an_assigner_reads_or_writes_the_inspection_roster(api, role, metho
 
 @pytest.mark.parametrize("role", ["MINISTRY_ADMIN", "ADMIN", "MASTER_ADMIN"])
 def test_an_assigner_reaches_the_inspection_roster_and_the_picker(api, role):
-    """**MINISTRY_ADMIN IS THE ROW THE 0.0.12 RULING ADDED**, and it is asserted here rather than
-    only in the refusals above, because the whole point of the change is that this account can now
-    get through. Before it, the ministry staged a workshop into PRE_SUBMISSION and then could cause
-    nobody at all to inspect it — the journey stopped with no refusal anybody could act on.
-
-    SINCE 2026-10-09 THE APPOINTER MAY ALSO BE APPOINTED — by somebody else. Naming yourself is
-    refused per workshop with a 409 (``services/design_workshop_posts``), and the picker below does
-    not offer the caller at all.
-    """
     outcome = api.call(
         "GET", f"/design-workshop-inspections/{WORKSHOP_ID}/inspectors", as_role=role
     )
@@ -341,47 +183,16 @@ def test_an_assigner_reaches_the_inspection_roster_and_the_picker(api, role):
 
 
 def test_the_literal_path_is_not_swallowed_by_the_workshop_id_route(api):
-    """``/eligible-inspectors`` must not be read as a workshop id.
-
-    ``GET /design-workshop-inspections/{workshop_id}`` matches that string perfectly well and would
-    answer 404 for the picker, which is the trap that once left the admin's DESIGNER picker empty on
-    a server where the route existed. Asserted through the OUTCOME rather than by reading declaration
-    order, so it stays true however the module is reorganised.
-
-    THE CONTROL IS AN INSPECTOR AND NOT AN ADMIN since 2026-10-09: an admin now reaches BOTH routes,
-    so only a caller the two doors answer differently can tell which one matched. An INSPECTOR is
-    admitted to the ``{workshop_id}`` route and refused the picker — so a 403 on the literal path is
-    the picker's own door answering, which is the literal route winning.
-    """
     refused = api.call("GET", "/design-workshop-inspections/eligible-inspectors", as_role=INSPECTOR)
     assert refused.status_code == 403, refused
     assert api.tripwire.touched is False
-    # And the id-shaped path does admit that inspector, so the 403 above was not the surface's.
     admitted = api.call("GET", f"/design-workshop-inspections/{WORKSHOP_ID}", as_role=INSPECTOR)
     assert admitted.reached, admitted
     outcome = api.call("GET", "/design-workshop-inspections/eligible-inspectors", as_role="ADMIN")
     assert outcome.reached, outcome
 
 
-# --------------------------------------------------------------------------------------
-# 2. THE WRITE REFUSALS — what the scope does NOT carry
-# --------------------------------------------------------------------------------------
 
-
-#: The write doors on ``/design-workshops`` that answer BEFORE any database read, because
-#: ``_require_designer`` (or ``assert_can_create_design_workshops``) is the first statement of the
-#: handler. Every one of them is a thing the module docstring of
-#: ``services/design_workshop_inspectors`` claims an inspection row does not carry.
-#:
-#: THE THREE THAT ARE NOT HERE ARE NOT MISSING. ``DELETE /{id}``, ``POST /{id}/report`` and
-#: ``POST /{id}/exports`` all call ``load_workshop_or_404`` FIRST and gate afterwards (or, for the
-#: report, not at all — it is open to anyone who may READ the workshop). So they cannot be refused
-#: from the request alone: they are refused by that loader answering 404 to an account with no viewer
-#: grant, which is a fact about a database and is asserted in ``test_dw_inspector_scope``.
-#: EVERY BODY HERE IS VALID, and that is load-bearing rather than tidy. These schemas are
-#: ``extra="forbid"``, so a body with a stray key is answered 422 by Pydantic BEFORE the handler
-#: runs — and a 422 would make each of these tests pass for the wrong reason for ever, asserting
-#: nothing about the role at all. Minimal-but-valid is the shape that reaches the gate.
 WRITE_DOORS: tuple[tuple[str, str, dict[str, Any] | None], ...] = (
     ("PATCH", f"/design-workshops/{WORKSHOP_ID}", {"title": "Renamed by an inspector"}),
     ("PUT", f"/design-workshops/{WORKSHOP_ID}/stages/{STAGE_KEY}", {"entries": []}),
@@ -398,24 +209,6 @@ WRITE_DOORS: tuple[tuple[str, str, dict[str, Any] | None], ...] = (
 
 @pytest.mark.parametrize(("method", "path", "body"), WRITE_DOORS)
 def test_an_inspector_is_refused_every_write_door_before_the_database(api, method, path, body):
-    """**THE ASSERTION THE WHOLE FEATURE RESTS ON**, six times over.
-
-    READ-ONLY IS THE POINT, and a scope whose limits are untested is a scope that will quietly
-    widen. Each of these is a thing a viewer row DOES carry and an inspection row deliberately does
-    not: renaming the workshop, saving any of the 22 stages, redefining the custom sections,
-    registering an AI layer, recording the artisan's Tier-3 consent, and starting a workshop at all.
-
-    403 AND THE DATABASE NEVER TOUCHED. The status code alone would be satisfied by a refusal that
-    ran after a lookup, and that is a materially weaker property: a gate placed after the loader can
-    be reordered by somebody who only reads the status code, and the loader is precisely the thing
-    that grants stage writes to whoever it admits.
-
-    Note what is NOT asserted here: that these routes refuse an inspector *because* of the role. They
-    refuse because ``can_run_design_workshops`` is a SET — ``{DESIGNER, ADMIN, MASTER_ADMIN}`` — and
-    INSPECTOR is not in it, which is the same reason PROFESSOR at rank 40 is refused. That is the
-    trap this tier was designed around: a rank inserted between 35 and 40 buys nothing here, so the
-    scope had to be built rather than inherited.
-    """
     outcome = api.call(method, path, as_role=INSPECTOR, body=body)
     assert outcome.status_code == 403, outcome
     assert api.tripwire.touched is False, (
@@ -424,33 +217,6 @@ def test_an_inspector_is_refused_every_write_door_before_the_database(api, metho
     )
 
 
-#: THE TWO WRITE DOORS THIS SURFACE IS ALLOWED TO HAVE, AND THE WHOLE LIST.
-#:
-#: Until 2026-09-13 the answer was "none", and the assertion below was ``set(route.methods) ==
-#: {"GET"}`` with a message saying read-only here is structural rather than a policy note. **THE
-#: STRUCTURAL PROPERTY IS UNCHANGED AND THE SENTENCE IT WAS WRITTEN AS IS NOW TOO NARROW.** What the
-#: separation protects is that an inspector cannot touch the DESIGNER'S CONTENT — the 22 stages, the
-#: custom sections, the AI layers, the artisan's consent, the export ledger — and those are refused
-#: by ``_require_designer`` on another router, before the database, six times over, in
-#: ``WRITE_DOORS`` above. Nothing in this list can reach a ``DwStageEntry``:
-#: ``schemas/design_workshop_review_loop.InspectionWritePlan`` refuses every table but three BY
-#: CONSTRUCTION, and ``test_an_inspection_decision_cannot_be_written_into_a_stage_entry`` in
-#: ``test_design_workshop_review_loop.py`` asserts it.
-#:
-#: WHAT THE TWO DOORS WRITE. ``/feedback`` inserts one row of ``DwInspectionFeedback`` — an
-#: officer's correction suggestion, its round copied off the workshop — and moves no status.
-#: ``/send-back`` writes that row, the three decision-cache columns on the workshop and one
-#: ``ReviewLog`` entry, in one transaction. Neither writes a stage, and neither can be made to.
-#:
-#: A THIRD ENTRY HERE IS A PERMISSION DECISION AND NOT A REFACTOR. Read the header of
-#: ``app/services/design_workshop_inspectors.py`` before adding one, and say in this comment what
-#: the new door writes and why an inspector may write it.
-#:
-#: FOUR MORE, 2026-10-17, and each still writes a note or a verdict and nothing else. The two
-#: ``/batch`` doors are the two above taking several notes at once (B2) — the same rows, the same
-#: refusals, one transaction. ``/clearance`` (POST and DELETE) records or withdraws one inspector's
-#: "Checked, no corrections" on the current round (C5): one row of ``DwInspectionClearance``, which
-#: moves no status and is never required for approval.
 INSPECTOR_WRITE_DOORS = {
     ("POST", "/design-workshop-inspections/{workshop_id}/feedback"),
     ("POST", "/design-workshop-inspections/{workshop_id}/send-back"),
@@ -462,28 +228,6 @@ INSPECTOR_WRITE_DOORS = {
 
 
 def test_the_inspection_surface_offers_only_the_two_write_doors_it_is_allowed(api):
-    """Every route an inspector can reach is a GET or one of two named POSTs, checked over the router.
-
-    Walks the real dependency tree: a route gated by :func:`require_inspector` is one an inspector
-    can reach. A route gated by ``require_workshop_assigner`` may be anything, because that set —
-    ``{MINISTRY_ADMIN, ADMIN, MASTER_ADMIN}`` — is who administers this.
-
-    **THE SECOND NAME WAS ``require_admin`` UNTIL 0.0.12 AND THE LITERAL IS UPDATED RATHER THAN
-    LOOSENED**, which is the same discipline this repository applies to every counted assertion: the
-    three administration routes moved to ``OVERSIGHT_ASSIGNER_ROLES`` on an owner's ruling, because
-    ``require_admin`` excludes a MINISTRY_ADMIN and the ministry could therefore stage a workshop
-    into PRE_SUBMISSION and then cause nobody at all to inspect it. Widening this set to
-    ``{require_inspector, require_admin, require_workshop_assigner}`` would have been the loosening:
-    the point of naming the doors is that a route standing behind a THIRD one has to be argued for
-    here. What the ruling did NOT touch is the property this whole file defends — an inspection is
-    still a read and a note, ``INSPECTION_ROLES`` is still the frozenset ``{INSPECTOR}``, and the
-    account that appoints an inspector still cannot be one.
-
-    THIS IS THE ASSERTION THAT SURVIVES A NEW ROUTE, and the amendment did not weaken it — it made
-    it name the exceptions. The parametrised refusals above cover the doors that exist on the
-    DESIGNER's router; this one fails when somebody adds a third write to THIS one and hangs it on
-    the inspector's dependency, which is how a read-and-a-note surface acquires a stage save.
-    """
     for route in inspection_routes.router.routes:
         gates = _dependency_names(route)
         assert gates & {"require_inspector", "require_workshop_assigner"}, (
@@ -504,12 +248,6 @@ def test_the_inspection_surface_offers_only_the_two_write_doors_it_is_allowed(ap
 
 
 def test_both_allowed_write_doors_actually_exist(api):
-    """The other direction, and without it the list above could name two routes that have gone.
-
-    An allow-list is only a constraint while its entries are real: two stale tuples would leave the
-    test passing over a router that had lost both writes, which is exactly the state this feature
-    was in before 2026-09-13 and is a state somebody should have to notice.
-    """
     live = {
         (method, route.path)
         for route in inspection_routes.router.routes
@@ -520,11 +258,6 @@ def test_both_allowed_write_doors_actually_exist(api):
 
 
 def test_an_inspector_still_writes_no_workshop_content(api):
-    """The property the amendment above preserves, asserted where somebody reading it will look.
-
-    The two doors write a NOTE. Nothing on this router may write the report: the plan class refuses
-    every table but its three, and ``DwStageEntry`` is not one of them and cannot be added.
-    """
     from app.schemas import design_workshop_review_loop as loop
 
     assert {"DesignWorkshop", "DwInspectionFeedback", "ReviewLog"} == loop.WRITABLE_TABLES
@@ -532,7 +265,6 @@ def test_an_inspector_still_writes_no_workshop_content(api):
 
 
 def _dependency_names(route: Any) -> set[str]:
-    """Every dependency callable in one route's tree, by name."""
     seen: set[str] = set()
     stack = [route.dependant]
     while stack:
@@ -544,18 +276,6 @@ def _dependency_names(route: Any) -> set[str]:
 
 
 def test_the_read_only_loader_has_no_for_edit_parameter():
-    """**THE STRUCTURAL PROPERTY, AS ONE LINE.**
-
-    ``design_workshops.load_workshop_or_404`` takes ``for_edit`` and performs NO role check —
-    creator, admin or any viewer grantee passes — so a predicate added to it is a write grant
-    whatever it is named. The inspector's loader is a different function that cannot express the
-    same thing: there is no argument an inspector's request could carry that turns its read into a
-    write, because there is no such argument.
-
-    The control below is not decoration: without it this assertion would pass just as happily if
-    somebody deleted ``for_edit`` from the sibling, which would be a far larger change than this
-    test is about.
-    """
     ours = inspect.signature(inspectors.load_inspectable_workshop_or_404).parameters
     assert "for_edit" not in ours, (
         "load_inspectable_workshop_or_404 has grown a for_edit parameter. That is the ONE change "
@@ -565,14 +285,8 @@ def test_the_read_only_loader_has_no_for_edit_parameter():
     assert "for_edit" in theirs, "the control: the sibling loader is still the one that edits"
 
 
-# --------------------------------------------------------------------------------------
-# 3. THE TWO PREDICATES CANNOT SEE EACH OTHER
-# --------------------------------------------------------------------------------------
-
 
 class _Rows:
-    """A delegate over a list, narrow enough that an unexpected clause fails loudly."""
-
     def __init__(self, rows: list[Any] | None = None) -> None:
         self.rows = list(rows or [])
 
@@ -589,14 +303,6 @@ class _Rows:
         return next((row for row in self.rows if self._matches(row, where)), None)
 
     async def find_first(self, where: dict[str, Any], include: Any = None) -> Any:
-        """The same answer over the same list.
-
-        ADDED FOR THE SIXTH SCOPE, whose key is ``(workshop, capacity)`` rather than
-        ``(workshop, user)`` — so "is this person on this workshop in any capacity" is a
-        ``find_first`` over the key's leading column rather than a ``find_unique`` on the key. The
-        delegate stays narrow either way: an unexpected clause still falls through ``_matches`` and
-        answers None rather than matching everything.
-        """
         return await self.find_unique(where, include)
 
 
@@ -613,13 +319,6 @@ STRANGER_ID = "cminspectorgate000000000s"
 
 @pytest.fixture
 def world(monkeypatch: pytest.MonkeyPatch):
-    """One workshop with a co-designer on it and an inspector assigned to it.
-
-    Both modules that hold their own ``db`` reference are rebound, because the REAL predicates are
-    what read these fake tables. Stubbing the predicates instead would assert nothing: the property
-    is what those two functions do when the other's row exists, and a stub would just be this file
-    agreeing with itself.
-    """
     tables = {
         "designworkshopviewer": _Rows(
             [SimpleNamespace(designWorkshopId=WORKSHOP_ID, userId=VIEWER_ID)]
@@ -635,54 +334,21 @@ def world(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_an_inspection_row_does_not_satisfy_has_viewer_grant(world):
-    """**THE SINGLE MOST IMPORTANT ASSERTION IN THIS FEATURE.**
-
-    ``has_viewer_grant`` is consulted from four places — ``load_workshop_or_404``, ``design_ratings``,
-    ``routes/questionnaire_forms`` and ``design_workshop_access`` — and the first of those is the
-    loader fourteen write routes pair with ``_require_designer`` and pass ``for_edit=True``. If an
-    inspection row satisfied it, an account whose whole purpose is to READ would hold stage writes on
-    a fortnight of somebody else's fieldwork.
-
-    The inspection is a row in a DIFFERENT TABLE, so the predicate cannot see it and does not have to
-    be taught not to. That is the whole design, and the assertion is written against the real
-    function so it stays an assertion about the codebase.
-    """
     assert world.designworkshopinspector.rows, "the fixture must actually hold an inspection"
     assert asyncio.run(viewers.has_viewer_grant(WORKSHOP_ID, INSPECTOR_ID)) is False
-    # The control: a real viewer row does satisfy it, so the assertion above is not passing because
-    # the predicate is broken for everybody.
     assert asyncio.run(viewers.has_viewer_grant(WORKSHOP_ID, VIEWER_ID)) is True
 
 
 def test_a_viewer_row_does_not_satisfy_has_inspection_scope(world):
-    """The other direction, and it is not symmetry for its own sake.
-
-    A co-designer holding a viewer row must not silently appear on the inspection surface: that
-    surface is scoped to people an ADMIN assigned to examine this workshop, and a designer who
-    wandered onto it would be reading a screen that says their own work is under review by them.
-    More concretely, it would make ``GET /design-workshop-inspections`` a second, differently-shaped
-    read of the same workshops — two places to look when somebody has access they should not.
-    """
     assert world.designworkshopviewer.rows, "the fixture must actually hold a viewer"
     assert asyncio.run(inspectors.has_inspection_scope(WORKSHOP_ID, VIEWER_ID)) is False
     assert asyncio.run(inspectors.has_inspection_scope(WORKSHOP_ID, INSPECTOR_ID)) is True
 
 
 def test_a_stranger_holds_neither(world):
-    """The control for both: nothing here is answering yes to everybody."""
     assert asyncio.run(viewers.has_viewer_grant(WORKSHOP_ID, STRANGER_ID)) is False
     assert asyncio.run(inspectors.has_inspection_scope(WORKSHOP_ID, STRANGER_ID)) is False
 
-
-# --------------------------------------------------------------------------------------
-# 3b. THE SIXTH SCOPE CANNOT SEE THE FIFTH EITHER — and the fifth cannot see it
-#
-# Added 2026-09-13 with `DesignWorkshopOversight`, the Assistant Director / Regional Director
-# assignment. It is the SAME biconditional the viewer pair above asserts, one table further out,
-# and it is here rather than in the new feature's own file for the reason this module exists: the
-# claim is about what the INSPECTION predicate does when another access row exists, and a test that
-# lived with the other feature would be that feature agreeing with itself.
-# --------------------------------------------------------------------------------------
 
 
 OVERSEER_ID = "cminspectorgate0000000d"
@@ -690,11 +356,6 @@ OVERSEER_ID = "cminspectorgate0000000d"
 
 @pytest.fixture
 def sixth(world, monkeypatch: pytest.MonkeyPatch):
-    """The same workshop, now also carrying an OVERSIGHT row for a third account.
-
-    Built on ``world`` rather than beside it so all three tables are live at once — which is the
-    only state in which "the predicates cannot see each other" means anything.
-    """
     from app.services import design_workshop_oversight as oversight
 
     table = _Rows([SimpleNamespace(designWorkshopId=WORKSHOP_ID, userId=OVERSEER_ID)])
@@ -704,58 +365,23 @@ def sixth(world, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_an_oversight_row_does_not_satisfy_has_inspection_scope(sixth):
-    """An Assistant Director must never appear on the INSPECTOR's surface.
-
-    The two are different relationships: an inspector is an INDEPENDENT EXAMINER whose whole value
-    is that they did not work on the thing, while an AD is LINE MANAGEMENT. Folding them would hand
-    every officer the inspector's read surface — and, worse, would make
-    ``INSPECTION_ROLES``' import-time guard look like it was covering the change when it is not:
-    ASSISTANT_DIRECTOR is in neither that set nor ``DESIGN_WORKSHOP_ROLES``, so the RuntimeError
-    that guards the pair stays green while the scope silently widens.
-
-    The oversight is a row in a DIFFERENT TABLE, so the predicate cannot see it and does not have to
-    be taught not to. That is the whole design, asserted against the real function.
-    """
     assert sixth.table.rows, "the fixture must actually hold an oversight row"
     assert asyncio.run(inspectors.has_inspection_scope(WORKSHOP_ID, OVERSEER_ID)) is False
-    # The control: a real inspection row does satisfy it, so the assertion above is not passing
-    # because the predicate is broken for everybody.
     assert asyncio.run(inspectors.has_inspection_scope(WORKSHOP_ID, INSPECTOR_ID)) is True
 
 
 def test_an_inspection_row_does_not_satisfy_has_oversight_scope(world, sixth):
-    """The other direction, and it is not symmetry for its own sake.
-
-    An inspector wandering onto the officer's list would make ``GET
-    /design-workshop-oversight/assigned`` a second, differently-shaped read of the same workshops —
-    two places to look when somebody has access they should not — and would tell a ministry screen
-    that somebody is SUPERVISING a workshop when what they are doing is examining it.
-    """
     assert world.designworkshopinspector.rows, "the fixture must actually hold an inspection"
     assert asyncio.run(sixth.oversight.has_oversight_scope(WORKSHOP_ID, INSPECTOR_ID)) is False
     assert asyncio.run(sixth.oversight.has_oversight_scope(WORKSHOP_ID, OVERSEER_ID)) is True
 
 
 def test_a_viewer_row_does_not_satisfy_has_oversight_scope_either(sixth):
-    """The third pair, closing the triangle.
-
-    A co-designer holding a viewer row must not appear as the workshop's Assistant Director on a
-    document going to a ministry. This is the pair with no import-time guard behind it at all — the
-    viewer and oversight role sets are NOT disjoint (an ADMIN is in both ``DESIGN_WORKSHOP_ROLES``
-    and ``OVERSIGHT_ASSIGNER_ROLES``), so separation here rests entirely on the two tables.
-    """
     assert asyncio.run(sixth.oversight.has_oversight_scope(WORKSHOP_ID, VIEWER_ID)) is False
     assert asyncio.run(viewers.has_viewer_grant(WORKSHOP_ID, VIEWER_ID)) is True
 
 
 def test_the_two_clauses_are_different_expressions_over_different_relations():
-    """``inspectable_by_clause`` mirrors ``visible_to_clause`` in SHAPE and in nothing else.
-
-    Both are AND-composable relation filters, which is what lets a reader carry one function's
-    reasoning to the other. What must never converge is WHAT THEY READ: the viewer clause has a
-    ``createdById`` arm because a designer holds their own workshop, and the inspection clause
-    deliberately has one source and no fallback, so an inspector with no row sees nothing at all.
-    """
     theirs = viewers.visible_to_clause(INSPECTOR_ID)
     ours = inspectors.inspectable_by_clause(INSPECTOR_ID)
     assert ours == {"inspectors": {"some": {"userId": INSPECTOR_ID}}}
@@ -767,27 +393,12 @@ def test_the_two_clauses_are_different_expressions_over_different_relations():
 
 
 def test_the_tier_stays_out_of_the_designer_set_and_the_holders_overlap_it_by_ruling():
-    """**THE IMPORT-TIME DISJOINTNESS CHECK IS GONE, AND THIS IS WHAT REPLACED IT (2026-10-09).**
-
-    It used to assert that no role could hold both a viewer row and an inspection row, because a
-    viewer row carries stage WRITES and an inspection row is read-only. The owner's ruling put the
-    three administrator tiers in both sets on purpose — designers by role, inspectors by appointment
-    — so the guarantee moved to where it was always meant to be: ONE WORKSHOP. Nobody inspects a
-    workshop they authored, a viewer row is refused to its inspector, and its inspector's every write
-    is refused by ``load_workshop_or_404`` (``services/design_workshop_posts``, and the database tests
-    in ``test_admin_serve_as``).
-
-    What is still a fact about the SETS is pinned here: the inspector TIER writes no workshop by
-    role, and the holder set is that tier plus the three administrator tiers and nobody else — not
-    the professor and not the two directorate posts, who all outrank an inspector.
-    """
     assert frozenset({INSPECTOR}) == inspectors.INSPECTION_ROLES
     assert INSPECTOR not in deps.DESIGN_WORKSHOP_ROLES, (
         "INSPECTOR must stay out of DESIGN_WORKSHOP_ROLES, which is 'the people who sign the "
         "report'. Adding it hands the tier all eighteen _require_designer routes at once."
     )
     assert frozenset({INSPECTOR, *SERVING_ADMINS}) == inspectors.INSPECTION_HOLDER_ROLES
-    # THE OVERLAP IS EXACTLY THE RULING, and an import that refused it would not boot.
     overlap = inspectors.INSPECTION_HOLDER_ROLES & deps.DESIGN_WORKSHOP_ROLES
     assert overlap == frozenset(SERVING_ADMINS)
 
@@ -798,63 +409,22 @@ def test_the_tier_stays_out_of_the_designer_set_and_the_holders_overlap_it_by_ru
         assert inspectors.may_hold_an_inspection(_user(role)) is (role in SERVING_ADMINS), role
 
 
-# --------------------------------------------------------------------------------------
-# 4. NOTHING OUTSIDE THE FEATURE NAMES ITS PREDICATES
-# --------------------------------------------------------------------------------------
-
 
 BACKEND = Path(__file__).resolve().parents[1]
 APP = BACKEND / "app"
 
-#: The files this feature owns, and the one reader that consults it. Everything else in ``app/`` must be able to run without
-#: knowing the scope exists — that is what "a stranger to every write gate" means in practice.
 THE_FEATURE = {
     APP / "services" / "design_workshop_inspectors.py",
     APP / "api" / "routes" / "design_workshop_inspections.py",
     APP / "schemas" / "design_workshop_inspections.py",
-    # A READ, added 2026-10-18: the Monday summary counts and lists an inspector's workshops
-    # through this same clause, so it never shows one their inspection list would not. It writes
-    # nothing to a workshop and reaches no stage content; its module header says so.
     APP / "services" / "weekly_digest.py",
 }
 
-#: FILES THAT MAY SPEAK SOME OF THE NAMES BELOW, AND EXACTLY WHICH ONES.
-#:
-#: ⚠ **THIS IS NOT A SECOND ``THE_FEATURE``, AND THE DIFFERENCE IS THE WHOLE POINT.** A file in
-#: ``THE_FEATURE`` is exempt from ALL FOUR names; a file here is exempt from the ones it is listed
-#: with and from nothing else. The distinction matters because the four names are two different
-#: kinds of thing:
-#:
-#:   * ``has_inspection_scope`` / ``inspectable_by_clause`` / ``load_inspectable_workshop_or_404``
-#:     are PREDICATES. They decide who may reach a workshop, and a second caller is a second place
-#:     the scope is consulted from — which is the drift this section exists to catch.
-#:   * ``designworkshopinspector`` is a TABLE. Reading it to COUNT rows decides nothing at all.
-#:
-#: Added 2026-09-20, when ``GET /ministry-dashboard/inspectors`` landed and this sweep caught it —
-#: which is the sweep working, not the sweep being wrong. That route counts how many workshops each
-#: inspector holds and how much correction they filed, over workshop ids that
-#: ``ministry_dashboard._design_where`` has ALREADY scoped before the read happens. It consults no
-#: predicate, it reaches no stage content, it writes nothing, and its own module header says so.
-#:
-#: Adding a row here is a deliberate act with a cost: the file is then invisible to this sweep for
-#: that one name, so the test below it — which asserts the classified reader still speaks NONE of
-#: the three predicates — is the fence that makes the exemption safe. Add the fence with the row,
-#: never after it.
-#:
-#: Added 2026-10-17: ``services/design_workshop_review_aids`` COUNTS each queued workshop's inspector
-#: rows for its readiness chip ("1 of 2 inspectors: no corrections") over workshops the queue has
-#: already scoped. It consults no predicate and writes nothing to that table.
 CLASSIFIED_READERS: dict[Path, frozenset[str]] = {
     APP / "services" / "ministry_dashboard.py": frozenset({"designworkshopinspector"}),
     APP / "services" / "design_workshop_review_aids.py": frozenset({"designworkshopinspector"}),
 }
 
-#: The names that, spoken anywhere else, mean somebody has wired this scope into another path.
-#:
-#: The Prisma delegate is in the list and it is the one that matters most: a read of
-#: ``db.designworkshopinspector`` outside this feature is a second place the scope is consulted from,
-#: and the four places ``has_viewer_grant`` is consulted from are exactly the paths that would
-#: acquire it first.
 THE_NAMES = (
     "has_inspection_scope",
     "inspectable_by_clause",
@@ -864,31 +434,10 @@ THE_NAMES = (
 
 
 def test_no_other_module_names_the_inspection_predicates():
-    """**THE SWEEP.** The day somebody writes ``or await has_inspection_scope(...)`` beside a
-    ``has_viewer_grant`` call, this is what goes red.
-
-    That is not a hypothetical shape. ``has_viewer_grant`` is consulted from four modules and TWO
-    MORE reads do not go through it at all — ``questionnaire_forms._visible_questionnaire_where``
-    writes the relation filter by hand, and ``records._design_workshop_media_branches`` follows
-    ``visible_to_clause`` on its own written instruction "so the day that widens again the audio
-    widens with it". Following it with THIS clause hands an inspector the artisan's recorded voice.
-    Six sites, and missing one is not a cosmetic bug — which is exactly the argument
-    ``test_design_workshop_provisional_isolation`` makes for the mirror-image table.
-
-    A registry of forbidden names is blunt and deliberately so: the drift being defended against is
-    somebody reaching for an autocompleted symbol, and text is where that happens.
-
-    IF THIS FAILS AND THE NEW CALL SITE IS DELIBERATE: it is not a matter of adding the file here.
-    Adding a reader means the scope now decides something new, and the question to answer first is
-    whether that something is a READ. If it is, say so in the module header and add the file to
-    ``THE_FEATURE``. If it is a write, the answer is no.
-    """
     offenders: list[str] = []
     for path in sorted(APP.rglob("*.py")):
         if path in THE_FEATURE:
             continue
-        # A classified reader is exempt from the names it was classified FOR, and from no others.
-        # See `CLASSIFIED_READERS` for why that is not the same exemption `THE_FEATURE` grants.
         permitted = CLASSIFIED_READERS.get(path, frozenset())
         text = path.read_text(encoding="utf-8", errors="replace")
         lowered = text.lower()
@@ -905,19 +454,6 @@ def test_no_other_module_names_the_inspection_predicates():
 
 
 def test_a_classified_reader_speaks_the_table_and_none_of_the_predicates():
-    """**THE FENCE THAT MAKES THE EXEMPTION SAFE**, and it is the reason a row in
-    ``CLASSIFIED_READERS`` is not simply a hole in the sweep above.
-
-    A classified reader is invisible to that sweep for one name. This asserts, per file and by name,
-    that the exemption is still only the one it was granted: the ministry register may READ the
-    inspector table to count rows, and it may not speak a single predicate that DECIDES who reaches a
-    workshop. The day somebody writes ``inspectable_by_clause`` into that module — the autocompleted
-    symbol this whole section is defending against — the sweep above would stay green and this fails.
-
-    It also asserts the reader really does still speak its permitted name. A classification that
-    outlived its call site is a permanent hole nobody can see, so it has to be removed when the read
-    is, and being made to delete a row is the cheapest possible reminder.
-    """
     for path, permitted in CLASSIFIED_READERS.items():
         assert path.exists(), f"{path.relative_to(BACKEND)} is classified and does not exist"
         lowered = path.read_text(encoding="utf-8", errors="replace").lower()
@@ -940,12 +476,6 @@ def test_a_classified_reader_speaks_the_table_and_none_of_the_predicates():
 
 
 def test_the_sweep_actually_reaches_the_modules_it_is_defending():
-    """The backstop's backstop: a sweep that walks nothing passes for ever.
-
-    Names the four files whose paths this scope is most likely to be wired into and asserts the
-    sweep can actually see them — a typo in ``APP`` or a change to the tree layout would otherwise
-    turn the test above into a permanent, silent pass.
-    """
     seen = {p.relative_to(BACKEND).as_posix() for p in APP.rglob("*.py")}
     for expected in (
         "app/services/design_workshops.py",

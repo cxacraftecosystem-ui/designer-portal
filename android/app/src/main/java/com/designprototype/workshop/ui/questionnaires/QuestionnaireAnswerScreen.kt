@@ -56,38 +56,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/**
- * ONE SITTING, ONE SECTION AT A TIME. This is the screen a designer uses standing in a room.
- *
- * Everything about its shape follows from that. The whole form's answers are held in ONE map for the
- * life of the screen and only a section at a time is drawn — so moving between sections is instant
- * and cannot lose typing, while the composition stays the size of one section rather than of a
- * forty-question instrument. Saving is per section, because that is the unit of a conversation: you
- * finish talking about tools, you save, you move on, and if the phone dies on the way to the next
- * village the tools section is already recorded.
- *
- * THE FORM IS LOADED WITHOUT RETIRED QUESTIONS, and that is not an optimisation. A retired question
- * keeps the answers it already has and must never collect new ones — the server refuses the save with
- * a 422 naming the question — so offering one here would be offering a box whose contents are thrown
- * away at the end of the section. See the KDoc on `CustomQuestionnaireDto`.
- *
- * WHY THERE IS NO OFFLINE DRAFT. The design-workshop stages next door save to the device first, and
- * this deliberately does not: whether a question may still be answered is a fact only the server
- * holds (it can be retired between opening this screen and saving), so a queued batch would have to
- * be either refused later — losing the sitting the designer believed was recorded — or re-attached to
- * whatever wording replaced it, which fabricates evidence. Being told there is no signal, in the
- * room, while the answers are still on screen to be re-sent, is the honest failure.
- *
- * ── BUT THE FORM NOW OPENS WITH NO SIGNAL, AND THAT WAS A SEPARATE BUG ───────────────────────────
- *
- * The paragraph above is about WRITING, and it was silently doing duty for the read as well. This
- * screen used to hit the network to load the form, full stop — so a designer with no bars was shown
- * `loadError` where a 24-section instrument should be, and could not read the question they were
- * about to ask out loud, nor review what a colleague recorded that morning. None of that writes
- * anything. It is served from [DwQuestionnaireFormCache] now, the screen SAYS it is a copy and when
- * it was taken, and saving is refused up front rather than by letting the designer fill in a section
- * and then failing — see [cachedQuestionnaireNotice] and `offlineRefusal` below.
- */
 @Composable
 fun QuestionnaireAnswerScreen(
     repository: WorkshopRepository,
@@ -97,7 +65,6 @@ fun QuestionnaireAnswerScreen(
     onError: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
-    // The application context, so a cache read/write cannot outlive an Activity it holds.
     val appContext = LocalContext.current.applicationContext
 
     var form by remember(questionnaireId) { mutableStateOf<CustomQuestionnaireDto?>(null) }
@@ -107,44 +74,20 @@ fun QuestionnaireAnswerScreen(
     var sectionIndex by remember(questionnaireId, entryId) { mutableIntStateOf(0) }
     var showEntryEditor by remember { mutableStateOf(false) }
 
-    /*
-     * The typing, for the WHOLE questionnaire, not for the section on screen.
-     *
-     * That is the difference between a section switch that is free and one that either loses work or
-     * has to save first. A designer flicking back to section 2 to correct an answer they gave three
-     * minutes ago must find it exactly as they left it, saved or not.
-     */
     val answers = remember(questionnaireId, entryId) { mutableStateMapOf<String, String>() }
     val notes = remember(questionnaireId, entryId) { mutableStateMapOf<String, String>() }
 
-    /** What the server currently holds, so "changed" is a fact rather than a guess. */
     var baseline by remember(questionnaireId, entryId) {
         mutableStateOf<Map<String, Pair<String, String>>>(emptyMap())
     }
 
-    /**
-     * Questions whose answer this account may not overwrite.
-     *
-     * `save_answers` refuses a batch outright when it contains ONE answer somebody else recorded —
-     * the whole section fails, not the one question. Marking them here, before the designer types
-     * into them, is the difference between "that answer is Priya's" and forty answers refused at the
-     * end of a section with a message about a question the designer cannot pick out of the wall.
-     */
     var locked by remember(questionnaireId, entryId) { mutableStateOf<Set<String>>(emptySet()) }
 
-    /** M5: answers the last save did not write, by question id, with the server's sentence. */
     var problems by remember(questionnaireId, entryId) { mutableStateOf<Map<String, String>>(emptyMap()) }
 
     val me = remember { signedInUserId(repository) }
     val admin = remember { isAdminAccount(repository) }
 
-    /**
-     * Set when the form on screen came off this device's disk rather than off the network.
-     *
-     * The sentence is [cachedQuestionnaireNotice]'s, and it is drawn ABOVE the questions rather than
-     * beside the save button — a designer has to know they cannot record before they start asking,
-     * not after forty answers are typed.
-     */
     var cachedNotice by remember(questionnaireId) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(questionnaireId, entryId) {
@@ -152,8 +95,6 @@ fun QuestionnaireAnswerScreen(
         loadError = null
         cachedNotice = null
         runCatching {
-            // includeRetired = false. See the note in the KDoc above; this is the one caller that
-            // must never be handed a retired question.
             repository.customQuestionnaireCached(
                 context = appContext,
                 id = questionnaireId,
@@ -192,12 +133,6 @@ fun QuestionnaireAnswerScreen(
         loading = false
     }
 
-    /*
-     * M12 (21 Oct 2026): A SAVED COPY STEPS ASIDE WHEN THE SIGNAL RETURNS. The screen used to stay
-     * read-only for as long as it was open. Now, while it shows a copy, it re-reads the live form
-     * whenever the phone is online, and swaps it in WITHOUT touching the boxes: what the server
-     * holds becomes the baseline, and every answer typed meanwhile stays on screen, unsaved.
-     */
     LaunchedEffect(questionnaireId, entryId, cachedNotice != null) {
         while (cachedNotice != null) {
             delay(CACHED_COPY_RECHECK_MS)
@@ -222,14 +157,6 @@ fun QuestionnaireAnswerScreen(
     val entry = loaded?.entries?.firstOrNull { it.id == entryId }
     val sections = remember(loaded) { loaded?.sections?.filter { it.isActive }.orEmpty() }
 
-    /*
-     * THE TYPING, KEPT ON DISK UNTIL IT IS SAVED. The refusal below tells a designer holding a cached
-     * copy "your typing is still here — save when you have a signal", and until 2026-10-16 that was
-     * true only while the process lived. Keyed once the sitting has loaded, so the restore lands on
-     * top of what the server holds and a draft equal to it is simply dropped. Nothing here is ever
-     * SENT by itself — answering still needs the live form (see `save`); this only means nothing typed
-     * is lost before then.
-     */
     val draft = rememberFormDraft(
         key = if (!loading && entry != null) "qanswers:$questionnaireId:$entryId" else null,
         snapshot = {
@@ -246,22 +173,12 @@ fun QuestionnaireAnswerScreen(
         },
     )
 
-    /** Is this question's box different from what the server holds? */
     fun dirty(question: CustomQuestionDto): Boolean {
         val base = baseline[question.id] ?: ("" to "")
         return answers[question.id].orEmpty().trim() != base.first.trim() ||
             notes[question.id].orEmpty().trim() != base.second.trim()
     }
 
-    /**
-     * The batch for [questions].
-     *
-     * NOT "every question on the form", and not even every question in the section. A row is written
-     * for each answer sent, blank ones included, and the edit-after-answers rule counts a blank answer
-     * as no answer — so posting the whole section would fill the sitting with rows that assert
-     * nothing, and re-stamp `answeredById` across answers this saver never gave. Only genuine changes
-     * go, and a change to blank goes only when there is an existing row to clear.
-     */
     fun batchFor(questions: List<CustomQuestionDto>): List<CustomAnswerInputBody> =
         questions.mapNotNull { question ->
             if (question.id in locked) return@mapNotNull null
@@ -279,11 +196,6 @@ fun QuestionnaireAnswerScreen(
 
     fun save(questions: List<CustomQuestionDto>, thenAdvance: Boolean) {
         if (saving) return
-        // REFUSED BEFORE THE BATCH IS EVEN BUILT, and refused in words rather than by a network
-        // error. The form on screen is a copy this device kept; whether these questions may still be
-        // answered is a fact only the server holds. Letting the request go would produce an OkHttp
-        // sentence that reads as a fault in the app, and would leave the designer wondering whether
-        // some of it got through.
         if (cachedNotice != null) {
             onError(
                 "Can't save offline — this is a saved copy. Your answers are still here; save when online."
@@ -300,9 +212,6 @@ fun QuestionnaireAnswerScreen(
         scope.launch {
             runCatching { repository.saveCustomAnswers(questionnaireId, entryId, batch) }
                 .onSuccess { result ->
-                    // Merged from the RESPONSE (M5/M6, 21 Oct 2026): accepted answers are saved even
-                    // when others in the batch are refused, each refusal is shown on its question,
-                    // and rows the reply leaves out are kept rather than read as deleted.
                     val outcome = answerSaveOutcome(
                         result = result,
                         sent = batch.map { it.questionId },
@@ -320,10 +229,6 @@ fun QuestionnaireAnswerScreen(
                 }
                 .onFailure { error ->
                     if (error !is CancellationException) {
-                        // Surfaced verbatim. The server's 422s here are written for the person holding
-                        // the phone — "these questions have been retired and can no longer be
-                        // answered: …", "only the person who recorded this answer, or an admin, can
-                        // change it" — and nothing this screen could invent would say as much.
                         onError(error.apiErrorMessage("Those answers could not be saved."))
                     }
                 }
@@ -335,8 +240,6 @@ fun QuestionnaireAnswerScreen(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // ABOVE THE QUESTIONS, not beside the save button. A designer who is going to be refused a
-        // save has to know it before they start asking, not after a section is typed.
         FormDraftRestoredNote(draft)
         cachedNotice?.let { notice ->
             Text(
@@ -452,10 +355,6 @@ fun QuestionnaireAnswerScreen(
                     }
                 }
 
-                // The whole-form save exists for the end of a sitting, where a designer has walked
-                // back through three sections correcting answers and would otherwise have to remember
-                // which ones they touched. It sends only what changed, exactly like the per-section
-                // button — the two are the same operation over a different set of questions.
                 if (sections.size > 1) {
                     TextButton(
                         onClick = {
@@ -493,9 +392,6 @@ fun QuestionnaireAnswerScreen(
                             notes = entryNotes,
                         )
                     }.onSuccess { updated ->
-                        // Patched into the loaded form rather than re-fetched: a full reload would
-                        // re-seed the answer boxes from the server and throw away every unsaved
-                        // answer on screen, which is the one thing renaming a sitting must not do.
                         form = loaded?.copy(
                             entries = loaded.entries.map { row ->
                                 if (row.id == entryId) {
@@ -567,9 +463,6 @@ private fun AnswerHeader(
                         MaterialTheme.field.muted
                     )
                 }
-                // Stated in a colour and a number rather than left to the designer to remember. The
-                // one failure this screen can still produce is walking out of the room with a section
-                // typed and not sent, and a count is the only thing on screen that can say so.
                 if (unsaved > 0) {
                     QChip(
                         "$unsaved not saved yet",
@@ -587,13 +480,6 @@ private fun AnswerHeader(
     }
 }
 
-/**
- * Previous / next, plus a jump list once there are enough sections for stepping to be tedious.
- *
- * The jump list is a picker and not a row of chips because a questionnaire built in a spreadsheet
- * routinely has eight or twelve sections with long titles, and twelve chips on a phone wrap into a
- * block that pushes the first question off the screen.
- */
 @Composable
 private fun SectionNavigator(
     sections: List<CustomSectionDto>,
@@ -601,7 +487,6 @@ private fun SectionNavigator(
     onGo: (Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-        // Not an ActionRow: a pager (Previous · section count · Next).
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -637,13 +522,6 @@ private fun SectionNavigator(
     }
 }
 
-/**
- * One question and its answer.
- *
- * The NOTE box is always drawn rather than hidden behind a toggle. It is the field an interviewer
- * uses for "she hesitated here" and "answered for her husband as well", which is context that stops
- * being recorded at all the moment it costs a tap to reach.
- */
 @Composable
 private fun AnswerField(
     question: CustomQuestionDto,
@@ -665,31 +543,6 @@ private fun AnswerField(
         question.helpText?.takeIf { it.isNotBlank() }?.let {
             Text(it, color = MaterialTheme.field.muted, style = MaterialTheme.typography.bodySmall)
         }
-        /*
-         * ── THESE TWO CARRY A MICROPHONE, AND THE WEB'S ANSWER PAGE ALREADY DID ────────────────
-         *
-         * The owner, 2026-08-28: *"all the record pages should have dictation options available,
-         * wherever applicable so as to reduce the friction as much as possible."* This screen is a
-         * sitting of a DESIGNER-OWNED questionnaire — the plural `/questionnaires` family, not the
-         * ministry instrument at `/questionnaire` — and it is filled in beside the person answering.
-         * The answer box is the longest typing anywhere in this app.
-         *
-         * `frontend/app/(protected)/questionnaires/[id]/answer/page.tsx` has had a microphone on
-         * both of these since the dictation sweep (`OnDeviceDictationButton` beside each answer, and
-         * `DictatedTextArea` on the sitting's notes). Android drew five bare boxes. That is a parity
-         * gap in the direction the parity rule cares about least often and the owner cares about
-         * most: the handset is the device actually carried into the workshop.
-         *
-         * `RecordProseField` and not a hand-rolled control, for the reason its own header gives —
-         * one composable so twenty screens cannot drift in what dictation does or how it refuses.
-         * `rich = false`: an answer is a sentence, not a document, and the section-audio workflow
-         * beside it is where a long-form record of the sitting belongs.
-         *
-         * NO MICROPHONE WHILE LOCKED. `enabled = !locked` already greys the box; a live microphone
-         * over a box that cannot accept its text would transcribe a whole answer into nothing.
-         * `RecordProseField` forwards `enabled` to the field, and passing `dictate = !locked` is
-         * what stops the button drawing at all rather than drawing dead.
-         */
         RecordProseField(
             label = "Answer",
             value = answer,
@@ -744,19 +597,6 @@ private fun EntryDetailsDialog(
                     color = MaterialTheme.field.muted,
                     style = MaterialTheme.typography.bodySmall
                 )
-                /*
-                 * ── NO MICROPHONE ON THESE TWO, AND IT IS NOT AN OVERSIGHT ────────────────────
-                 *
-                 * Both are NAMES, and a recogniser is at its worst on a proper noun: it returns the
-                 * nearest dictionary word, and the respondent's name is the one string on this
-                 * screen a designer later searches the sittings by. The sitting's label defaults to
-                 * that same name, so it inherits the same argument.
-                 *
-                 * This is the split the record forms already make — an artisan's address and notes
-                 * get a microphone, the name, phone and e-mail do not — and the web's own answer
-                 * page states it in these words at the same two boxes. Copying the rule rather than
-                 * inventing a second one is the whole point of writing it down twice.
-                 */
                 OutlinedTextField(
                     value = respondent,
                     onValueChange = { respondent = it },
@@ -771,9 +611,6 @@ private fun EntryDetailsDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                /* Prose, and dictated at the START of a sitting standing in the room being
-                   described — the moment typing is most awkward. The web's `DictatedTextArea` on
-                   the same box, in the same dialog's shape. */
                 RecordProseField(
                     label = "Notes",
                     value = entryNotes,

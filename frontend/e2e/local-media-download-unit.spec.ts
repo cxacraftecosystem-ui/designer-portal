@@ -1,11 +1,3 @@
-/**
- * Download while uploading: the name a local file is saved under, and where the button is wired.
- *
- * The naming rules are pure and tested directly. The wiring is a source assertion, for this
- * repository's usual reason: there is no React renderer in devDependencies, so a button inside JSX
- * is only ever exercised by somebody looking at a screen.
- */
-
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -61,8 +53,6 @@ test.describe("localMediaFileName", () => {
     expect(localMediaFileName({ name: "..hidden.pdf", mimeType: "application/pdf", now: AT })).toBe("hidden.pdf");
   });
 
-  // NAMING 2.1: <Portal>_<IST date>_<HHMM>_<What>.<ext>. Asserted by shape for "now" (the runner's
-  // zone is not IST) and exactly for an instant whose IST reading is fixed.
   const DATED = (what: string, ext: string) =>
     new RegExp(`^${PORTAL}_\\d{4}-\\d{2}-\\d{2}_\\d{4}_${what}\\.${ext}$`);
 
@@ -73,7 +63,7 @@ test.describe("localMediaFileName", () => {
   });
 
   test("dates from the capture time when the caller has one, in IST", () => {
-    const captured = Date.UTC(2026, 0, 1, 21, 34, 5); // 03:04 on 2 January in IST
+    const captured = Date.UTC(2026, 0, 1, 21, 34, 5);
     expect(localMediaFileName({ mimeType: "audio/webm", capturedAt: captured, now: AT })).toBe(
       `${PORTAL}_2026-01-02_0304_Recording.webm`
     );
@@ -94,8 +84,6 @@ test.describe("localMediaFileName", () => {
 test.describe("every upload surface offers Download", () => {
   test("the shared button reads 'Download' with the repo's download icon", () => {
     const button = read("components", "media", "DownloadMediaButton.tsx");
-    // The tonal `MediaActionButton` since 2026-10-17 (the owner could not see the old 2px chip): the
-    // icon AND the word, 44px on a phone.
     expect(button).toContain('label="Download"');
     expect(button).toContain("icon={DOWNLOAD_ICON}");
     const action = read("components", "media", "MediaActionButton.tsx");
@@ -125,7 +113,6 @@ test.describe("every upload surface offers Download", () => {
       const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
       return (hi + 0.05) / (lo + 0.05);
     };
-    // purple-600 / purple-500 edges against the light card + surface-50 and the dark card + surface-50.
     for (const ground of ["#ffffff", "#faf9fd"]) expect(ratio("#9148d2", ground)).toBeGreaterThanOrEqual(3);
     for (const ground of ["#1a1725", "#201c2d"]) expect(ratio("#aa69e9", ground)).toBeGreaterThanOrEqual(3);
     expect(ratio("#5f1c93", "#f9f5ff"), "purple-800 on purple-50").toBeGreaterThanOrEqual(4.5);
@@ -141,8 +128,6 @@ test.describe("every upload surface offers Download", () => {
 
   const SURFACES: Array<[string[], string]> = [
     [["components", "forms", "MediaCaptureField.tsx"], "downloadLocalMedia(file)"],
-    // A questionnaire take (UNIFY 4.4 retired the global interview form that held its clips locally):
-    // the take is uploaded as it is recorded, and every take downloads under its server-given name.
     [["components", "questionnaire", "TakeSheet.tsx"], "href={questionnaireApi.downloadHref(r.id)} download={r.downloadName}"],
     [["components", "media", "UploadProgress.tsx"], "downloadLocalMedia(current)"],
     [["components", "media", "UploadProgress.tsx"], "downloadMediaUrl(item.file.url!"],

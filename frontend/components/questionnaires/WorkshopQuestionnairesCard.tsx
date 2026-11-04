@@ -12,12 +12,6 @@ import { questionnaireApi, type Annexure, type FormFor, type Recording } from "@
 import { qs } from "@/lib/questionnaire/qs";
 import { formHref, listForms, type PortalForm } from "@/lib/questionnairePortal";
 
-/**
- * A design workshop's Questionnaires card (UNIFY 4.2): the forms bound to it, grouped by kind with
- * the primary form first; Start session (on the primary form, with this workshop picked); and the
- * report annexure as it will print (A12), every live sitting with its answers. Drawn only while the
- * shared questionnaire is on; the forms' own page attaches and binds them.
- */
 export function WorkshopQuestionnairesCard({ designWorkshopId }: { designWorkshopId: string }) {
   const config = useQuestionnaireConfig();
   const on = Boolean(config?.v2Enabled);
@@ -29,7 +23,6 @@ export function WorkshopQuestionnairesCard({ designWorkshopId }: { designWorksho
   const [takes, setTakes] = useState<Recording[] | null>(null);
   const goChip = useChipNavigator();
 
-  // The workshop's latest takes with their chips (owner, 31 Oct 2026); the rest are on Recordings.
   useEffect(() => {
     if (!on) return;
     let cancelled = false;

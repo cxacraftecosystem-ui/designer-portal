@@ -1,24 +1,3 @@
-"""Reconcile QuestionnaireInterview.artisanSetKey with each interview's CURRENT artisan links.
-
-The key is ``"<workshopId>|<designWorkshopId>|<sorted artisan ids>"`` since 2026-09-20 — the workshop
-SCOPE is part of it, so "the same artisan set" below always means "the same artisan set AT THE SAME
-WORKSHOP". Two workshops interviewing the same people are two legitimate rows and this script must
-never fold them together; that is why every recompute here reads the row's own workshop columns.
-
-Why: an out-of-band change to the artisan links (e.g. the artisan-merge script) can leave the
-denormalised ``artisanSetKey`` stale, and can make two interviews share the same actual artisan set.
-Editing such an interview recomputes the key and collides with the sibling -> HTTP 409. This script
-heals both: it consolidates duplicate-set interviews into one canonical row (re-pointing media and
-responses, like the idempotency migration) and rewrites every surviving key to match its links.
-
-Order is collision-safe: NULL every key first (NULLs are exempt from the unique index), consolidate,
-then set the correct keys (one survivor per set, so no two writes ever clash).
-
-Usage:
-    python -m scripts.reconcile_interview_set_keys            # DRY RUN
-    python -m scripts.reconcile_interview_set_keys --execute  # apply
-"""
-
 import asyncio
 import sys
 from collections import defaultdict
@@ -40,11 +19,6 @@ async def main() -> None:
         correct_key: dict[str, str | None] = {}
         by_key: dict[str, list[str]] = defaultdict(list)
         for iv in interviews:
-            # THE ROW'S OWN WORKSHOP COLUMNS, because the key carries the workshop scope since
-            # 2026-09-20 (see ``questionnaire.artisan_set_key``). Recomputing without them would
-            # rewrite all 44 keys to the unattached spelling and then collapse every workshop's
-            # sitting into whichever one happened to be consolidated first — this script would become
-            # the data loss it was written to repair.
             key = artisan_set_key(
                 [link.artisanId for link in (iv.artisans or [])],
                 workshop_id=iv.workshopId,
@@ -58,17 +32,14 @@ async def main() -> None:
         dup_groups = {k: v for k, v in by_key.items() if len(v) > 1}
         print(f"interviews={len(interviews)} stale_keys={len(stale)} duplicate_set_groups={len(dup_groups)}")
 
-        # Phase 1: clear all keys so later writes can't transiently collide.
         if execute:
             await db.questionnaireinterview.update_many(where={}, data={"artisanSetKey": None})
 
-        # Phase 2: consolidate duplicate-set interviews into a canonical survivor.
-        survivors: dict[str, str] = {}  # key -> survivor interview id
+        survivors: dict[str, str] = {}
         for key, ids in by_key.items():
             if len(ids) == 1:
                 survivors[key] = ids[0]
                 continue
-            # Pick canonical = most media, tie-break earliest createdAt then id.
             counts = {i: await media_count(i) for i in ids}
             iv_by_id = {iv.id: iv for iv in interviews}
             canonical = min(ids, key=lambda i: (-counts[i], iv_by_id[i].createdAt, i))
@@ -89,7 +60,6 @@ async def main() -> None:
                         where={"linkedRecordType": "questionnaireinterview", "linkedRecordId": dup},
                         data={"linkedRecordId": canonical},
                     )
-                    # Move responses that don't collide; the cascade drops the colliding ones on delete.
                     dup_resp = await db.questionnaireresponse.find_many(where={"interviewId": dup})
                     for r in dup_resp:
                         clash = await db.questionnaireresponse.find_first(
@@ -101,7 +71,6 @@ async def main() -> None:
                             )
                     await db.questionnaireinterview.delete(where={"id": dup})
 
-        # Phase 3: write the correct key onto each survivor.
         for key, survivor in survivors.items():
             if execute:
                 await db.questionnaireinterview.update(

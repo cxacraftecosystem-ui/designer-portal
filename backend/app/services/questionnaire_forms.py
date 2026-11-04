@@ -1,74 +1,3 @@
-"""Custom questionnaires: reading them, writing them, and the one rule that governs editing them.
-
-A designer downloads the .xlsx pro-forma, types their own questions into it, uploads it, and then
-records answers against it in the platform. This module is everything between the parsed spreadsheet
-(:mod:`app.services.questionnaire_xlsx`) and the database.
-
-================================================================================================
-THE EDIT-AFTER-ANSWERS RULE
-================================================================================================
-
-What happens when a designer edits a questionnaire that people have already answered? It is the
-question this feature lives or dies on, because both easy answers are wrong:
-
-* **Let the edit through.** A question reading "How many looms do you own?" is answered "12". The
-  designer later rewords it to "How many weavers work with you?". Nothing in the database changed
-  except one string — and the repository now asserts that this artisan works with twelve weavers.
-  Nobody edited an answer. Nobody will ever find it. It goes into a report submitted to a ministry.
-* **Refuse the edit.** A designer who typed a question wrongly, or spotted a translation error after
-  the first interview, is told their questionnaire is frozen forever. They work around it by
-  uploading a second questionnaire, and the answers they have already collected are stranded on the
-  first one.
-
-THE RULE, in one line: **an answer is evidence, and the words it was given under are part of that
-evidence.** So the wording an answer was recorded against is immutable, and everything else is not.
-Concretely, and this is exactly what the code below does:
-
-1. A question **nobody has answered** is fully editable and can be deleted outright. This is the
-   ordinary case — a designer drafting their form — and it must stay frictionless.
-
-2. A question **with answers** can still have its help text, its required flag and its position
-   changed. None of those alter what a recorded answer asserts.
-
-3. Rewording a question **with answers** SUPERSEDES it. The original question is retired with its
-   original wording and keeps its answers; the new wording is stored as a NEW question in the same
-   place. Both are in the record, linked by ``supersededById``. No answer ever changes meaning, and
-   the designer still gets the correction they asked for. Nothing is refused and nothing is lost.
-
-4. Deleting a question **with answers** RETIRES it: it stops being asked, and its answers stay
-   readable and exportable. Deleting is only ever a real delete when there is nothing to orphan.
-
-5. The same for a section: retired if anything under it has been answered, deleted if not. A section
-   *title* may be changed freely even when answered — a heading is not what an answer answers.
-
-6. ``Questionnaire.version`` increments on every supersede and every retire, so a client holding a
-   cached copy of the form can tell it is stale with an integer compare.
-
-Rule 4 is also enforced one layer down, in the database: ``QuestionnaireFormAnswer.questionId`` is
-``ON DELETE RESTRICT``. A rule that lives only in Python is one ``delete_many`` away from silently
-orphaning a fortnight of somebody's fieldwork, and the person who writes that ``delete_many`` will
-not have read this docstring.
-
-================================================================================================
-MATCHING A RE-UPLOADED SPREADSHEET TO THE QUESTIONS ALREADY STORED
-================================================================================================
-
-None of the above means anything unless a re-uploaded workbook can be matched to the questions that
-are already there. Three ways, tried in order:
-
-1. **The Question ID column.** Filled in on every questionnaire downloaded back out of the app, and
-   the reason that column exists. An id belonging to a DIFFERENT questionnaire is reported rather
-   than silently honoured — that is a designer who uploaded the wrong file, and the cost of guessing
-   is somebody else's questions grafted onto their form.
-2. **Exact prompt text within the same section.** This is what carries the designer who built their
-   form from scratch in Excel, never downloaded it back, and re-uploads an edited copy with no ids
-   in it. Without this fallback every question in that file would read as new, the entire existing
-   form would retire in one go, and an answered questionnaire would come back doubled.
-3. Otherwise it is a new question.
-
-Anything present in the database and absent from the upload is removed under rule 4.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
@@ -88,24 +17,18 @@ from app.services.questionnaire_xlsx import (
     derive_section_code,
 )
 
-# The report annexure's value objects, imported rather than re-declared. ``report_questionnaires``
-# is pure — it reaches ``report_model`` and nothing else, never the database — so this direction of
-# the dependency is the safe one and there is no cycle: the report pipeline imports THIS module.
-# Two shapes for one thing would drift, and the drift would show as the annexure printing a field
-# the loader stopped filling.
 from app.services.report_questionnaires import (
     QuestionnaireAnswer,
     QuestionnaireItem,
     QuestionnaireSitting,
 )
 
-# The label an answer column with no name of its own becomes. See ParsedQuestionnaire.entryLabels.
 UPLOAD_ENTRY_SOURCE = "UPLOAD"
 APP_ENTRY_SOURCE = "APP"
 
 
 class QuestionnaireEditError(ValueError):
-    """An edit that cannot be applied at all, with a message written to be shown to the designer."""
+    pass
 
 
 def _now() -> datetime:
@@ -113,62 +36,15 @@ def _now() -> datetime:
 
 
 def visible_questionnaire_where(user: Any) -> dict[str, Any]:
-    """The row filter for "questionnaires this designer may see".
-
-    AND-COMPOSED BY THE CALLER, NEVER ASSIGNED TO ``where["OR"]``. The list endpoint already spends
-    ``OR`` on its search box, so writing this as a top-level ``OR`` would silently replace the
-    search and widen the result set — the identical trap the design-workshop list hit when viewer
-    grants were added there. Returning a fragment for ``where["AND"]`` makes that mistake impossible
-    to make.
-
-    ── IT LIVES HERE, IN THE SERVICE, BECAUSE IT NOW HAS A SECOND SURFACE (2026-09-03) ────────────
-
-    It was ``routes/questionnaire_forms._visible_questionnaire_where`` and is still reachable under
-    that name — the route keeps a one-line alias, so its three call sites and everything that reads
-    them are unchanged. What moved it is ``REFERENCE_MODELS["Questionnaire"]``: stage 7's survey plan
-    now cites the instrument it will use through a picker, and a picker over this table has to be
-    narrowed by exactly the rule the LIST is narrowed by, or a designer would be offered a colleague's
-    private form to cite in a ministry's report. ``design_workshops`` cannot import a route module
-    (that route imports it, so the cycle is real), and the alternative to moving it was a second copy
-    of a four-clause visibility rule in a second file — two rules that can disagree, where the one
-    that wins is the one nobody notices is wider.
-
-    ITS SIBLING DELIBERATELY DID NOT MOVE. The attach-to-workshop dropdown in that route composes
-    ``ownerId == me OR isShared`` BY HAND and says why in as many words: it offers what a designer may
-    ATTACH, which is narrower than what they may SEE. That is a different question and it keeps its
-    own answer.
-    """
     return {
         "OR": [
             {"ownerId": user.id},
             {"designWorkshop": {"is": {"createdById": user.id, "deletedAt": None}}},
             {"designWorkshop": {"is": {"deletedAt": None, "viewers": {"some": {"userId": user.id}}}}},
-            # ── THE FOURTH CLAUSE: THE PUBLISHED DEFAULT, added 2026-08-28 ──────────────────────
-            #
-            # An administrator's standard instrument, marked ``isShared``. The other three clauses
-            # are all "yours, or your workshop's", so a form that belongs to EVERY workshop matched
-            # none of them and was invisible to every designer while sitting in the table — which is
-            # what the owner reported. See ``Questionnaire.isShared`` in schema.prisma for why this
-            # is a column somebody SET rather than a convention inferred from the owner's role or
-            # from the absence of a workshop.
-            #
-            # ``isActive`` IS PART OF THE CLAUSE AND NOT LEFT TO THE CALLER. Two of this function's
-            # three callers pass ``activeOnly=True`` and one does not, and a retired instrument must
-            # stop appearing in everybody's picker the moment it is retired — a shared form is the
-            # one row where "still listed after retirement" is wrong for every designer at once
-            # rather than for its author. The pair is indexed together for the same reason.
-            #
-            # IT ADMITS THE FORM AND NOTHING ELSE. ``read_questionnaire`` still narrows ``entries``
-            # to the caller's own sittings unless they own the form, are an admin, or work on its
-            # workshop; that check reads ``ownerId`` / ``_works_on_this_questionnaires_workshop``
-            # and does NOT consult this flag, deliberately. Adding it there would turn one published
-            # instrument into a window onto every respondent's name and answers in the repository.
             {"isShared": True, "isActive": True},
         ]
     }
 
-
-# --- Reading ------------------------------------------------------------------------------------
 
 
 async def load_form(
@@ -177,32 +53,10 @@ async def load_form(
     include_retired: bool = False,
     only_entries_of: str | None = None,
 ) -> dict[str, Any] | None:
-    """One questionnaire with its sections, questions, sittings and answers, ready to serialise.
-
-    FOUR queries, flat, regardless of how big the form is — not a nested ``include``, which Prisma
-    issues as its own sequential round trip per level and which on this deployment is a cross-region
-    hop each. A twelve-section questionnaire would otherwise cost a dozen.
-
-    ``include_retired`` is what the EDITOR asks for and the ANSWER SCREEN does not: a retired
-    question must still be visible where its recorded answers are read, and must never be offered
-    for a new answer.
-
-    ``only_entries_of`` NARROWS THE SITTINGS TO ONE PERSON'S, and exists because reading the form
-    is deliberately open to any designer — a colleague handed the form has to be able to fill it
-    in (see the note on ``/questionnaires`` in frontend/lib/permissions.ts) — while the sittings
-    recorded against it are not the same kind of thing as the questions. Each one carries a
-    respondent's NAME, the interviewer's notes and every recorded answer, and that rode along on
-    the form payload to anyone holding the id. The questions are the instrument; the sittings are
-    the fieldwork, and only the person who recorded them, the owner and an admin see all of them.
-    ``hasAnswers`` is still computed over EVERY answer, because whether a question may be reworded
-    is a fact about the question and not about who is looking at it.
-    """
     questionnaire = await db.questionnaire.find_unique(where={"id": questionnaire_id})
     if questionnaire is None or questionnaire.deletedAt is not None:
         return None
 
-    # UNIFIED (UNIFY U5): the form's structure lives in the instrument tables and its sittings are
-    # sessions; the old form tables are read-only legacy. See ``app/questionnaire/forms.py``.
     unified = await unified_forms.form_unified(questionnaire_id)
     T = unified_forms.tables(db, unified)
     sections = await T.sections.find_many(
@@ -264,9 +118,6 @@ async def load_form(
                         "isActive": q.isActive,
                         "retiredAt": q.retiredAt,
                         "supersededById": q.supersededById,
-                        # The single fact every client needs in order to show the right affordances:
-                        # a question with answers cannot be reworded in place or removed, and the UI
-                        # should say so BEFORE the designer types, not after they press save.
                         "hasAnswers": q.id in answered_ids,
                     }
                     for q in by_section.get(section.id, [])
@@ -278,11 +129,6 @@ async def load_form(
     for answer in answers:
         answers_by_entry.setdefault(answer.entryId, []).append(answer)
 
-    # Filtered here rather than in the query above, so ``answered_ids`` — and therefore every
-    # question's ``hasAnswers`` — still sees the whole form. Narrowing the query would tell a
-    # colleague they may reword a question that in fact already carries somebody else's answers.
-    # A soft-deleted sitting is narrowed out here for the same reason: its answers still pin their
-    # questions (``ON DELETE RESTRICT`` counts them, and a restore brings them back).
     visible_entries = [
         e
         for e in entries
@@ -296,18 +142,8 @@ async def load_form(
         "ownerId": questionnaire.ownerId,
         "designWorkshopId": questionnaire.designWorkshopId,
         "isActive": questionnaire.isActive,
-        # PUBLISHED TO EVERY DESIGNER — the "default questionnaire". On the single read as well as on
-        # the list and the options, because this is the payload the DETAIL page renders and that page
-        # is where an admin turns it on and off. A screen that could set a flag it cannot see would
-        # be a toggle with no state.
         "isShared": questionnaire.isShared,
-        # THE GLOBAL DEFAULT (UNIFY B32): the form a session is offered when nothing is bound to its
-        # workshop or the workshop's kind. An admin sets it on this page, so the page must read it.
         "isDefault": bool(getattr(questionnaire, "isDefault", False)),
-        # THE KIND, AND ITS LABEL. On the single read as well as on the list, because this payload is
-        # what the DETAIL page renders and the detail page is where the kind is set — a screen that
-        # could write a value it cannot read back would be a picker with no state, exactly as
-        # ``isShared`` above would have been.
         "kind": questionnaire.kind,
         "kindLabel": label_for(questionnaire.kind),
         "version": questionnaire.version,
@@ -344,44 +180,10 @@ async def load_form(
 
 
 async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
-    """Every questionnaire attached to one design workshop, as the report annexure reads it.
-
-    FIVE FLAT QUERIES REGARDLESS OF HOW MANY QUESTIONNAIRES ARE ATTACHED, for the reason
-    :func:`load_form` is flat: on this deployment the database is in another AWS region and a nested
-    Prisma ``include`` is its own sequential round trip per level, so a per-questionnaire
-    ``load_form`` loop would cost four hops times the number of forms on a path — report generation —
-    that already measured 6.8 s of pure network before it was made to gather.
-
-    RETIRED QUESTIONS ARE INCLUDED, exactly as :func:`export_payload` includes them and for the same
-    reason: an answer recorded against a question that was later reworded stays attached to the
-    WORDING IT WAS GIVEN UNDER (``QuestionnaireFormQuestion.supersededById``), and dropping the old
-    wording would either lose the answer or, worse, reprint it under the new question — which is the
-    "twelve looms becomes twelve weavers" failure the supersede rule exists to prevent, arriving in a
-    ministry report by a different door.
-
-    DEACTIVATED QUESTIONNAIRES ARE NOT INCLUDED. ``PATCH {isActive: false}`` is what this API has
-    INSTEAD of a delete (see the route module's docstring): it takes the form out of every list and
-    every dropdown while keeping the answers. The report is a list. Printing a questionnaire the
-    designer has retired would make this the one surface where a deleted record comes back, in the
-    document that is hardest to retract.
-
-    NO PERMISSION FILTER HERE, AND THAT IS CORRECT RATHER THAN AN OMISSION — the one thing to check
-    before adding a second caller. The sittings recorded against a questionnaire are readable by its
-    owner, an admin, or anyone who works on the design workshop it is attached to
-    (``_works_on_this_questionnaires_workshop`` in api/routes/questionnaire_forms.py). Generating a
-    report for a design workshop requires passing ``load_workshop_or_404``, which admits the
-    workshop's creator, a ``DesignWorkshopViewer`` grant holder, and an admin — a SUBSET of that set,
-    since the attachment is what puts the questionnaire inside the workshop's own access boundary. So
-    every caller of this function is already entitled to every row it returns, and the server, not a
-    client, is what decides that. A caller reaching this from anywhere other than a design-workshop
-    report must re-establish the same thing rather than assume it.
-    """
     questionnaires = await db.questionnaire.find_many(
         where={"designWorkshopId": design_workshop_id, "isActive": True, "deletedAt": None},
         order={"createdAt": "asc"},
     )
-    # With QUESTIONNAIRE_V2 on, every form BOUND to the workshop (several per workshop, UNIFY U5)
-    # prints, and each live session on it is a sitting (C10). Nothing changes while it is off.
     from app.services import questionnaire_readers
 
     bound = await questionnaire_readers.forms_for_design_workshop(design_workshop_id)
@@ -398,8 +200,6 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
     )
 
     ids = [q.id for q in questionnaires]
-    # A UNIFIED form (UNIFY U5) reads its structure from the instrument tables and its sittings are
-    # its sessions only (``v2_sittings`` below): its old-table copy is legacy and is not printed.
     unified_ids = await unified_forms.unified_form_ids(ids)
     legacy_ids = [i for i in ids if i not in unified_ids]
     order = [{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}]
@@ -434,21 +234,6 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
     questions = [*(legacy_questions or []), *(unified_questions or [])]
     entries = entries or []
 
-    # THE ORDER OF THIS LIST IS THE ORDER THE ANNEXURE PRINTS, and it is built once here rather than
-    # sorted per sitting: section position first, then question position, which is the order the
-    # designer wrote the form in and the order the .xlsx download uses. A sitting is then a lookup
-    # against it, so two sittings of the same form cannot come out in two different orders — which,
-    # in a document read side by side with another respondent's answers, is what makes it comparable.
-    #
-    # WALKED SECTION BY SECTION, AND IT MUST BE. `QuestionnaireFormQuestion.sortOrder` is scoped to
-    # its SECTION — the upload numbers `enumerate(section.questions, start=1)` and the create route
-    # takes `max(sortOrder) + 1` over the section's siblings alone — so the flat query above, ordered
-    # by sortOrder across every section at once, comes back INTERLEAVED: A1, B1, A2, B2. Appending in
-    # that order printed one single-row table per question with the section label repeated above each,
-    # A/B/A/B down the page, in the appendix of evidence handed to a ministry officer. `load_form` is
-    # safe from the same query only because it re-buckets by `sectionId` before it emits; this does
-    # the same, so the per-section order the query does give (sortOrder, then createdAt) is kept and
-    # the section order comes from `sections`, which IS globally ordered within one questionnaire.
     questions_by_section: dict[str, list[Any]] = {}
     for question in questions or []:
         questions_by_section.setdefault(question.sectionId, []).append(question)
@@ -504,14 +289,7 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
                 description=str(questionnaire.description or ""),
                 version=int(questionnaire.version or 1),
                 source_filename=str(questionnaire.sourceFilename or ""),
-                # WHAT KIND OF INSTRUMENT THIS IS, and therefore which stage of the report its
-                # answers are filed under. ``None``/``""`` means the designer has not said, and the
-                # annexure prints an unstated form exactly as it printed every form before this
-                # column existed — see ``report_questionnaires._stage_group``.
                 kind=str(questionnaire.kind or ""),
-                # The questions the form ASKS today. Retired ones are printed where they carry an
-                # answer but are not counted here, because this number is what a reader compares
-                # against the instrument, and the instrument no longer contains them.
                 question_count=sum(1 for _s, q in pairs if q.isActive) or v2_sittings.get(
                     questionnaire.id, {}
                 ).get("questionCount", 0),
@@ -522,18 +300,10 @@ async def report_items(design_workshop_id: str) -> list[QuestionnaireItem]:
 
 
 async def _none() -> list[Any]:
-    """An awaitable empty result, so the gather above stays one shape rather than two branches."""
     return []
 
 
 async def export_payload(questionnaire_id: str) -> dict[str, Any] | None:
-    """``load_form`` reshaped into what ``build_questionnaire_workbook`` wants.
-
-    Retired questions ARE included, with their original wording and their answers. A download that
-    quietly dropped them would be a download that loses recorded fieldwork, and re-uploading it
-    would then read as "the designer deleted these" — the round trip has to be lossless in both
-    directions or it is not a round trip.
-    """
     form = await load_form(questionnaire_id, include_retired=True)
     if form is None:
         return None
@@ -581,31 +351,6 @@ async def export_payload(questionnaire_id: str) -> dict[str, Any] | None:
 
 
 async def load_question_set(questionnaire_id: str) -> dict[str, Any] | None:
-    """The INSTRUMENT alone: sections, questions, order, help text, required flags. No fieldwork.
-
-    ================================================================================================
-    WHY THIS IS ITS OWN LOADER AND NOT ``load_form`` WITH THE SITTINGS DROPPED
-    ================================================================================================
-
-    Because a filter is a thing somebody can forget, and a query is not. ``load_form`` reads the
-    entries and every answer under them and then hands them to its caller; a questions-only export
-    built on top of it would be one careless ``dict`` spread — or one new key added to ``load_form``
-    for some other screen — away from putting a respondent's name back into a file that is
-    explicitly advertised as carrying none. This function never issues those two queries at all, so
-    the artefact it feeds physically cannot contain an answer. That property is worth three extra
-    lines of Prisma.
-
-    ONLY ACTIVE SECTIONS AND ACTIVE QUESTIONS. A retired question is kept in the database because
-    answers hang off it, not because it is still part of the instrument — see
-    ``build_question_set_workbook`` for why sending one would plant a question the sender
-    deliberately replaced into the receiver's brand-new form.
-
-    THE QUESTIONS ARE RE-BUCKETED BY SECTION, and that is not tidying. ``sortOrder`` is scoped to the
-    SECTION (each section's questions are numbered from 1), so this flat query — ordered by sortOrder
-    across every section at once — comes back INTERLEAVED: A1, B1, A2, B2. ``report_items`` printed a
-    ministry annexure that way once; the fix there is the same one made here, and any future reader
-    of this table has to make it too.
-    """
     questionnaire = await db.questionnaire.find_unique(where={"id": questionnaire_id})
     if questionnaire is None or questionnaire.deletedAt is not None:
         return None
@@ -634,10 +379,6 @@ async def load_question_set(questionnaire_id: str) -> dict[str, Any] | None:
         "title": questionnaire.title,
         "description": questionnaire.description,
         "ownerId": questionnaire.ownerId,
-        # THE KIND TRAVELS WITH THE INSTRUMENT. ``reuse_questionnaire`` reads it from here so a copy
-        # inherits it, and the question-set workbook does not print it — this key exists for the
-        # copy, not for the spreadsheet. See ``QuestionnaireReuse.kind`` for why inheriting is right
-        # for the kind while inheriting the WORKSHOP would be wrong.
         "kind": questionnaire.kind,
         "version": questionnaire.version,
         "sections": [
@@ -661,15 +402,6 @@ async def load_question_set(questionnaire_id: str) -> dict[str, Any] | None:
 
 
 async def export_question_set_payload(questionnaire_id: str) -> dict[str, Any] | None:
-    """``load_question_set`` reshaped into what ``build_question_set_workbook`` wants.
-
-    THE QUESTION ID IS BLANKED HERE, deliberately and visibly, rather than simply not being fetched.
-    It is fetched — ``load_question_set`` returns it, because a JSON preview of "what is in this
-    file" wants a stable key per row — and it is dropped at exactly the point the WORKBOOK is built.
-    Keeping the drop on this line, next to the empty ``answers``, is what makes the whole rule
-    readable in one place: what leaves this function is prompt, help text, required flag and
-    position, and nothing that ties a row to the sender's database or to anybody's answer.
-    """
     form = await load_question_set(questionnaire_id)
     if form is None:
         return None
@@ -699,14 +431,7 @@ async def export_question_set_payload(questionnaire_id: str) -> dict[str, Any] |
 
 
 def _entry_label(entry: dict[str, Any], taken: list[str]) -> str:
-    """A column heading for one sitting, unique within the workbook.
-
-    Uniqueness is not cosmetic: the heading is what pairs "Answer — Ramesh" back to "Notes — Ramesh"
-    on re-upload, so two sittings sharing a heading would merge into one on the way back in.
-    """
     base = (entry.get("respondentName") or entry.get("title") or "Answer").strip() or "Answer"
-    # The parser splits a heading on dashes and colons to find this label, so a label carrying one
-    # would come back truncated.
     base = base.replace("—", " ").replace("–", " ").replace("-", " ").replace(":", " ")
     base = " ".join(base.split())[:40] or "Answer"
     candidate = base
@@ -717,17 +442,8 @@ def _entry_label(entry: dict[str, Any], taken: list[str]) -> str:
     return candidate
 
 
-# --- Writing: creating a questionnaire from an uploaded workbook --------------------------------
-
 
 def _uploaded_answer_rows(parsed: ParsedQuestionnaire) -> int:
-    """How many answer rows this workbook would write, counted exactly as the writer counts them.
-
-    Derived rather than approximated by ``len(parsed.entryLabels)``: a workbook can carry six answer
-    COLUMNS and one answer, and a number that said "six" would make the provenance sentence below
-    lie about the size of what it just refused to import. ``answerNotes`` counts too — a row with
-    only a note and no answer text still produces a row.
-    """
     total = 0
     for label in parsed.entryLabels:
         for section in parsed.sections:
@@ -738,25 +454,6 @@ def _uploaded_answer_rows(parsed: ParsedQuestionnaire) -> int:
 
 
 def _came_out_of_the_platform(parsed: ParsedQuestionnaire) -> str | None:
-    """Whether this workbook is a DOWNLOAD of a questionnaire rather than a hand-filled pro-forma.
-
-    Returns a short clause naming the evidence, or ``None`` when nothing says it came out of the app.
-
-    TWO SIGNALS, BOTH OF THEM WRITTEN ONLY BY ``build_questionnaire_workbook``:
-
-    1. ``Questionnaire ID`` on the Details sheet.
-    2. Any filled-in cell in the ``Question ID`` column.
-
-    The pro-forma writes both blank and the question-set export writes both blank, so a designer who
-    typed their own paper interviews into a spreadsheet trips neither — which is the ordinary,
-    documented, intended path and it must stay frictionless.
-
-    THE SECOND SIGNAL IS NOT REDUNDANT. A designer who deletes one cell on the Details sheet, or who
-    copies the Questionnaire sheet into a fresh file (losing the Details sheet entirely), would
-    otherwise arrive here looking exactly like somebody's own typing while carrying a stranger's
-    respondents. Neither signal can be removed without re-opening that door, and asking for both is
-    the difference between a rule and a courtesy.
-    """
     origin = (parsed.questionnaireId or "").strip()
     if origin:
         return f"its Details sheet names questionnaire {origin}"
@@ -780,64 +477,6 @@ async def create_from_parsed(
     source_filename: str | None = None,
     user: Any = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Store a freshly parsed workbook as a new questionnaire. Returns ``(id, change report)``.
-
-    UNIFIED (UNIFY U5, once the migration's apply ran): the sections and questions go to the
-    instrument tables, and a hand-filled workbook's answers become WORKBOOK sessions (one per answer
-    column, its heading the guest respondent; ``app/questionnaire/library.import_workbook_answers``),
-    exactly as Field Repository stores them. ``user`` is the uploader, who leads those sessions.
-
-    Answers the workbook already carried are stored as ordinary sittings with ``source="UPLOAD"``,
-    which is what stops there being two different kinds of answer in the system: a designer who
-    typed their interviews into the spreadsheet and one who typed them into the app end up with the
-    same rows, so everything downstream — the edit rules, the export, the answer screen — needs no
-    special case for either.
-
-    ================================================================================================
-    …UNLESS THE ANSWERS ARE ALREADY RECORDED SOMEWHERE ELSE. THIS PARAGRAPH IS A BUG FIX.
-    ================================================================================================
-
-    WHAT THIS USED TO DO. It ignored ``parsed.questionnaireId`` entirely and called
-    ``_store_uploaded_answers`` unconditionally, with ``answeredById`` and ``createdById`` both set
-    to the UPLOADER. So designer B, handed designer A's downloaded workbook — the only artefact that
-    existed, because there was no questions-only export — uploaded it and silently acquired A's
-    respondents' answers as B's own recorded fieldwork, under B's name, in B's report annexure. No
-    screen said it had happened. Nobody edited an answer. The interview simply changed hands, and
-    ``QUESTIONNAIRE_ANNEXURE`` is in all six report templates, so it changed hands into a document
-    submitted to a ministry.
-
-    THE RULE NOW, and the reasoning for it rather than a permission check. A workbook that came out
-    of this platform (see ``_came_out_of_the_platform``) imports its QUESTIONS ONLY. Its answers are
-    NOT re-recorded — not refused, not re-attributed, simply not written a second time — because
-    they already exist in the database, attached to the questionnaire the file names, with their
-    true authors on them. Writing them here would not be importing anything; it would be DUPLICATING
-    somebody's fieldwork and stamping a new author on the copy, so the same interview would print
-    twice under two different designers' names.
-
-    NOTE THAT THIS HOLDS FOR THE OWNER TOO, and that is deliberate rather than an oversight about
-    convenience. A designer who downloads their own answered questionnaire and uploads it as a NEW
-    one is FORKING the instrument; the fork's sittings would be a second copy of the same fieldwork
-    with a single re-stamped author, which is the same defect wearing a friendlier hat. A permission
-    test would have admitted exactly that case, which is why the rule is about the DATA rather than
-    about who is holding it.
-
-    WHAT STILL WORKS UNCHANGED is the documented ordinary case: a designer who ran interviews on
-    paper and typed them into a blank pro-forma. That file has no Questionnaire ID and no Question
-    IDs, there is no other recorder anywhere in the picture, and attributing those answers to the
-    person who typed them in is honest. Those imports are stamped with a provenance note on each
-    sitting saying they arrived on a spreadsheet, so "attributed to the uploader" is stated on the
-    record rather than merely being true.
-
-    EITHER WAY THE REPORT SAYS WHICH HAPPENED. ``report["provenance"]`` carries a sentence written to
-    be shown verbatim, and the same sentence is pushed into ``report["problems"]`` so that every
-    client which already renders the parser's problem list tells the designer about this without
-    needing to be changed first. Silence was the whole defect; it is not permitted in either branch.
-
-    ONE TRANSACTION (audit M4, 21 Oct 2026). Sections, questions and imported sittings used to be
-    written a row at a time with nothing around them, so a failure part way left a truncated
-    questionnaire — the D2 defect ``POST /questionnaires`` was already fixed for. Now the form, its
-    sections and questions (``create_many`` each) and any imported sittings commit together.
-    """
     codes_taken: set[str] = set()
     planned_sections = [
         (index, _unique_code(section.code, section.title, codes_taken), section)
@@ -849,7 +488,7 @@ async def create_from_parsed(
     entries_created = 0
     answers_imported = 0
     provenance: dict[str, Any] | None = None
-    created_questions: dict[int, str] = {}  # row number -> question id, to attach uploaded answers
+    created_questions: dict[int, str] = {}
     unified = await unified_forms.authoring_unified()
 
     async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=60)) as tx:
@@ -860,12 +499,6 @@ async def create_from_parsed(
                 "description": (description or parsed.description or None),
                 "ownerId": owner_id,
                 "designWorkshopId": design_workshop_id,
-                # NOT PARSED OUT OF THE WORKBOOK, and that is the decision rather than a gap. The
-                # pro-forma has no kind cell, and adding one would mean an .xlsx that predates it — every
-                # workbook already in a designer's Downloads folder — silently importing as "not stated"
-                # while looking as though it had been asked. The uploader states the kind on the upload
-                # form instead, where the workshop picker beside it already lives, and both travel on the
-                # same multipart body. ``None`` when nothing was chosen, which is the honest default.
                 "kind": kind,
                 "sourceFilename": source_filename,
             }
@@ -893,8 +526,6 @@ async def create_from_parsed(
                     "helpText": question.helpText,
                     "isRequired": question.isRequired,
                     "sortOrder": position,
-                    # The shared ``questionCode`` is stamped here, so the
-                    # ``reconcile_form_question_codes`` the route runs next has nothing left to write.
                     "questionCode": question_code(code, question.prompt),
                 }
                 for _index, code, section in planned_sections
@@ -905,7 +536,6 @@ async def create_from_parsed(
                 stored = await Tx.questions.find_many(
                     where={"sectionId": {"in": sorted(id_by_code.values())}}
                 )
-                # (section, position) is unique among the rows just written, so it names each one.
                 id_by_place = {(row.sectionId, row.sortOrder): row.id for row in stored}
                 for _index, code, section in planned_sections:
                     for position, question in enumerate(section.questions, start=1):
@@ -967,14 +597,6 @@ async def create_from_parsed(
                 "notes, because the app can only attribute them to whoever uploaded the file."
             ),
         }
-        # DELIBERATELY NOT ALSO PUSHED INTO ``problems``, unlike the branch above. A "problem" in this
-        # report means a row of the workbook that could not be read cleanly, or one that was read but
-        # not applied as written — and every client renders the list under headings that say exactly
-        # that. Nothing went wrong here: the file was hand-filled, its answers were imported in full,
-        # and they went to the only person they could honestly go to. Filing that under "rows the
-        # import had to assume something about" would teach designers that a perfectly ordinary
-        # upload produces warnings, which is the fastest way to make them stop reading the list that
-        # does carry the rows they have lost.
 
     return questionnaire.id, {
         "created": len(created_questions),
@@ -994,12 +616,6 @@ async def create_from_parsed(
 
 
 def _unique_code(code: str, title: str, taken: set[str]) -> str:
-    """A section code unique within its questionnaire.
-
-    The database enforces ``@@unique([questionnaireId, code])``, so a workbook carrying "A" twice
-    would otherwise fail the whole upload on the second insert with a bare 500 — after the first
-    half of the designer's questionnaire had already been written.
-    """
     wanted = (code or "").strip()
     if not wanted or wanted.lower() in taken:
         wanted = derive_section_code(title or wanted or "Section", taken)
@@ -1017,24 +633,6 @@ async def _store_uploaded_answers(
     source_filename: str | None = None,
     client: Any = None,
 ) -> tuple[int, int]:
-    """Answers that came in already filled on the spreadsheet, one sitting per answer column.
-
-    ``client`` is the caller's transaction (audit M4), so the sittings commit with the form.
-
-    Returns ``(sittings created, answer rows written)`` so the change report can state what happened
-    with real numbers rather than with the number of answer COLUMNS, which is not the same thing.
-
-    ONLY EVER REACHED FOR A HAND-FILLED WORKBOOK — see the long note in :func:`create_from_parsed`.
-    Its caller decides; this function does not second-guess it, because two places deciding one rule
-    is how the two drift.
-
-    EVERY SITTING IT WRITES CARRIES A PROVENANCE NOTE. ``source = "UPLOAD"`` already records that the
-    answers arrived on a spreadsheet, but only in a column no report prints, and ``answeredById`` is
-    the uploader with nothing next to it to say that the uploader is where the attribution stops.
-    The note names the file, prints in the report annexure beside the answers, and is the one thing a
-    reader has to tell "I interviewed this person" from "I typed up a spreadsheet". It is only ever
-    written where the sitting has no notes of its own — a sitting's notes belong to the interviewer.
-    """
     if not parsed.entryLabels:
         return (0, 0)
     named = f" '{source_filename}'" if source_filename else ""
@@ -1070,7 +668,6 @@ async def _store_uploaded_answers(
             data={
                 "questionnaireId": questionnaire_id,
                 "title": label,
-                # A bare "Answer" column names nobody; a labelled one names the respondent.
                 "respondentName": label if label != "Answer" else None,
                 "source": UPLOAD_ENTRY_SOURCE,
                 "notes": note,
@@ -1085,28 +682,11 @@ async def _store_uploaded_answers(
     return (entries_created, answers_written)
 
 
-# --- Writing: reusing one questionnaire at another workshop ---------------------------------------
 
-
-#: The word the default reuse title is built round, and the one the collision check counts up from.
-#: Held here rather than typed inline at the service and again at the dialog's pre-fill, so
-#: "X (reused)" cannot come to mean two different strings in two places.
 REUSE_TITLE_SUFFIX = "reused"
 
 
 def reuse_title(source_title: str, taken: set[str]) -> str:
-    """``"X (reused)"``, or ``"X (reused 2)"`` when that name is already taken at the target.
-
-    COLLISION-AVOIDED RATHER THAN REFUSED. Reusing the same instrument at the SAME workshop is a
-    legitimate act — a baseline round and a follow-up round, which a sitting has no notion of — and a
-    refusal would be walkable in two clicks anyway (download the question set, upload it), producing
-    the identical row with no stated provenance at all. The dialog warns before the press; this is
-    what makes the two rows tellable apart afterwards.
-
-    ``QuestionnaireReuse.title`` caps at 220 characters, so the base is trimmed to leave room for the
-    suffix rather than letting a 218-character title produce a 226-character one that the database
-    accepts and no list column can read.
-    """
     base = (source_title or "Questionnaire").strip() or "Questionnaire"
     base = base[:200].rstrip()
     lowered = {t.strip().lower() for t in taken}
@@ -1118,10 +698,6 @@ def reuse_title(source_title: str, taken: set[str]) -> str:
     return candidate
 
 
-#: What ``reuse_questionnaire``'s ``kind`` argument means when nothing was sent, as a sentinel
-#: rather than ``None`` — because ``None`` is itself a meaningful value here ("make the copy's kind
-#: unstated") and a single default could not tell the two apart. The same tri-state
-#: ``description`` has, spelled out because this one is easy to collapse by accident.
 _INHERIT_KIND = "\u2500inherit\u2500"
 
 
@@ -1134,138 +710,22 @@ async def reuse_questionnaire(
     description: str | None = None,
     kind: str | None = _INHERIT_KIND,
 ) -> tuple[str, dict[str, Any]] | None:
-    """Copy a questionnaire's INSTRUMENT into a new row, optionally attached to another workshop.
-
-    Returns ``(new questionnaire id, change report)``, or ``None`` when ``source_id`` names nothing.
-
-    ================================================================================================
-    WHY A COPY AND NOT A SECOND POINTER
-    ================================================================================================
-
-    The owner's request is that a designer may "use the same questionnaire later on for a different
-    workshop as well in case they want to reuse the same template". Two shapes could serve that
-    sentence and only one of them is safe here:
-
-    * **A join table** (one questionnaire, many workshops) LEAKS FIELDWORK, because a SITTING has no
-      workshop. ``QuestionnaireFormEntry.questionnaireId`` points at the QUESTIONNAIRE, and
-      ``report_items`` selects ``{"designWorkshopId": ..., "isActive": True}`` with no permission
-      filter — so every workshop's sittings would print in every attached workshop's annexure:
-      workshop A's named respondents inside the .docx workshop B submits to a ministry. It also
-      widens ``_works_on_this_questionnaires_workshop``, which reads a SINGULAR ``designWorkshopId``,
-      into "any of n", so one viewer grant would admit its holder to every sitting at every attached
-      workshop. And an edit at B would reach A: rewording an ANSWERED question SUPERSEDES it, which
-      ADDS a question to A's live form that A never wrote, and retiring one at B retires it at A
-      mid-fieldwork.
-    * **A copy** — this function. Two rows, two section/question trees, two histories, and B's edit
-      cannot reach A because there is no shared row to edit. It costs divergence (a typo fixed on one
-      copy is not fixed on the other, and question ids differ, so comparing across workshops has to
-      match on prompt text) and it needs no migration and no change to any access predicate.
-
-    ================================================================================================
-    ENTRIES AND ANSWERS ARE NEVER WRITTEN, AND THE QUERY IS WHAT GUARANTEES IT
-    ================================================================================================
-
-    The copy arrives with zero ``QuestionnaireFormEntry`` and zero ``QuestionnaireFormAnswer``. That
-    is not a filter over a payload that had them in it: the source is read through
-    ``load_question_set``, which NEVER ISSUES THE ENTRY OR ANSWER QUERIES AT ALL — its own
-    docstring's reason, "a filter is a thing somebody can forget, and a query is not". Reading
-    through ``load_form`` and dropping ``entries`` would work today and would break the first time
-    somebody adds a key to ``load_form`` for another screen.
-
-    This is settled policy in this module rather than a new judgement. ``create_from_parsed`` already
-    refuses to re-record answers that exist elsewhere, and it argues that rule ABOUT THE DATA rather
-    than about who is holding it — "a permission test would have admitted exactly that case" — which
-    is why it binds the source's own owner reusing their own form just as firmly as a colleague.
-
-    ``retiredAt`` and ``supersededById`` are left NULL for a second, sharper reason: copying a
-    ``supersededById`` would point a row in the NEW questionnaire at a row in the SOURCE one, and
-    ``_question_in`` exists precisely to stop cross-questionnaire question pointers. ``version``
-    starts at 1 because the copy has no edit history yet, and retired sections and questions are
-    excluded because a retired question is kept for the answers hanging off it, not because it is
-    still part of the instrument (see ``build_question_set_workbook``).
-
-    ``owner_id`` IS THE CALLER, not the source's owner. ``_require_owner`` governs rewording, so a
-    copy its maker could not reword would not be a reuse — they would have to ask the original's
-    author to change a form the author is not using.
-
-    ALL OF IT OR NONE OF IT. The row, its sections and its questions are written inside one
-    ``db.tx()`` and in four statements rather than one per question, because a copy that got half way
-    is indistinguishable from a whole one: the designer sees an error, retries, and is left owning a
-    truncated instrument beside a complete "(reused 2)" with nothing on any screen able to say which
-    is short. The bounds are the parse path's own (``MAX_SECTIONS``/``MAX_QUESTIONS``), and a
-    truncation goes into ``problems`` rather than passing silently.
-
-    THE REPORT IS THE UPLOAD REPORT'S SHAPE, key for key, so ``QFormUploadReport`` types it and the
-    existing ``UploadReport`` panel renders it with no new component. ``provenance.reason`` is
-    written here to be shown VERBATIM, and it goes in ``provenance`` ONLY — deliberately NOT pushed
-    into ``problems`` the way ``create_from_parsed``'s refusal branch is. Nothing went wrong here and
-    there is no workbook: filing a successful reuse under "rows that could not be read" is how
-    designers learn to stop reading the list that does carry the rows they have lost.
-    """
     form = await load_question_set(source_id)
     if form is None:
         return None
 
     chosen = (title or "").strip()
     if not chosen:
-        # THE TITLES ALREADY IN THE PLACE THIS COPY IS GOING, so the default name counts itself up
-        # instead of producing a second row indistinguishable from the first in every list. Scoped to
-        # the TARGET: at a workshop, the forms attached to that workshop (whoever owns them, because
-        # the report annexure prints them all); with no target, this designer's own unattached
-        # templates, which is the only place an unattached copy shows up.
-        #
-        # ``isActive`` is deliberately NOT filtered. A deactivated form is hidden from the lists but
-        # its title is still the title of a row somebody may bring back into use, and colliding with
-        # it would be a collision that appears later, out of nowhere.
         where: dict[str, Any] = (
             {"designWorkshopId": design_workshop_id}
             if design_workshop_id
             else {"designWorkshopId": None, "ownerId": owner_id}
         )
-        # ORDERED AND BOUNDED, in that order of importance. The bound stops a workshop with a long
-        # history from being read in full to pick one name; the ordering is what makes the 500 rows it
-        # keeps the NEWEST 500 rather than whichever 500 the planner handed back, so the names most
-        # likely to be collided with — the ones made recently, by this round of work — are the ones
-        # actually counted against. Past the bound the copy can still take a duplicate title, which is
-        # a naming annoyance and not a data fault: nothing in the schema makes a title unique, and the
-        # dialog's own warning is a second chance to catch it.
         neighbours = await db.questionnaire.find_many(
             where=where, take=500, order=[{"createdAt": "desc"}]
         )
         chosen = reuse_title(form["title"], {row.title for row in neighbours})
 
-    # ============================================================================================
-    # THE COPY IS ONE TRANSACTION, IN FOUR ROUND TRIPS, AND BOUNDED
-    # ============================================================================================
-    #
-    # WHY A TRANSACTION. This used to be a bare ``create`` followed by one ``create`` per section and
-    # one per question — up to 2200 sequential statements, none of them in a transaction, against a
-    # database ``services/records.py`` describes as sitting in another region. A request that timed
-    # out at question 900 of 2000 left the ``Questionnaire`` row and 900 questions COMMITTED,
-    # attached to the target workshop and owned by the caller, while the client showed an error: the
-    # designer retries, and now owns a truncated instrument next to a complete "(reused 2)" with
-    # nothing on any screen able to say which of the two is short. A half-copied instrument is worse
-    # than no copy, because it is indistinguishable from a whole one — the same argument this
-    # module's report makes about silent success, one level down. Either the whole copy exists or
-    # none of it does.
-    #
-    # WHY BATCHED. ``create_many`` is already how this file writes answers (see
-    # ``_record_uploaded_answers``), and it turns the copy into four statements whatever the size of
-    # the instrument: the row, its sections, a read-back for their ids, and every question at once.
-    # That is also what keeps the transaction short enough to be an honest transaction rather than a
-    # lock held open across a thousand round trips.
-    #
-    # THE SECTIONS ARE READ BACK BY ``code`` because ``create_many`` returns a count and not rows,
-    # and ``@@unique([questionnaireId, code])`` is what makes that mapping exact — the source's own
-    # codes are unique within the source questionnaire for the same reason, so no two sections of
-    # this copy can claim one id.
-    #
-    # BOUNDED, with the parse path's own bounds. ``create_from_parsed`` and ``apply_parsed_edit``
-    # both slice ``[:MAX_SECTIONS]`` where they walk sections; this third writer into the same
-    # tables had no bound at all, so a source assembled through some other door could hand it a tree
-    # larger than any workbook is allowed to produce. A truncation is REPORTED rather than silent:
-    # ``problems`` is rendered by the panel that already exists for exactly this, and a copy that
-    # dropped the tail of an instrument must not look like a complete one.
     sections_in = form["sections"][:MAX_SECTIONS]
     sections_dropped = len(form["sections"]) - len(sections_in)
 
@@ -1276,14 +736,8 @@ async def reuse_questionnaire(
     for index, section in enumerate(sections_in, start=1):
         section_data.append(
             {
-                # The source's code, which is safe because ``@@unique([questionnaireId, code])`` is
-                # scoped to the questionnaire — and worth keeping, because a section code is what a
-                # designer comparing the two instruments reads across.
                 "code": section["code"],
                 "title": section["title"],
-                # Re-numbered from 1 rather than carried across. ``load_question_set`` returns ACTIVE
-                # sections only, so the source's own numbers can have gaps where a retired section
-                # used to sit, and a copy carrying the gaps sorts the same but reads wrong.
                 "sortOrder": index,
             }
         )
@@ -1292,28 +746,17 @@ async def reuse_questionnaire(
         budget -= len(kept)
         kept_by_code[section["code"]] = kept
 
-    # A copy goes where the forms live (UNIFY U5): the instrument tables once unified.
     unified = await unified_forms.authoring_unified()
     async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=60)) as tx:
         Tx = unified_forms.tables(tx, unified)
         made = await tx.questionnaire.create(
             data={
                 "title": chosen,
-                # An explicitly sent description wins; otherwise the source's travels with the
-                # questions, because it is part of how the instrument reads.
                 "description": (description if description is not None else form["description"])
                 or None,
                 "ownerId": owner_id,
                 "designWorkshopId": design_workshop_id,
-                # THE SOURCE'S KIND, unless the caller named one. A market survey lifted for another
-                # cluster is still a market survey, so the copy is filed under the same stage of the
-                # new workshop's report — which is the whole point of reuse. This is deliberately
-                # the OPPOSITE default to ``designWorkshopId`` beside it, and the reason is on
-                # ``QuestionnaireReuse.kind``: the workshop is the one thing a copy must not
-                # inherit, and the instrument's own nature is the one thing it must.
                 "kind": (form["kind"] if kind == _INHERIT_KIND else kind),
-                # NOT the source's ``sourceFilename``. There is no spreadsheet behind this row, and
-                # naming one would send a designer off to edit a file that produced something else.
                 "sourceFilename": None,
             }
         )
@@ -1333,8 +776,6 @@ async def reuse_questionnaire(
                     "helpText": question["helpText"],
                     "isRequired": question["isRequired"],
                     "sortOrder": position,
-                    # Stamped at the copy, so the route's ``reconcile_form_question_codes`` writes
-                    # nothing: it used to UPDATE every question of a toolkit copy one by one.
                     "questionCode": question_code(code, question["prompt"]),
                 }
                 for code, questions in kept_by_code.items()
@@ -1346,13 +787,6 @@ async def reuse_questionnaire(
     sections_made = len(section_data)
     questions_made = len(question_data)
 
-    # WHAT THE TWO ROWS NOW ARE, said in the server's own sentence and shown verbatim.
-    #
-    # THE ZERO CASE HAS ITS OWN SENTENCE. "carrying the 0 questions of “X”" was reachable — a source
-    # whose every question has been retired copies nothing, and so does one nobody has added a
-    # question to yet — and it was the one ungrammatical string in a message the client is required
-    # to print as it stands. It also has to avoid CLAIMING retirement, because "no questions yet" and
-    # "every question retired" both arrive here.
     settled = (
         " The two are separate from here on: editing one does not change the other. No sitting and "
         "no answer was copied — the fieldwork recorded against the original stays on the original, "
@@ -1373,8 +807,6 @@ async def reuse_questionnaire(
             "question is kept where its answers are rather than copied." + settled
         )
 
-    # THE TAIL THAT DID NOT FIT, NAMED. Empty in every ordinary reuse; the client already draws this
-    # list, so saying nothing here is the one thing that would make a truncated copy pass for whole.
     problems: list[dict[str, Any]] = []
     for count, unit, ceiling in (
         (sections_dropped, "section", MAX_SECTIONS),
@@ -1409,22 +841,14 @@ async def reuse_questionnaire(
         "provenance": {
             "action": "reused",
             "sourceQuestionnaireId": source_id,
-            # ZERO, and STATED rather than omitted. "No answers were copied" and "this report does
-            # not mention answers" read identically, and only the first of them is a fact.
             "answersSkipped": 0,
             "reason": reason,
         },
         "versionBefore": made.version,
         "versionAfter": made.version,
-        # PRESENT EVEN WHEN EMPTY, which is the ordinary case here. Every client already renders
-        # this list, and a report that omitted the key would make "nothing went wrong"
-        # indistinguishable from "the key was never filled in" — and would hide the one thing this
-        # list carries for a reuse: an instrument too large to have been copied whole.
         "problems": problems,
     }
 
-
-# --- Writing: applying an edit to a questionnaire that may already have answers ------------------
 
 
 async def apply_parsed_edit(
@@ -1436,23 +860,6 @@ async def apply_parsed_edit(
     description: str | None = None,
     may_remove: bool = False,
 ) -> dict[str, Any]:
-    """Re-import a workbook over an existing questionnaire under the edit-after-answers rule.
-
-    See the module docstring for the rule and for why it is the one it is. The returned report names
-    every question that was created, reworded-into-a-new-question, retired or removed, because a
-    designer who uploads a corrected spreadsheet needs to be told what the app decided to do with
-    their corrections — an edit that silently supersedes six questions is indistinguishable, from
-    the outside, from one that silently lost them.
-
-    ``may_remove`` (owner, 21 Oct 2026, amended 22 Oct: removing a form's questions is its author's
-    or a content admin's, on every path, this one included). Without it, a question left out of the
-    file is KEPT and the report says so (``kept`` plus one warning each); with it, the rule below
-    retires or deletes it.
-
-    ANSWERS TYPED INTO THE FILE ARE NOT IMPORTED HERE (audit M3), and the report now says how many
-    (``answersNotImported`` plus a warning) instead of dropping them in silence. A re-upload edits
-    the questions; sittings are recorded in the app.
-    """
     existing = await db.questionnaire.find_unique(where={"id": questionnaire_id})
     if existing is None:
         raise QuestionnaireEditError("That questionnaire no longer exists.")
@@ -1466,10 +873,6 @@ async def apply_parsed_edit(
     questions = (
         await T.questions.find_many(
             where={"sectionId": {"in": section_ids}},
-            # ORDERED, and not for tidiness. `by_prompt` below keeps the FIRST question it sees for
-            # a given wording, so an unordered read would resolve a duplicate prompt differently on
-            # different runs — the same upload editing a different question depending on what
-            # Postgres felt like returning first.
             order=[{"sortOrder": "asc"}, {"createdAt": "asc"}, {"id": "asc"}],
         )
         if section_ids
@@ -1481,10 +884,6 @@ async def apply_parsed_edit(
     by_id = {q.id: q for q in questions}
     section_by_id = {s.id: s for s in sections}
     section_by_code = {s.code.strip().lower(): s for s in sections}
-    # (section id, prompt) -> question, for the no-Question-ID fallback described in the docstring.
-    # ACTIVE QUESTIONS ONLY. A retired question keeps its original wording for ever, so a designer
-    # who reuses that wording for a new question would otherwise have it silently matched onto the
-    # retired row — reactivating a question they deliberately replaced, next to its replacement.
     by_prompt: dict[tuple[str, str], Any] = {}
     for question in questions:
         if question.isActive:
@@ -1528,9 +927,6 @@ async def apply_parsed_edit(
     touched_sections: set[str] = set()
     codes_taken = {s.code.strip().lower() for s in sections}
 
-    # ONE TRANSACTION FOR THE WHOLE EDIT (audit M1, 21 Oct 2026). A failure part way — the
-    # foreign-key refusal ``_remove_absent`` used to hit was one — left the questionnaire half
-    # edited, with no way to tell which half from the outside.
     async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=120)) as tx:
         Tx = unified_forms.tables(tx, T.unified)
         for index, parsed_section in enumerate(parsed.sections[:MAX_SECTIONS], start=1):
@@ -1550,9 +946,6 @@ async def apply_parsed_edit(
                 section_by_id[section.id] = section
                 report["sections"] += 1
             else:
-                # A section title may change even when answered: a heading is not the thing an answer
-                # answers. Reactivated on sight, so re-uploading a section a designer had removed brings
-                # it back rather than leaving a retired duplicate.
                 wanted_title = parsed_section.title or section.title
                 if section.title != wanted_title or section.sortOrder != index or not section.isActive:
                     section = await Tx.sections.update(
@@ -1580,15 +973,7 @@ async def apply_parsed_edit(
                 reworded = match.prompt.strip() != parsed_question.prompt.strip()
 
                 if not match.isActive:
-                    # A RETIRED question, matched by the id in the file. The export deliberately writes
-                    # retired questions out — dropping them would lose the answers recorded against
-                    # them — so every download carries these rows and every re-upload matches them. They
-                    # are therefore LEFT ALONE. Reactivating on sight, which the section branch above can
-                    # safely do, would here mean that downloading a questionnaire and uploading it back
-                    # unchanged resurrects every question the designer has ever replaced, each one next
-                    # to the replacement that superseded it.
                     if reworded:
-                        # Not applied, and therefore said out loud rather than dropped in silence.
                         problems.append(
                             {
                                 "sheet": parsed.sheet,
@@ -1611,8 +996,6 @@ async def apply_parsed_edit(
                     continue
 
                 if reworded and match.id in answered:
-                    # RULE 3. The recorded answers keep the wording they were given under; the new
-                    # wording becomes a new question in the same place.
                     replacement = await Tx.questions.create(
                         data={
                             "sectionId": section.id,
@@ -1651,7 +1034,7 @@ async def apply_parsed_edit(
 
                 data: dict[str, Any] = {}
                 if reworded:
-                    data["prompt"] = parsed_question.prompt  # RULE 1: nobody has answered it
+                    data["prompt"] = parsed_question.prompt
                 if match.helpText != parsed_question.helpText:
                     data["helpText"] = parsed_question.helpText
                 if match.isRequired != parsed_question.isRequired:
@@ -1660,9 +1043,6 @@ async def apply_parsed_edit(
                     data["sortOrder"] = position
                 if match.sectionId != section.id:
                     data["sectionId"] = section.id
-                # No isActive branch here: a retired question was handled and skipped above. Bringing one
-                # back is a deliberate act through PATCH, never a side effect of re-uploading a file that
-                # always contained it.
                 if data:
                     await Tx.questions.update(where={"id": match.id}, data=data)
                     report["updated"] += 1
@@ -1707,15 +1087,11 @@ def _match_question(
     problems: list[dict[str, Any]],
     parsed: ParsedQuestionnaire,
 ) -> Any | None:
-    """Which stored question this spreadsheet row is, or None if it is new. See the docstring."""
     wanted = (parsed_question.questionId or "").strip()
     if wanted:
         found = by_id.get(wanted)
         if found is not None:
             return found
-        # An id from somebody else's questionnaire, or from a form that has since been deleted.
-        # Honouring it would graft another designer's question onto this form; refusing the whole
-        # upload over one stale cell would be worse. Import the row as new and say so.
         problems.append(
             {
                 "sheet": parsed.sheet,
@@ -1746,21 +1122,6 @@ async def _remove_absent(
     may_remove: bool = False,
     parsed: ParsedQuestionnaire | None = None,
 ) -> int:
-    """RULE 4 and RULE 5: what happens to rows the designer took out of the spreadsheet.
-
-    Answered -> retired, and its answers stay. Unanswered -> actually deleted, because there is
-    nothing to orphan and a form littered with every question its author ever thought better of is
-    not a form. Returns how many version bumps this earned.
-
-    ONLY WITH ``may_remove`` (the form's author or a content admin, owner 22 Oct 2026). Otherwise
-    absent rows are kept and reported, so the one removal rule holds on this path as it does on
-    ``DELETE .../questions/{id}`` (audit M2).
-
-    THE BLANK ANSWER ROWS GO FIRST (audit M1). ``QuestionnaireFormAnswer.questionId`` is RESTRICT,
-    and the app writes a blank row when somebody tabs through a sitting, so deleting the question
-    alone was the foreign-key 500 ``remove_question`` was already fixed for. "Answered" counts notes
-    as well as text (audit M17), so a blank row here asserts nothing at all.
-    """
     writer = db if client is None else client
     W = tables if tables is not None else unified_forms.tables(writer, False)
     if not may_remove:
@@ -1821,52 +1182,28 @@ async def _remove_absent(
                     where={"id": section.id}, data={"isActive": False}
                 )
             continue
-        # Safe to delete outright: nothing under it was ever answered, and the loop above has
-        # already removed its questions with their blank answer rows, so the cascade cannot hit the
-        # ON DELETE RESTRICT that guards an answer.
         await W.sections.delete(where={"id": section.id})
     return bumps
 
 
 async def _answered_question_ids(question_ids: list[str]) -> set[str]:
-    """Which of these questions have an answer with actual text, or notes, against them.
-
-    A blank answer row does not count. The app writes one when a designer opens a sitting, tabs
-    through it and saves; treating that as "answered" would freeze a question nobody ever answered.
-
-    NOTES COUNT (audit M17, 21 Oct 2026). A row with notes and no answer text is somebody's
-    fieldwork ("declined to say", "ask the son"), and counting text alone sent such a question down
-    the DELETE branch, taking the notes with it.
-    """
     if not question_ids:
         return set()
     rows = await db.questionnaireformanswer.find_many(where={"questionId": {"in": question_ids}})
-    # Filtered here rather than in the where clause: "not null" is not the test — an answer saved as
-    # a single space is null-ish to a person and non-null to Postgres, and only Python knows that.
     legacy = {
         row.questionId
         for row in rows
         if (row.answerText or "").strip() or (row.notes or "").strip()
     }
-    # A UNIFIED form's evidence is in the shared tables (UNIFY U5): an answer given under this wording,
-    # or a take aimed at its lineage (``app/questionnaire/forms.answered_question_ids``).
     if unified_forms.enabled():
         legacy |= await unified_forms.answered_question_ids(db, question_ids)
     return legacy
 
 
-# --- Writing: single-question edits from the editor UI -------------------------------------------
-
 
 async def guard_question_edit(
     question: Any, *, new_prompt: str | None, deleting: bool
 ) -> str | None:
-    """The same rule, for the one-question-at-a-time editor rather than a re-upload.
-
-    Returns the ACTION the caller must take instead of the naive one — ``"supersede"`` or
-    ``"retire"`` — or ``None`` when the plain edit is safe. Stated as one function so the endpoint
-    and the upload path cannot drift into two different answers to the same question.
-    """
     answered = await _answered_question_ids([question.id])
     if not answered:
         return None
@@ -1878,9 +1215,6 @@ async def guard_question_edit(
 
 
 async def supersede_question(question: Any, *, prompt: str, tables: Any = None, **fields: Any) -> Any:
-    """Retire ``question`` and create its replacement in the same place. RULE 3, single-question form.
-    ``tables`` is the form's (``app/questionnaire/forms.tables``): the instrument tables once unified,
-    where the U0 trigger hands the old wording's lineage and display code to the replacement."""
     T = tables if tables is not None else unified_forms.tables(db, False)
     replacement = await T.questions.create(
         data={
@@ -1899,13 +1233,10 @@ async def supersede_question(question: Any, *, prompt: str, tables: Any = None, 
 
 
 async def bump_version(questionnaire_id: str) -> None:
-    """One more destructive-ish edit applied after answers existed. See the schema comment."""
     await db.questionnaire.update(
         where={"id": questionnaire_id}, data={"version": {"increment": 1}}
     )
 
-
-# --- Writing: recording answers ------------------------------------------------------------------
 
 
 async def save_answers(
@@ -1915,29 +1246,6 @@ async def save_answers(
     user_id: str,
     is_admin: bool = False,
 ) -> dict[str, Any]:
-    """Record a batch of answers against one sitting. Idempotent, and cheap in round trips.
-
-    Modelled on ``upsert_responses`` in the questionnaire route, and for the reasons named there: a
-    section carries dozens of questions and the client submits the whole section, so validating and
-    reading per answer turned one save into a hundred sequential cross-region round trips. All the
-    validation happens in one statement, all the reading in one more, every genuinely new answer
-    goes in with a single insert, and the only per-row writes left are the answers whose text
-    actually changed.
-
-    Skipping unchanged rows is not only an optimisation: it stops a save that touched one answer
-    from re-stamping ``answeredById`` across the whole section and taking authorship of work the
-    saver never did.
-
-    RETIRED QUESTIONS ARE REFUSED. A question that has been superseded or retired keeps the answers
-    it already has, and must not collect new ones — otherwise the wording a designer deliberately
-    replaced quietly carries on gathering evidence.
-
-    PER ITEM, NOT PER BATCH (audit M5, 21 Oct 2026). One retired question, or one answer somebody
-    else wrote, used to refuse the whole section with a sentence that did not say which answer. Now
-    each such answer comes back in ``rejected`` (``questionId``, ``code``, ``message``) and every
-    other answer in the batch is saved. Unknown or foreign question ids still refuse the batch: that
-    is a malformed request, not one answer a person can fix.
-    """
     if not answers:
         return {"created": 0, "updated": 0, "unchanged": 0, "rejected": []}
 
@@ -1962,8 +1270,6 @@ async def save_answers(
         if getattr(q.section, "questionnaireId", None) != entry.questionnaireId
     ]
     if foreign:
-        # The failure this prevents: an answer sheet for questionnaire A quietly accumulating
-        # answers to questionnaire B's questions, which then appear in A's export.
         raise QuestionnaireEditError("Some of those questions belong to a different questionnaire.")
     retired = {q.id for q in questions if not q.isActive}
 
@@ -1972,12 +1278,6 @@ async def save_answers(
     to_update: list[tuple[str, dict[str, Any]]] = []
     rejected: list[dict[str, str]] = []
     unchanged = 0
-    # ONE ENTRY PER QUESTION, LAST WINS — the same collapse the validation above already performs
-    # with ``sorted({...})``. ``QuestionnaireFormAnswer`` is UNIQUE on ``(entryId, questionId)``, so a
-    # body naming one question twice built two INSERTs for it and the save came back as a bare 500
-    # instead of a saved sitting. Last wins rather than ``skip_duplicates`` (which would drop an
-    # answer the designer typed) and rather than first-wins (which would contradict the update
-    # branch below, where two entries for one stored row run two updates and the later one stands).
     deduped = {answer.questionId: answer for answer in answers}
     for answer in deduped.values():
         current = by_question.get(answer.questionId)
@@ -2006,7 +1306,6 @@ async def save_answers(
                 }
             )
             continue
-        # Unchanged first: re-sending somebody else's answer word for word changes nothing.
         if unchanged_here:
             unchanged += 1
             continue
@@ -2030,7 +1329,6 @@ async def save_answers(
             )
         )
 
-    # Validation for the WHOLE batch has already run, so nothing below can leave a half-written set.
     if to_create:
         await db.questionnaireformanswer.create_many(data=to_create)
     for row_id, data in to_update:
@@ -2043,6 +1341,5 @@ async def save_answers(
     }
 
 
-#: Per-item refusal codes in ``save_answers``'s ``rejected`` list (UPPER_SNAKE, as the shared design).
 QUESTION_RETIRED = "QUESTION_RETIRED"
 ANSWER_OWNED_BY_OTHER = "ANSWER_OWNED_BY_OTHER"

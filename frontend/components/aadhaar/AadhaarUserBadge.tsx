@@ -1,13 +1,5 @@
 "use client";
 
-/**
- * The Aadhaar chip on a row of the Users screen, and — for an administrator looking at somebody
- * else's account — the decision on a name that did not match.
- *
- * Draws NOTHING while the server has both Aadhaar features off, and nothing for an account that has
- * never verified. The chip carries a word as well as a colour, like every status on that screen.
- */
-
 import { useState } from "react";
 
 import { AadhaarStatusChip } from "@/components/aadhaar/AadhaarVerifyPanel";

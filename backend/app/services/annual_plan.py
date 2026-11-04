@@ -1,95 +1,3 @@
-"""The ministry's annual directory of planned workshops — the rules, the write, and the boundary.
-
-# WHAT THE DIRECTORY DOES, true as of 2026-09-13 — check
-# `grep -rn "annual-plan" backend/app/api/routes/ frontend/lib/permissions.ts android/`:
-#
-#   Ships:  the pro-forma download; the upload and its report; the idempotent re-upload; the year
-#           picker; the filtered, paged, server-sorted list; the .xlsx export of the current
-#           directory; promotion of one row into a real workshop through `open_design_workshop`;
-#           withdraw and reinstate; a remarks-only edit. Web client only.
-#
-#   Not built, and each is a decision rather than an omission:
-#     · No Android screen. The two clients share no route here — Android calls none of the ten — so
-#       there are no Kotlin DTOs either: a `@Serializable` class with no caller is dead code that
-#       the next reader has to prove is dead. The handset's `Json` decodes with
-#       `ignoreUnknownKeys = true` and `coerceInputValues = true` (android/.../data/ApiClient.kt),
-#       so an added server key never crashes an older APK — and equally, a Kotlin field nobody
-#       declared is silently absent rather than loud. The day a screen is wanted the whole change
-#       is Kotlin-side.
-#     · No sanctioned AMOUNT on a plan row. There is no such field anywhere in stage 1 today, and
-#       adding one is a registry change: it moves `registry_version()`, stales every handset's
-#       bundled schema asset, forces an Android release, and moves every existing workshop's
-#       completeness score. The sanction REGISTER (`services/sanction_orders.py`) is where an
-#       amount is recorded; a plan row is not an instrument and carries no money.
-#     · No per-region scope. REGIONAL_DIRECTOR and ASSISTANT_DIRECTOR are below this feature's gate
-#       because this table has no column that could narrow an edit to one region, and a rank change
-#       without one would hand a regional director the whole national plan.
-#     · No sanction-order DOCUMENT on a plan row. The stage-1 `sanctionDocument` FieldSpec exists
-#       and is marked, in the source document's own words, “Phase 2 work”
-#       (app/services/stage_definitions.py) — a quotation, and evidence rather than a claim.
-#     · No upload history table. The report is the RESPONSE and is not persisted, which is what the
-#       questionnaire upload does too. `revision`, `sourceFilename` and `sheetRow` on each row are
-#       the per-row provenance that answers "did this change, and where did it come from".
-#     · No bulk promote. Promotion names a designer, and naming the wrong one is the defect
-#       `seed_designer_prefill` documents at length — the field is filled with the WRONG PERSON
-#       rather than left missing, so completeness reads 100% and nothing warns. One row, one
-#       decision.
-
-══ A ROW HERE IS A LINE IN A DOCUMENT, AND MUST NEVER BE COUNTED AS A WORKSHOP ═══════════════════
-
-`AnnualPlanEntry` is a PLAN: somebody at the ministry intends that a workshop happen. `DesignWorkshop`
-is the container a fortnight of fieldwork lives in. Conflating the two is how a ministry is shown
-"287 workshops held this year" when 284 of them have not started.
-
-A planned row must never appear in, or be counted by, ANY of these — and each line is asserted,
-surface by surface, in `backend/tests/test_annual_plan_is_not_a_workshop.py`:
-
-  · `GET /api/design-workshops` and its `visible_to_clause` — a designer would see 300 workshops
-    they cannot open, each answering 404 on the read.
-  · `design_workshops.load_workshop_or_404` — 404 vs 200 is the whole access model here.
-  · the dashboard's workshop counts — the ministry is told work happened.
-  · `api/routes/datasets.DATASETS` — a plan row would stream as fieldwork.
-  · `api/routes/data_browser`'s sheets and `DW_SHEET_GROUP` — it would land in a downloaded .xlsx
-    labelled as records.
-  · `api/routes/analytics` — adoption and cost averages over workshops that never ran.
-  · `services/design_workshop_data.tables()` — that registry is the entity list; this is not an
-    entity.
-  · `services/report_builder.build_report` and `design_workshops.workshop_summary` — both would
-    have to invent stages and a completeness score for a row that has neither.
-
-THE ONE LEGITIMATE JOIN IS `AnnualPlanEntry.designWorkshopId`. Nothing else joins the two tables, in
-either direction.
-
-══ THE NATURAL KEY, AND WHY THE RE-UPLOAD IS THE FEATURE ═════════════════════════════════════════
-
-`(planYear, workshopNoKey)`. A ministry directory is corrected two or three times a season and the
-correction arrives as the WHOLE SHEET again, because that is how a spreadsheet is corrected. So the
-write is an upsert on that key, and uploading the same file twice is indistinguishable from
-uploading it once: the second run finds every row, compares every field, finds nothing different and
-WRITES NOTHING AT ALL — not a column, not `updatedAt`, not `revision`.
-
-══ A ROW THAT HAS ALREADY BECOME A WORKSHOP IS STILL UPDATED HERE, AND THE WORKSHOP IS NOT ═══════
-
-This is the rule most likely to be got wrong, in either direction. The plan row goes on being
-corrected: the ministry moved the venue, and the directory should say so. THE `DesignWorkshop` IS
-NEVER TOUCHED BY AN UPLOAD. Its promoted columns have exactly one writer — the stage-1 entry,
-through `stage_schema.promoted_values` — and a second writer reaching in from a spreadsheet would be
-overwritten by the designer's next stage save under a 200 reading "Stage saved". Worse, it would
-silently rewrite a fortnight of somebody's fieldwork header from a planning document.
-
-The report names every such row under `updatedAfterPromotion`, with a `reason` sentence the screen
-shows VERBATIM, so an administrator who moved a venue knows the workshop still says the old one.
-
-══ THE GATE'S HOME ═══════════════════════════════════════════════════════════════════════════════
-
-`can_manage_annual_plan` and `ANNUAL_PLAN_REFUSAL` live here rather than in `app/core/deps.py`,
-where every other `can_*` predicate in this product lives. That is not a design opinion —
-`deps.py` was owned by another change in flight when this landed, exactly as it was when
-`services/sanction_orders.can_record_sanction_orders` landed beside it — and moving both into
-`deps.py` is a welcome follow-up. The predicate is spelled once, here, so that the three surfaces
-that state the rule (this 403, the web route guard, the absent nav entry) cannot drift.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
@@ -114,8 +22,6 @@ from app.services.stage_schema import enum_label
 __all__ = [
     "ANNUAL_PLAN_REFUSAL",
     "COMPARED_FIELDS",
-    # Re-exported so a caller that already holds `annual_plan` need not learn a second module name
-    # for the one bound the export route's own cap quotes.
     "MAX_PLAN_ROWS",
     "MAX_REPORTED_CHANGES",
     "apply_parsed_plan",
@@ -133,10 +39,6 @@ __all__ = [
 ]
 
 
-# --------------------------------------------------------------------------------------
-# The gate
-# --------------------------------------------------------------------------------------
-
 ANNUAL_PLAN_REFUSAL = (
     "The annual plan of workshops is managed by the ministry administrator and above. Ask them to "
     "upload or correct the directory."
@@ -144,74 +46,26 @@ ANNUAL_PLAN_REFUSAL = (
 
 
 def can_manage_annual_plan(user: Any) -> bool:
-    """Read and write the ministry's annual directory of planned workshops.
-
-    A RANK FLOOR AT MINISTRY_ADMIN (48), AND NOT `is_admin`. Read this before "simplifying" it to
-    `require_admin`, because the two are not the same SHAPE and the difference decides who can do
-    the job. `is_admin` is SET membership — `{"ADMIN", "MASTER_ADMIN"}` — so a MINISTRY_ADMIN at
-    rank 48 is NOT an admin by it, and gating the directory that way would leave the one tier this
-    feature exists for unable to open their own ministry's plan without an admin escort, behind a
-    403 that reads as a bug.
-
-    A FLOOR AND NOT A SET, which is the other half of the choice. The tiers immediately below —
-    REGIONAL_DIRECTOR (45) and ASSISTANT_DIRECTOR (42) — are deliberately OUTSIDE it: the annual plan
-    is a national instrument issued once a year. Since 2026-10-10 a Regional Director reaches the
-    directory through :func:`can_read_annual_plan` instead, narrowed by a SCOPE table
-    (``RegionalDirectorState``) to their own states' rows — not by a rank change, which would hand
-    them the whole directory.
-
-    READ IS THE SAME GATE AS WRITE, for the reason the access roster's is: the directory is a list
-    of named places and dates the ministry has not announced yet, so reading it is administrative
-    work as much as correcting it is. A read gate one tier looser than the write gate would make
-    the unannounced plan browsable by people who cannot be told apart from those who may change it.
-    """
     return has_rank(user, "MINISTRY_ADMIN")
 
 
-# --------------------------------------------------------------------------------------
-# The Regional Director's scope — their own states' rows, and nothing else (2026-10-10)
-# --------------------------------------------------------------------------------------
-
-#: The one tier below the floor that may reach the directory at all, and only through a scope.
 REGIONAL_PLAN_ROLE = "REGIONAL_DIRECTOR"
 
 
 def can_read_annual_plan(user: Any) -> bool:
-    """May this account open the annual plan at all — the Ministry Admin and above, whole; a
-    Regional Director, narrowed to the states assigned to them (:func:`plan_scope`).
-
-    NOT A WIDER FLOOR. An Assistant Director (42) sits between nobody here and stays refused; a
-    Regional Director is admitted by NAME, and what they then see and correct is decided row by row
-    by ``RegionalDirectorState``, which a Ministry Admin writes. A director with no state assigned
-    reads an empty directory and corrects nothing. Upload, export, the pro-forma, promotion,
-    withdrawal and reinstatement stay :func:`can_manage_annual_plan`'s — those act on the national
-    instrument, not on one state's rows.
-    """
     return can_manage_annual_plan(user) or role_value(user) == REGIONAL_PLAN_ROLE
 
 
 async def plan_scope(user: Any) -> list[str] | None:
-    """``None`` for the whole directory (a manager), else the states this director answers for.
-
-    Read per request rather than cached on the account, so a Ministry Admin's change takes effect on
-    the director's next request. Sorted, so the list on the wire is stable.
-    """
     if can_manage_annual_plan(user):
         return None
     if role_value(user) != REGIONAL_PLAN_ROLE:
-        # Unreachable behind the route gate; an empty scope is the fail-closed answer regardless.
         return []
     rows = await db.regionaldirectorstate.find_many(where={"userId": str(user.id)})
     return sorted({str(row.state) for row in rows})
 
 
 async def coverage_rows(client: Any, user: Any, *, take: int) -> list[Any]:
-    """The live plan rows the coverage map counts, in this user's ``plan_scope``, oldest id first.
-
-    The coverage map keeps planned workshops in a bucket of their own and never counts them as
-    workshops; it reaches the table only through here so that this module still owns the read.
-    Withdrawn rows are left out: the map shows what is intended now, not what once was.
-    """
     states = await plan_scope(user)
     if states is not None and not states:
         return []
@@ -222,7 +76,6 @@ async def coverage_rows(client: Any, user: Any, *, take: int) -> list[Any]:
 
 
 def in_scope(row: Any, scope: list[str] | None) -> bool:
-    """Is this plan row inside the caller's scope? ``None`` is the whole directory."""
     if scope is None:
         return True
     return getattr(row, "state", None) in set(scope)
@@ -245,7 +98,6 @@ def _unknown_states_detail(unknown: list[str]) -> str:
 
 
 async def regional_directors() -> list[dict[str, Any]]:
-    """Every Regional Director account, with the states assigned to each — for the Ministry Admin."""
     users = await db.user.find_many(
         where={"role": REGIONAL_PLAN_ROLE}, order=[{"name": "asc"}, {"id": "asc"}]
     )
@@ -268,14 +120,6 @@ async def regional_directors() -> list[dict[str, Any]]:
 
 
 async def set_regional_states(target: Any, states: list[str], *, actor: Any) -> list[str]:
-    """Replace the states a Regional Director answers for. Returns the stored list.
-
-    422 for an account that is not a Regional Director (:data:`REGIONAL_TARGET_REFUSAL`) and for a
-    name that is not on the canonical state list — a scope must match ``AnnualPlanEntry.state``
-    exactly, and an unrecognised spelling would grant nothing while looking like a grant. Every
-    accepted spelling is folded through ``normalize_state`` first, which is how the plan's own rows
-    are stored. One transaction: the old set and the new one are never both half-present.
-    """
     if role_value(target) != REGIONAL_PLAN_ROLE:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=REGIONAL_TARGET_REFUSAL
@@ -310,24 +154,8 @@ async def set_regional_states(target: Any, states: list[str], *, actor: Any) -> 
     return sorted(wanted)
 
 
-# --------------------------------------------------------------------------------------
-# Derived standing, and the printable row
-# --------------------------------------------------------------------------------------
-
 
 def standing_of(row: Any) -> str:
-    """PLANNED / PROMOTED / WITHDRAWN — DERIVED, NEVER STORED.
-
-    There is deliberately no `status` column and no Postgres enum for it. A stored status beside
-    `withdrawnAt` and `designWorkshopId` would be a second source for a fact those two columns
-    already carry, and the two would disagree the first time a promotion failed halfway — the "two
-    places deciding one rule" this repository names as how things drift.
-
-    WITHDRAWN IS TESTED FIRST although a promoted row can never be withdrawn (`withdraw_entry`
-    refuses one). That ordering is not redundancy: if a data repair ever produced a row that is
-    both, it shows up as WITHDRAWN — visible and wrong — rather than being quietly labelled
-    PROMOTED, which is the label that would send somebody to a workshop nobody is running.
-    """
     if getattr(row, "withdrawnAt", None):
         return "WITHDRAWN"
     if getattr(row, "designWorkshopId", None):
@@ -342,13 +170,6 @@ def _iso(value: Any) -> str | None:
 
 
 def entry_payload(row: Any, *, sanction: dict[str, Any] | None = None) -> dict[str, Any]:
-    """One directory row as the wire sees it.
-
-    `workshopKindLabel` COMES FROM THE REGISTRY AND NOT FROM THE CLIENT. `stage_schema.enum_label`
-    owns the six printable words, so the web client and any future handset cannot spell one value
-    two ways — and a token a newer build stores that this one has never heard of falls back to the
-    token rather than raising, which is that function's own stated rule.
-    """
     return {
         "id": row.id,
         "planYear": row.planYear,
@@ -378,31 +199,12 @@ def entry_payload(row: Any, *, sanction: dict[str, Any] | None = None) -> dict[s
         "designWorkshopId": row.designWorkshopId,
         "designWorkshopTitle": getattr(getattr(row, "designWorkshop", None), "title", None),
         "promotedAt": _iso(row.promotedAt),
-        # The sanction order that opened this row's workshop, or None (no order, or promoted by
-        # hand). Read by :func:`sanctions_for_rows`; additive, so older clients ignore it.
         "sanction": sanction,
         "createdAt": _iso(row.createdAt),
         "updatedAt": _iso(row.updatedAt),
     }
 
 
-# --------------------------------------------------------------------------------------
-# The upload
-# --------------------------------------------------------------------------------------
-
-#: THE FIELDS AN UPLOAD OWNS. Declared once and consumed by the diff, by the update payload and by
-#: the change report, so a column cannot become writable-but-invisible or reportable-but-unwritten —
-#: the rule `designers.PROFILE_FIELDS` states one service over.
-#:
-#: `workshopNo` IS ON THIS LIST AND `workshopNoKey` IS NOT. The key is IDENTITY: a row whose key
-#: changed is a DIFFERENT row and is created rather than updated. The spelling is DATA, so re-typing
-#: "dpw/2026/017" as "DPW/2026/017" updates the row it already wrote and is reported as the change
-#: it is.
-#:
-#: `sheetRow` and `sourceFilename` are deliberately ABSENT. They are provenance of the last WRITE,
-#: not facts about the planned workshop, and comparing them would make a re-sorted sheet that
-#: changed nothing look like three hundred changes — which would destroy the one property that makes
-#: re-uploading safe to do casually.
 COMPARED_FIELDS: tuple[str, ...] = (
     "workshopNo",
     "plannedTitle",
@@ -419,8 +221,6 @@ COMPARED_FIELDS: tuple[str, ...] = (
     "notes",
 )
 
-#: The printable name of each compared field, for the change report. Kept beside `COMPARED_FIELDS`
-#: so a field cannot be added to one without the other being obviously wrong.
 FIELD_LABELS: dict[str, str] = {
     "workshopNo": "Workshop No.",
     "plannedTitle": "Workshop Title",
@@ -437,15 +237,8 @@ FIELD_LABELS: dict[str, str] = {
     "notes": "Remarks",
 }
 
-#: How many individual field changes the report will name before it stops AND SAYS SO. The report is
-#: read on a screen and printed into no artefact, so the cap is about legibility rather than memory —
-#: but the truncation is STATED in the report, because a list that silently stops is a list that lies.
 MAX_REPORTED_CHANGES = 500
 
-#: The sentence a promoted row's change carries, shown to the administrator verbatim. Written on the
-#: SERVER because it is the only place anybody is told that correcting the plan did not correct the
-#: workshop, and a client that paraphrased it would cost an administrator their understanding of who
-#: owns what.
 PROMOTED_CHANGE_REASON = (
     "This workshop has already been opened as a design & prototype workshop. The plan has been "
     "corrected; the workshop itself has not been touched. Correct it on the workshop's own screen."
@@ -469,7 +262,6 @@ CONCURRENT_UPLOAD_REFUSAL = (
 
 
 def _as_date(value: Any) -> date | None:
-    """Compare dates as DATES. A stored `datetime` and a parsed `date` are the same planned day."""
     if value is None:
         return None
     if isinstance(value, datetime):
@@ -480,7 +272,6 @@ def _as_date(value: Any) -> date | None:
 
 
 def _midnight(value: date | None) -> datetime | None:
-    """A planned day as the instant Prisma stores. Midnight UTC, matching every other DATE column."""
     if value is None:
         return None
     return datetime(value.year, value.month, value.day, tzinfo=UTC)
@@ -528,7 +319,6 @@ def _create_data(row: ParsedPlanRow, *, plan_year: int, actor_id: str, filename:
 
 
 def _with_craft(data: dict[str, Any], crafts_by_name: dict[str, Any]) -> dict[str, Any]:
-    """A new plan row's ``craftId``, when its craft text matched the master list."""
     matched = crafts_by_name.get(str(data.get("craftName") or ""))
     if matched is not None:
         data["craftId"] = matched.id
@@ -536,25 +326,6 @@ def _with_craft(data: dict[str, Any], crafts_by_name: dict[str, Any]) -> dict[st
 
 
 async def _write_entry_update(tx: Any, entry_id: str, data: dict[str, Any]) -> None:
-    """One row's update, through the TRANSACTION CLIENT, as its own seam.
-
-    TWO REASONS THIS IS A FUNCTION AND NOT A LINE.
-
-    `tx` IS NOT `db` AND THE DIFFERENCE IS INVISIBLE IF YOU GET IT WRONG. `db.tx()` hands back a
-    DIFFERENT client, so `await db.annualplanentry.update(...)` written inside `async with db.tx()
-    as tx:` executes OUTSIDE the transaction — and every count in the report still adds up, every
-    test that asserts counts still passes, and the all-or-nothing property this whole write is built
-    for simply does not exist. Funnelling the per-row write through one named function makes the
-    mistake a one-line diff rather than a habit, and
-    `tests/test_annual_plan_routes.py::test_the_service_writes_through_the_transaction_client_and_not_the_singleton`
-    reads the source to catch it if somebody re-introduces the singleton anyway.
-
-    AND IT IS THE SEAM THE TRANSACTION TEST NEEDS. `test_a_failure_after_the_creates_leaves_nothing_
-    written` monkeypatches this to raise on its second call, which is the only way to provoke a
-    failure AFTER the `create_many` has landed. The previous shape of that test patched a duplicate
-    into `create_many` — a single statement that is atomic on its own — so it passed with the
-    transaction deleted, which is the one thing a transaction test must not do.
-    """
     await tx.annualplanentry.update(where={"id": entry_id}, data=data)
 
 
@@ -566,65 +337,16 @@ async def apply_parsed_plan(
     source_filename: str | None,
     withdraw_absent: bool,
 ) -> dict[str, Any]:
-    """Write a parsed directory into the table, and say exactly what changed.
-
-    ══ ALL-OR-NOTHING, IN ONE `db.tx()`, AND THE ARGUMENT IS NOT TIDINESS ═════════════════════════
-
-    1. THE ONLY CONSTRAINT AN UPLOAD CAN FIRE IS `@@unique([planYear, workshopNoKey])`, AND THE
-       PARSER ALREADY OWNS IT. Two rows in one sheet with the same folded number are caught while
-       reading, reported against BOTH Excel rows, and the second is never handed here. So "row 250
-       of 300 violates a constraint" is a state the sheet cannot reach on its own.
-
-    2. WHAT REMAINS IS A RACE, AND A RACE IS EXACTLY WHAT A TRANSACTION IS FOR. Two administrators
-       uploading the same corrected sheet in the same minute is realistic: there is no lock on the
-       directory and no notification channel to coordinate through — this product has no mailer and
-       no push transport. Without a transaction the loser's partial write leaves a directory that is
-       neither sheet. With one, the create fails on the unique index, the whole upload rolls back,
-       and the administrator is answered 409 with `CONCURRENT_UPLOAD_REFUSAL` telling them to upload
-       again. THE RETRY IS SAFE PRECISELY BECAUSE THE OPERATION IS IDEMPOTENT — which is why those
-       two properties had to be designed together rather than one after the other.
-
-    3. A DIRECTORY IS A DOCUMENT, NOT A STREAM OF INDEPENDENT RECORDS. "Rows 1-249 of your ministry's
-       plan are loaded and 250-300 are not" is a state nobody can act on: the administrator cannot
-       tell whether to re-upload or to edit the tail, and nothing on the screen distinguishes a
-       half-loaded plan from a complete one. That is the argument `create_questionnaire` makes for
-       its own transaction — "a half-written instrument is worse than none, because it is
-       indistinguishable from a complete one".
-
-    4. PARTIAL-WITH-REPORT IS STILL WHAT HAPPENS TO BAD ROWS, and the two must not be confused. A row
-       with no workshop number, an unreadable date, an unknown state: reported, and the other 299
-       import. That is the parser's contract and it is unchanged. ALL-OR-NOTHING GOVERNS THE DATABASE
-       WRITE, which either lands whole or does not land.
-
-    STATEMENT COUNT IS THE COST AND IT IS BOUNDED. `MAX_PLAN_ROWS = 600` bounds the worst case at one
-    `create_many`, 600 `update`s and one `update_many` inside a 60-second transaction. A first upload
-    is one statement; a realistic correction is one plus a handful. That ceiling is 600 and not 5000
-    for exactly this reason.
-
-    REJECTED: `INSERT … ON CONFLICT DO UPDATE`. It is the right tool in Postgres and one statement
-    for the whole sheet. It is rejected because this repository has NO WRITE-SIDE RAW SQL AT ALL —
-    `query_raw` appears only in reads and `execute_raw` appears nowhere — and because a hand-written
-    upsert would have to restate the per-field diff in SQL to keep `revision` honest, which is the
-    two-places-deciding-one-rule this repository names as how things drift.
-
-    REJECTED: per-row `upsert` with no transaction. Simplest to write; it is the partial-write
-    failure above with 600 round trips.
-    """
     incoming: dict[str, ParsedPlanRow] = {row.workshopNoKey: row for row in parsed.rows}
 
-    # ONE QUERY, AND NO DATABASE INSIDE THE PARTITION LOOP. At most `MAX_PLAN_ROWS` rows for a year,
-    # which is why the ceiling exists at all.
     existing = await db.annualplanentry.find_many(where={"planYear": plan_year})
     by_key = {row.workshopNoKey: row for row in existing}
-    # THE MASTER CRAFT LIST (2026-10-20): each sheet's craft text is matched onto the list once, and a
-    # match links the row (``craftId``). Text that matches nothing is kept as typed and links nothing;
-    # promotion asks for the craft then (``PromoteDialog``), and the review queue lists it.
     from app.services import craft_master
 
     crafts_by_name = await craft_master.match_names(db, [row.craftName for row in incoming.values()])
 
     to_create: list[ParsedPlanRow] = []
-    updates: list[tuple[Any, dict[str, Any], bool]] = []  # (stored row, data, reinstating)
+    updates: list[tuple[Any, dict[str, Any], bool]] = []
     changes: list[dict[str, Any]] = []
     changes_truncated = False
     unchanged = 0
@@ -665,16 +387,12 @@ async def apply_parsed_plan(
                         "fieldLabel": FIELD_LABELS[field_name],
                         "from": _printable(field_name, old_value),
                         "to": _printable(field_name, new_value),
-                        # THE ONLY PLACE AN ADMINISTRATOR IS TOLD THAT CORRECTING THE PLAN DID NOT
-                        # CORRECT THE WORKSHOP. Shown verbatim; never paraphrased on any client.
                         "reason": PROMOTED_CHANGE_REASON if promoted else None,
                     }
                 )
 
         reinstating = stored.withdrawnAt is not None
         if not row_changed and not reinstating:
-            # THE NO-WRITE. Not a column, not `updatedAt`, not `revision`, not even `sheetRow` — see
-            # the schema's own comment on that column for why the staleness is the point.
             unchanged += 1
             continue
 
@@ -699,8 +417,6 @@ async def apply_parsed_plan(
     try:
         async with db.tx(max_wait=timedelta(seconds=10), timeout=timedelta(seconds=60)) as tx:
             if to_create:
-                # ONE STATEMENT WHATEVER THE SIZE OF THE SHEET, which is why a first upload of three
-                # hundred rows is a single round trip.
                 await tx.annualplanentry.create_many(
                     data=[
                         _with_craft(
@@ -718,16 +434,12 @@ async def apply_parsed_plan(
             for stored, data, _reinstating in updates:
                 await _write_entry_update(tx, stored.id, data)
             if withdraw_absent and absent_plain:
-                # ONE STATEMENT, and `absent_promoted` is not in it at any price.
                 await tx.annualplanentry.update_many(
                     where={"id": {"in": [row.id for row in absent_plain]}},
                     data={"withdrawnAt": now, "withdrawnById": actor_id},
                 )
     except Exception as exc:
         if _is_unique_violation(exc):
-            # THE RACE OF PARAGRAPH 2, GIVEN AN HTTP ANSWER. A 500 here would tell an administrator
-            # nothing and would leave them unsure whether half their plan had landed; the whole point
-            # of the transaction is that it has not, and the recovery is one press.
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT, detail=CONCURRENT_UPLOAD_REFUSAL
             ) from exc
@@ -763,14 +475,6 @@ async def apply_parsed_plan(
 
 
 def _is_unique_violation(exc: BaseException) -> bool:
-    """Is this the `(planYear, workshopNoKey)` index, whatever driver wrapper carries it here?
-
-    ASKED BY NAME RATHER THAN BY CLASS, deliberately. `prisma.errors.UniqueViolationError` is the
-    class the ordinary path raises, but a violation inside a `db.tx()` can surface wrapped by the
-    transaction's own exit and — the case that actually bit the questionnaire's transaction — as a
-    `PrismaError` whose message carries the constraint name. Catching the class alone turns the one
-    recoverable race this write has into a 500.
-    """
     from prisma.errors import PrismaError, UniqueViolationError
 
     if isinstance(exc, UniqueViolationError):
@@ -778,23 +482,8 @@ def _is_unique_violation(exc: BaseException) -> bool:
     return isinstance(exc, PrismaError) and "unique" in str(exc).lower()
 
 
-# --------------------------------------------------------------------------------------
-# Single-row acts
-# --------------------------------------------------------------------------------------
-
 
 async def withdraw_entry(entry: Any, *, actor_id: str) -> Any:
-    """Mark one plan row withdrawn. REFUSES A ROW THAT HAS ALREADY BECOME A WORKSHOP.
-
-    A promoted row is no longer only a plan: a designer may be standing in the courtyard.
-    Withdrawing it here would take the line out of the directory while the workshop, its viewers,
-    its media and its report went on existing — and nothing anywhere would say why the two disagree.
-    The refusal names the workshop and says to cancel that instead.
-
-    NOTHING IS DELETED, EVER. A withdrawal is a stamp and the account that made it; the row and its
-    whole history stay, because the directory is the record of what WAS intended as much as of what
-    is intended now.
-    """
     if entry.designWorkshopId:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -812,7 +501,6 @@ async def withdraw_entry(entry: Any, *, actor_id: str) -> Any:
 
 
 async def reinstate_entry(entry: Any, *, actor_id: str) -> Any:
-    """Put a withdrawn row back in the standing plan. Clears the stamp; deletes nothing."""
     if not entry.withdrawnAt:
         return entry
     return await db.annualplanentry.update(
@@ -822,13 +510,6 @@ async def reinstate_entry(entry: Any, *, actor_id: str) -> Any:
 
 
 def promotion_title(entry: Any) -> str:
-    """A title for the workshop this plan row becomes.
-
-    `DesignWorkshop.title` is NOT NULL and is the one promoted column `_coerce_promoted` refuses to
-    blank, so a plan row with no title still has to produce one. Built from what the DIRECTORY
-    actually says, in this order, and never left as the bare number: a workshop list of three
-    hundred rows reading "DPW/2026/017" is a list nobody can scan.
-    """
     if entry.plannedTitle:
         return str(entry.plannedTitle)[:220]
     where = " · ".join(
@@ -839,20 +520,8 @@ def promotion_title(entry: Any) -> str:
 
 
 def plan_stage_one_values(entry: Any) -> dict[str, Any]:
-    """The stage-1 answers a plan row fills — THE PLAN'S OWN FILL RULES, written once.
-
-    Shared by the two doors that turn a plan row into a workshop: :func:`promote_entry` and the
-    sanction register (``services/sanction_orders.create_from_sanction``, through
-    :func:`plan_row_for_sanction`). Every key is a ``workshopSetup.*`` field and is seeded through
-    ``seed_designer_prefill``, which writes the stage entry and the promoted column together. A blank
-    plan cell is left out rather than seeded as a blank.
-
-    DATES GO IN AS ISO STRINGS, not datetimes: the registry's DATE type stores an ISO string.
-    """
     start = _as_date(entry.plannedStartDate)
     end = _as_date(entry.plannedEndDate)
-    # NAMED `seeded`, not returned bare: `tests/test_annual_plan_promotion.py` reads this literal's
-    # keys by that name to hold every one of them to a real, promoted workshopSetup field.
     seeded = {
         key: value
         for key, value in (
@@ -882,56 +551,6 @@ async def promote_entry(
     designer_ids: list[str],
     template_id: str = "DCH_STANDARD",
 ) -> Any:
-    """Open the real workshop this plan row was always for, and record the promotion.
-
-    ONE WORKSHOP-CREATION PATH, AND THIS IS NOT A SECOND ONE. Every row below
-    `design_workshops.open_design_workshop` is shared with `POST /api/design-workshops`, which is
-    the point: a workshop typed by hand and a workshop promoted off the directory must converge, or
-    the promoted one is the one that quietly skips `seed_designer_prefill` and has its promoted
-    columns nulled by the designer's first stage-1 save.
-
-    THE TWO DESIGNER FIELDS GO THROUGH `named_designer_team` FIRST, exactly as
-    `POST /api/design-workshops` sends them through it. That is not tidying: `open_design_workshop`
-    validates and grants `designer_ids` and uses `designer_id` for NOTHING but the prefill, so a
-    body naming only `designerUserId` used to reach it unfolded — `wanted` came out empty, so
-    `assert_every_designer_may_be_named` never ran (no empanelment roster read, no platform
-    allow-list read, no `DESIGN_WORKSHOP_ROLES` test), `attach_the_named_designers` was skipped so
-    no viewer row was written, and `seed_designer_prefill` nevertheless copied that account's
-    displayName, biography, designation, qualification, phone, email and postal address into stage
-    1 and stage 3 of a report bound for a ministry. The identical body sent to the create door was
-    a 422 naming the six valid roles before anything existed. Two doors onto one creation path
-    answering differently is the whole thing this function's first paragraph exists to prevent, and
-    `named_designer_team(lead, [])` returning `(lead, [lead])` is what folds the lead back into the
-    set that gets checked and granted.
-
-    ALREADY PROMOTED IS A 409 AND NOT A SECOND WORKSHOP, AND THE STAMP IS A COMPARE-AND-SET.
-
-    ⚠ **THE DATABASE DOES NOT BACK THIS REFUSAL, AND THIS PARAGRAPH USED TO SAY IT DID.** The old
-    sentence read "`designWorkshopId` is `@unique`, so the database refuses it too", which is true
-    of the wrong thing: that index stops two PLAN ROWS pointing at one workshop — which is what
-    `tests/test_annual_plan_promotion.py::test_the_database_also_refuses_a_second_workshop_on_one_row`
-    actually exercises — and says nothing whatever about ONE plan row being promoted twice, because
-    each promotion mints a fresh workshop id and no other row holds either value. Two managers
-    pressing "Open the workshop" on one row inside the second `open_design_workshop` takes (or one
-    browser retrying the POST) both read `designWorkshopId = None`, both pass the check above, and
-    two complete `DesignWorkshop` rows are created — same title, same seeded stage-1 header, the
-    same promoted `workshopCode` — each with viewer rows for the named designers. The last `update`
-    won, and the other workshop was a permanent orphan the plan could never reach, delete or
-    explain, while its designers saw two byte-identical drafts.
-
-    So the stamp below is `update_many` with `designWorkshopId: None` in its WHERE, and a write of
-    zero rows means somebody else got there first. The workshop this call created is soft-deleted
-    on that branch and the 409 names the workshop the row actually points at. That also covers the
-    variant with no concurrency in it at all: if the stamp fails for any reason after the create,
-    the workshop is already committed and the next press would otherwise make a second one.
-
-    WHY NOT A TRANSACTION ROUND THE PAIR. `open_design_workshop` states in its own docstring that
-    it is deliberately not transactional — `attach_the_named_designers` explains why the viewer
-    rows are not transactional with the create and `seed_designer_prefill` swallows its own failure
-    on purpose — so a `db.tx()` wrapped round both would change two decisions silently in order to
-    fix one. A compare-and-set changes nothing about the callee and is what the upload arm of this
-    same module already uses.
-    """
     if entry.designWorkshopId:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -950,29 +569,8 @@ async def promote_entry(
             ),
         )
 
-    # ── THE SAME VALUES IN TWO PLACES, DELIBERATELY, AND NEITHER IS DERIVED FROM THE OTHER ───────
-    #
-    # Every key of `seeded` is declared in `stage_schema.PROMOTED_COLUMNS` under `workshopSetup.*`,
-    # so writing any of them as a COLUMN without also writing the stage entry behind it gets it
-    # nulled by the first stage-1 save under a 200 reading "Stage saved". `seed_designer_prefill`
-    # writes BOTH halves out of `seeded`, which is why the stage values are handed through
-    # `open_design_workshop` rather than being created here.
-    #
-    # DATES GO IN AS ISO STRINGS, not datetimes: the registry's DATE type coerces and stores an ISO
-    # string, and `_coerce_promoted` is what turns it back into a column value on the stage-save
-    # path. That is the note `create_design_workshop` carries beside its own `seeded` literal.
-    #
-    # `title`/`workshopTitle` IS DELIBERATELY NOT SEEDED, for the reason that literal gives: it is
-    # the one promoted column `DesignWorkshop` declares NOT NULL and the one `_coerce_promoted`
-    # refuses to blank, so it was never at risk — and seeding it would freeze the promoted title
-    # into stage 1 where a later PATCH of the workshop title could not reach it.
     seeded = plan_stage_one_values(entry)
 
-    # ⚠ `venue`, `implementingAgency`, `sponsor` AND `workshopCode` ARE SEEDED AND ARE **NOT** PASSED
-    # AS COLUMNS. They are not in `design_workshops._HEADER_TEXT_COLUMNS`; they belong to
-    # `_STAGE_ONE_OWNS`. `seed_designer_prefill` applies `promoted_values` and updates the columns
-    # itself — "returns the workshop header, updated if a promoted column was seeded" — so passing
-    # them here as well would be the second writer this whole paragraph exists to prevent.
     columns: dict[str, Any] = {
         "title": promotion_title(entry),
         "templateId": template_id,
@@ -992,9 +590,6 @@ async def promote_entry(
         },
     }
 
-    # THE SAME NORMALISATION THE CREATE DOOR APPLIES, AND THROUGH THE SAME FUNCTION. See the
-    # docstring: without it a body naming only `designerUserId` skipped every eligibility read and
-    # wrote no viewer row while still copying that person's profile into the report.
     lead_id, granted_ids = named_designer_team(designer_id, designer_ids)
 
     record = await open_design_workshop(
@@ -1005,11 +600,6 @@ async def promote_entry(
         seeded=seeded,
     )
 
-    # ── THE COMPARE-AND-SET. `designWorkshopId: None` IS THE WHOLE GUARD. ─────────────────────────
-    #
-    # `update_many` rather than `update` because only `update_many` takes a predicate beyond the
-    # primary key and answers with a COUNT. Zero rows means the row was promoted between the check
-    # at the top of this function and this line, which is the race the docstring describes.
     stamped = await db.annualplanentry.update_many(
         where={"id": entry.id, "designWorkshopId": None},
         data={
@@ -1020,18 +610,9 @@ async def promote_entry(
         },
     )
     if not stamped:
-        # WE LOST. Take the workshop this call created back out rather than leaving it in the
-        # directory: it is a byte-identical twin of the one that won — same title, same seeded
-        # stage-1 header, the same promoted `workshopCode` — and the two are indistinguishable to
-        # anybody who later has to decide which is the real one. A soft delete is the repository's
-        # only removal for this table (`deletedAt`, every read filtered on it), so the losing
-        # workshop simply never appears; nothing is destroyed and the winner is untouched.
         await db.designworkshop.update(
             where={"id": record.id}, data={"deletedAt": datetime.now(UTC)}
         )
-        # THE REFUSAL NAMES THE WORKSHOP THE ROW ACTUALLY POINTS AT, which is the only useful thing
-        # to tell the administrator and the one thing a constraint violation could never have said.
-        # Re-read rather than guessed: the winner may not be this request's own workshop.
         winner = await db.annualplanentry.find_unique(where={"id": entry.id})
         opened = getattr(winner, "designWorkshopId", None)
         raise HTTPException(
@@ -1046,20 +627,6 @@ async def promote_entry(
     return record
 
 
-# --------------------------------------------------------------------------------------
-# The sanction register's door (owner decision C1, 2026-10-17)
-# --------------------------------------------------------------------------------------
-#
-# ONE PLAN ROW IS ONE WORKSHOP, and the sanction form is now the second door that can say which.
-# An officer recording an order types the planned workshop's number; this module answers the rows
-# whose number matches EXACTLY (``fold_workshop_no`` folds only the invisible differences — case,
-# full-width digits, runs of spaces — never punctuation), and the order then opens the workshop
-# against the picked row: stage 1 seeded by :func:`plan_stage_one_values`, and the row stamped with
-# the workshop through the same compare-and-set promotion uses. The sanction module calls the
-# functions below and never names this table, which is what keeps
-# ``tests/test_annual_plan_is_not_a_workshop.py``'s census honest.
-
-#: Why a matched row cannot be picked. Server-written, shown verbatim on the officer's form.
 SANCTION_PICK_PROMOTED = (
     "Already opened as a workshop. Each planned workshop takes one sanction order."
 )
@@ -1068,8 +635,6 @@ SANCTION_PICK_UNKNOWN = (
     "That planned workshop is not in the annual plan. Look it up by its number again."
 )
 
-#: How many exact matches one lookup answers. A number is unique within a plan year, so this only
-#: bites if the same reference was reused across many years; the list says so when it does.
 SANCTION_CANDIDATE_TAKE = 20
 
 
@@ -1083,7 +648,6 @@ def _pick_refusal(row: Any) -> str | None:
 
 
 def sanction_candidate_payload(row: Any) -> dict[str, Any]:
-    """One plan row as the sanction form's picker sees it — the facts that identify it, no more."""
     refusal = _pick_refusal(row)
     return {
         "id": row.id,
@@ -1107,14 +671,6 @@ def sanction_candidate_payload(row: Any) -> dict[str, Any]:
 
 
 async def sanction_pick_scope(user: Any) -> list[str] | None:
-    """The states whose plan rows this sanction recorder may find and claim; ``None`` is all.
-
-    A Regional Director answers for the states a Ministry Admin assigned them, and the plan's own
-    routes already narrow them to those rows (:func:`plan_scope`) — the sanction picker must not
-    be a second door onto the rest of the estate. Everybody else who may record an order (the
-    Assistant Director and the managers) finds by exact number across the whole plan: the picker
-    shows nothing to browse, only the row whose number the officer already holds on the order.
-    """
     if role_value(user) == REGIONAL_PLAN_ROLE:
         return await plan_scope(user)
     return None
@@ -1123,11 +679,6 @@ async def sanction_pick_scope(user: Any) -> list[str] | None:
 async def sanction_candidates(
     workshop_no: str, *, scope: list[str] | None = None
 ) -> dict[str, Any]:
-    """Every plan row whose number is EXACTLY this one, newest plan year first.
-
-    ``scope`` narrows to those states (:func:`sanction_pick_scope`); a row outside it is simply not
-    found, so a director cannot learn that another state planned a workshop under that number.
-    """
     key = fold_workshop_no(workshop_no)
     if not key or scope == []:
         return {"items": [], "truncated": False}
@@ -1146,10 +697,6 @@ async def sanction_candidates(
 
 
 async def plan_row_for_sanction(entry_id: str, *, scope: list[str] | None = None) -> Any:
-    """The picked row, or the refusal an officer can act on. Asked BEFORE the order's transaction.
-
-    A row outside ``scope`` answers exactly as a row that does not exist, as the plan routes do.
-    """
     row = await db.annualplanentry.find_unique(where={"id": entry_id})
     if row is None or not in_scope(row, scope):
         raise HTTPException(
@@ -1166,13 +713,6 @@ async def plan_row_for_sanction(entry_id: str, *, scope: list[str] | None = None
 async def claim_for_sanction(
     entry_id: str, workshop_id: str, *, actor_id: str | None, client: Any
 ) -> None:
-    """Stamp the plan row with the workshop the order opened — INSIDE the order's transaction.
-
-    The same compare-and-set :func:`promote_entry` uses (``designWorkshopId: None`` and
-    ``withdrawnAt: None`` in the WHERE), so two officers racing for one row, or a promotion racing
-    an order, leave exactly one workshop: the loser's write counts zero rows, this raises 409, and
-    the whole order rolls back with it — no orphan workshop, no admitted account, no register row.
-    """
     stamped = await client.annualplanentry.update_many(
         where={"id": entry_id, "designWorkshopId": None, "withdrawnAt": None},
         data={
@@ -1193,7 +733,6 @@ async def claim_for_sanction(
 
 
 async def planned_rows_for_workshops(workshop_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """``{workshopId: planned-row summary}`` for the sanction register's rows. One query."""
     ids = sorted({wid for wid in workshop_ids if wid})
     if not ids:
         return {}
@@ -1211,11 +750,6 @@ async def planned_rows_for_workshops(workshop_ids: list[str]) -> dict[str, dict[
 
 
 async def sanctions_for_rows(rows: list[Any]) -> dict[str, dict[str, Any]]:
-    """``{planRowId: the sanction that opened its workshop}`` — the plan shows its order. One query.
-
-    Keyed through the promotion pointer: a row whose workshop was opened by a sanction order shows
-    that order; a row promoted by hand shows none. The amount is a decimal STRING, never a float.
-    """
     by_workshop = {str(row.designWorkshopId): row.id for row in rows if row.designWorkshopId}
     if not by_workshop:
         return {}
@@ -1234,20 +768,12 @@ async def sanctions_for_rows(rows: list[Any]) -> dict[str, dict[str, Any]]:
             "sanctionOrderDate": (
                 order_date.date().isoformat() if isinstance(order_date, datetime) else None
             ),
-            # Fixed to two places: the column is NUMERIC(14,2) and the driver may hand back
-            # `Decimal('450000')`, which would print as a different figure from the register's.
             "sanctionAmount": f"{Decimal(str(order.sanctionAmount)):.2f}",
         }
     return out
 
 
 async def live_entries_for_year(plan_year: int, workshop_kind: str, *, take: int) -> list[Any]:
-    """The plan's live (not withdrawn) rows for one year and kind, in workshop-number order.
-
-    The Ministry export pack's Annual plan sheet reads the plan through here, so the table keeps its
-    two clients: this module and its routes. The pack lists PLANNED rows on their own sheet and never
-    counts them as workshops.
-    """
     return list(
         await db.annualplanentry.find_many(
             where={"planYear": plan_year, "workshopKind": workshop_kind, "withdrawnAt": None},

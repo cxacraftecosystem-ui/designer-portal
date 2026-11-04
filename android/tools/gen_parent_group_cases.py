@@ -1,22 +1,3 @@
-"""Run one shared case table through the SERVER'S `_parent_groups` and write the answers out.
-
-    python android/tools/gen_parent_group_cases.py \
-        android/app/src/test/resources/dw-parent-group-cases.json
-
-Run it from the repository root after ANY change to `report_builder._parent_groups`, then run
-`DwParentGroupParityTest`: it is the one thing that says whether the handset still puts the same
-lines under the same cost sheet as the server does. The file it writes is checked in because the
-test must run in a cluster and on a build machine with no Python and no backend checkout.
-
-The Kotlin port is asserted against this file rather than against a hand-written expectation, which
-is the standing rule for a port in this repository: pin it BY VALUE over a shared case table, not by
-restating its properties in two languages, because a property restated twice is two guesses about
-the same behaviour and a diff over values is the behaviour itself.
-
-Both sides load their OWN copy of the registry — Python from `stage_definitions`, Kotlin from the
-bundled `design-workshop-schema.json` that is generated from it — so the entity names, the parent
-declarations and the REF models are not part of the case data and cannot drift apart inside it.
-"""
 from __future__ import annotations
 
 import json
@@ -31,12 +12,6 @@ from app.services.report_builder import ReportBuilder, WorkshopData  # noqa: E40
 from app.services.report_model import ImageRef, ReportMeta  # noqa: E402
 from app.services.report_templates import template as get_template  # noqa: E402
 from app.services.stage_schema import stages  # noqa: E402
-
-# -- the shared case table ---------------------------------------------------------------------
-#
-# Every case names a CHILD collection of the real registry and supplies the parent rows and the
-# child rows by hand. `label` is the value of the child field the report prints first, so a group's
-# membership can be read as a list of names in both languages.
 
 CASES: list[dict] = [
     {
@@ -254,14 +229,11 @@ CASES: list[dict] = [
     },
 ]
 
-#: The final products every `productRef` above points at, so a sheet is titled by a NAME on both
-#: sides rather than by the cuid it stores.
 PRODUCTS = [
     {"_entryId": "fp1", "name": "Sambalpuri stole"},
     {"_entryId": "fp2", "name": "Ikat cushion cover"},
 ]
 
-#: The field whose value names a child row in the output, per entity.
 LABEL_KEY = {
     "costMaterialLine": "item",
     "costLabourLine": "task",
@@ -314,8 +286,6 @@ def main() -> None:
     }
     target = Path(sys.argv[1])
     target.parent.mkdir(parents=True, exist_ok=True)
-    # EXPLICIT UTF-8. Redirecting stdout on this machine dies on cp1252 the moment a label carries a
-    # character outside it, and a half-written table is a parity test that silently compares nothing.
     target.write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"wrote {len(CASES)} cases to {target}")
 

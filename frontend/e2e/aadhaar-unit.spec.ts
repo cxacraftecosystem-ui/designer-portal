@@ -13,17 +13,8 @@ import {
   STATUS_LABEL
 } from "@/lib/aadhaar";
 
-/**
- * Aadhaar verification on the web: hidden unless the server switched it on, consent before anything,
- * and nothing on screen about what this deployment cannot do.
- *
- * PURE NODE, like the other `-unit` specs: the rules here decide whether an Aadhaar screen exists
- * at all, and that has to be checkable without a server that has the feature on.
- */
-
 const ROOT = join(__dirname, "..");
 const read = (path: string) => readFileSync(join(ROOT, path), "utf8");
-/** The source with its comments taken out — the rules below are about what RUNS and what is SHOWN. */
 const code = (path: string) =>
   read(path)
     .replace(/\/\*[\s\S]*?\*\//g, "")

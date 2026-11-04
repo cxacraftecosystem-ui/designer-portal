@@ -1,8 +1,3 @@
-"""The Monday summary without a database: the IST week and send window, the subject, and the e-mail.
-
-``services/weekly_digest.py`` and the ``WEEKLY_DIGEST`` template in ``services/mailer.py``.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -72,32 +67,26 @@ def _payload(**overrides: object) -> dict[str, object]:
     return payload
 
 
-# ── Time ──────────────────────────────────────────────────────────────────────────────────────────
-
 
 def test_the_week_is_read_in_india_time_across_the_utc_midnight() -> None:
-    # Sunday 23:00 UTC is Monday 04:30 IST: already the new week.
     assert weekly_digest.week_start_for(datetime(2026, 10, 18, 23, 0, tzinfo=UTC)) == date(
         2026, 10, 19
     )
-    # Sunday 18:29 UTC is Sunday 23:59 IST: still the old one.
     assert weekly_digest.week_start_for(datetime(2026, 10, 18, 18, 29, tzinfo=UTC)) == date(
         2026, 10, 12
     )
-    # A Wednesday belongs to its Monday.
     assert weekly_digest.week_start_for(datetime(2026, 10, 21, 9, 0, tzinfo=UTC)) == date(
         2026, 10, 19
     )
 
 
 def test_the_send_window_is_monday_from_eight_to_midnight_ist() -> None:
-    # Monday 19 October 2026, IST = UTC + 5:30.
-    assert not weekly_digest.in_send_window(datetime(2026, 10, 19, 2, 29, tzinfo=UTC))  # 07:59 IST
-    assert weekly_digest.in_send_window(datetime(2026, 10, 19, 2, 30, tzinfo=UTC))  # 08:00 IST
-    assert weekly_digest.in_send_window(datetime(2026, 10, 19, 18, 29, tzinfo=UTC))  # 23:59 IST
+    assert not weekly_digest.in_send_window(datetime(2026, 10, 19, 2, 29, tzinfo=UTC))
+    assert weekly_digest.in_send_window(datetime(2026, 10, 19, 2, 30, tzinfo=UTC))
+    assert weekly_digest.in_send_window(datetime(2026, 10, 19, 18, 29, tzinfo=UTC))
     assert not weekly_digest.in_send_window(
         datetime(2026, 10, 19, 18, 30, tzinfo=UTC)
-    )  # Tue 00:00 IST
+    )
 
 
 def test_this_week_is_the_seven_days_before_monday_eight_ist() -> None:
@@ -117,7 +106,6 @@ def test_outside_the_window_the_pass_returns_before_any_query(monkeypatch) -> No
     tuesday = datetime(2026, 10, 20, 4, 0, tzinfo=UTC)
     answer = asyncio.run(weekly_digest.run_weekly_digests(tuesday))
     assert answer == {"ran": False, "reason": "outside window"}
-    # Inside the window, a second ask within ten minutes is throttled, also without a query.
     monkeypatch.setattr(weekly_digest, "_last_check", datetime(2026, 10, 19, 3, 0, tzinfo=UTC))
     again = asyncio.run(weekly_digest.run_weekly_digests(datetime(2026, 10, 19, 3, 5, tzinfo=UTC)))
     assert again == {"ran": False, "reason": "throttled"}
@@ -130,8 +118,6 @@ def test_the_kill_switch_beats_force() -> None:
     answer = asyncio.run(weekly_digest.run_weekly_digests(force=True, settings=off))
     assert answer == {"ran": False, "reason": "disabled"}
 
-
-# ── Mail ──────────────────────────────────────────────────────────────────────────────────────────
 
 
 def test_the_subject_names_overdue_only_when_there_is_some() -> None:
@@ -162,7 +148,6 @@ def test_the_html_and_the_text_carry_the_same_figures_and_no_image() -> None:
         assert figure in rendered.text, figure
     assert "Waiting for you: 4" in rendered.text and "Overdue: 2" in rendered.text
     assert "New this week: 11" in rendered.text and "Reports in: 71% (41 of 58)" in rendered.text
-    # Three titles, then the rest as a number.
     assert "Bidri" not in rendered.html and "Bidri" not in rendered.text
     assert "and 1 more" in rendered.html and "and 1 more" in rendered.text
     assert "/digest/dg_1" in rendered.html and "/digest/dg_1" in rendered.text
@@ -178,8 +163,6 @@ def test_the_in_app_line_reads_like_the_subject() -> None:
     nothing_ended = _payload(coverage={"label": "Reports in", "value": 0, "of": 0, "percent": None})
     assert weekly_digest.summary_line(nothing_ended) == "4 waiting · 2 overdue · 11 new"
 
-
-# ── The record-review predicate, now shared ──────────────────────────────────────────────────────
 
 
 def test_the_review_ladder_moved_without_changing() -> None:

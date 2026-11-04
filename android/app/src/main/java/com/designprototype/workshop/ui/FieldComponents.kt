@@ -45,11 +45,6 @@ import com.designprototype.workshop.ui.questionnaires.questionnaireAnswerPlain
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-// ---------------------------------------------------------------------------
-// Location editor: editable latitude/longitude, a one-tap GPS fix, and a
-// point-on-map picker. Shared by every record form so capture is consistent.
-// ---------------------------------------------------------------------------
-
 @Composable
 fun LocationEditor(
     value: LocationRequest?,
@@ -61,24 +56,6 @@ fun LocationEditor(
     var latText by remember { mutableStateOf(value?.latitude?.let(::trimCoord) ?: "") }
     var lngText by remember { mutableStateOf(value?.longitude?.let(::trimCoord) ?: "") }
     var showMap by remember { mutableStateOf(false) }
-    /*
-     * The two boxes TRACK [value]; they are not seeded from it once.
-     *
-     * WHAT WENT WRONG. They were plain unkeyed `remember`s, so each captured whatever `value` held at
-     * the first composition and never looked again. Every edit form fetches its record after mount,
-     * so every edit form showed BLANK coordinates for a record that had a location — and blank here
-     * is not merely wrong to read, it is armed: type one digit into latitude and delete it and both
-     * boxes are blank, which [emit] reads as "the researcher cleared the location" and answers with
-     * `onChange(null)`, destroying the stored coordinates (and, through the caller that folds state
-     * and pincode onto the same row, those two as well). The "Clear location" button that would have
-     * shown the location was still there was hidden by the same blankness.
-     *
-     * WHY AN EFFECT RATHER THAN A KEYED `remember`. `remember(value)` re-seeds on every emit, and an
-     * emit happens on every keystroke — "22.5" would be rewritten to "22.500000" under the cursor as
-     * it was being typed. This adopts an incoming coordinate only when it is a genuinely DIFFERENT
-     * point from the one the boxes already hold, so a `value` that changed because of this editor's
-     * own `onChange` leaves the typing alone and one that changed anywhere else is shown.
-     */
     LaunchedEffect(value?.latitude, value?.longitude) {
         val sameLat = value?.latitude == latText.trim().toDoubleOrNull()
         val sameLng = value?.longitude == lngText.trim().toDoubleOrNull()
@@ -103,7 +80,7 @@ fun LocationEditor(
                     )
                 )
             latText.isBlank() && lngText.isBlank() -> onChange(null)
-            else -> { /* incomplete / out of range: wait for valid input */ }
+            else -> { }
         }
     }
 
@@ -181,20 +158,8 @@ fun LocationEditor(
 
 private fun trimCoord(value: Double): String = String.format("%.6f", value)
 
-/**
- * The map's two channels back into Kotlin, and they are DELIBERATELY DIFFERENT THINGS.
- *
- * [onPick] is an assertion by a person — a tap or a dragged marker — and it is the only thing that
- * may ever become a stored coordinate. [onCentre] is where the camera happens to be looking, which
- * changes on every pan and means nothing about the record; it exists solely so the place search can
- * bias its results towards the part of India already on screen. Nothing must ever route the second
- * into the first: that would turn scrolling past a village into a claim about where a craft is from.
- */
 private class MapBridge(
     val callback: (Double, Double) -> Unit,
-    // Named apart from the @JavascriptInterface method below on purpose: a property and a method of
-    // the same name would make `onCentre(lat, lng)` inside this class resolve to the method and
-    // recurse for ever.
     val centreCallback: (Double, Double) -> Unit = { _, _ -> }
 ) {
     @JavascriptInterface
@@ -216,7 +181,6 @@ fun MapPickerDialog(
     onDismiss: () -> Unit,
     onPick: (Double, Double) -> Unit
 ) {
-    // Holds the most recent coordinate reported back from the WebView map.
     var picked by remember { mutableStateOf(initialLat?.let { lat -> initialLng?.let { lng -> lat to lng } }) }
     val startLat = initialLat ?: 22.0
     val startLng = initialLng ?: 79.0
@@ -225,17 +189,6 @@ fun MapPickerDialog(
         mapHtml(startLat, startLng, startZoom, BuildConfig.MAPTILER_API_KEY)
     }
 
-    /*
-     * The live map, held so the place search can move its camera, and the camera's current centre,
-     * held so the search can be biased towards it.
-     *
-     * NEITHER OF THESE IS A VALUE. [centre] is written on every pan and is read by exactly one
-     * caller — the `proximity` parameter of a geocoding request. It is never offered to [onPick] and
-     * never reaches [picked]: the "Use this point" button below stays disabled until a PERSON has
-     * tapped the map or dragged the marker, which is the whole discipline this dialog is built on.
-     * Seeded with the opening centre so the very first search is already biased sensibly, including
-     * on a record that has no coordinate yet and therefore opens on the middle of India.
-     */
     var mapView by remember { mutableStateOf<WebView?>(null) }
     var centre by remember { mutableStateOf(startLat to startLng) }
 
@@ -250,9 +203,6 @@ fun MapPickerDialog(
                 Text("Tap or drag the marker to set the location.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 Box(modifier = Modifier.fillMaxWidth()) {
                     AndroidView(
-                        // 380dp before the search box existed. The 40dp buys the floating field above
-                        // without pushing "Use this point" off the bottom of a 640dp-tall handset; the
-                        // results panel floats over the map and costs the column nothing at all.
                         modifier = Modifier.fillMaxWidth().height(340.dp).background(SurfaceCard, RoundedCornerShape(12.dp)),
                         factory = { ctx ->
                             WebView(ctx).apply {
@@ -268,8 +218,6 @@ fun MapPickerDialog(
                                 webChromeClient = android.webkit.WebChromeClient()
                                 webViewClient = object : android.webkit.WebViewClient() {
                                     override fun onPageFinished(view: WebView, url: String?) {
-                                        // Leaflet sizes itself to the container; the WebView often lays out
-                                        // after the script runs, so nudge it once painting settles.
                                         view.evaluateJavascript(
                                             "if(window.__map){window.__map.invalidateSize(true);}",
                                             null
@@ -286,24 +234,12 @@ fun MapPickerDialog(
                                 loadDataWithBaseURL("https://tile.openstreetmap.org/", html, "text/html", "utf-8", null)
                             }.also { mapView = it }
                         },
-                        // Cleared as well as destroyed: a search answering after the dialog closed would
-                        // otherwise call evaluateJavascript on a destroyed WebView.
                         onRelease = { mapView = null; it.destroy() }
                     )
-                    /*
-                     * The search, FLOATING OVER the map rather than stacked above it — see the header of
-                     * PlaceSearchBox.kt for the arithmetic that forces this. It is placed after the
-                     * AndroidView inside the Box so it draws, and is tapped, on top of the WebView.
-                     */
                     PlaceSearchOverlay(
                         apiKey = BuildConfig.MAPTILER_API_KEY,
-                        // MapTiler wants (longitude, latitude); every Android location API says it the
-                        // other way round, and swapping them does not fail — it just biases the search to
-                        // a point in the Arabian Sea and quietly reorders the answers.
                         getProximity = { centre.second to centre.first },
                         onChoose = { hit ->
-                            // MOVES THE CAMERA. Nothing here touches `picked`, so "Use this point" is no
-                            // closer to being enabled than it was before the designer searched.
                             mapView?.evaluateJavascript(leafletCameraScript(cameraForPlace(hit)), null)
                         },
                         modifier = Modifier.align(Alignment.TopCenter).padding(8.dp)
@@ -325,7 +261,6 @@ fun MapPickerDialog(
 }
 
 private fun mapHtml(lat: Double, lng: Double, zoom: Int, key: String): String {
-    // OpenStreetMap raster tiles need no API key and render reliably inside a WebView.
     val tileUrl = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
     return """
         <!DOCTYPE html>
@@ -379,11 +314,6 @@ private fun mapHtml(lat: Double, lng: Double, zoom: Int, key: String): String {
     """.trimIndent()
 }
 
-// ---------------------------------------------------------------------------
-// Field provenance: who populated each field. Admin-only surface, fed by the
-// extraMetadata.fieldProvenance object the backend stamps on every write.
-// ---------------------------------------------------------------------------
-
 data class ProvenanceRow(val field: String, val byName: String?, val at: String?)
 
 private fun JsonObject.stringValue(key: String): String? =
@@ -435,11 +365,6 @@ fun ProvenanceSection(meta: JsonObject?, createdByName: String?) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Answered questionnaire Q&A, grouped by section. Only answered prompts are
-// shown so the artisan page is never crowded with blanks.
-// ---------------------------------------------------------------------------
-
 @Composable
 fun ArtisanQuestionnairePanel(answers: List<ArtisanAnswerDto>, loading: Boolean) {
     ElevatedCard(
@@ -466,24 +391,6 @@ fun ArtisanQuestionnairePanel(answers: List<ArtisanAnswerDto>, loading: Boolean)
                                 verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
                                 answer.prompt?.let { Text(it, color = Body, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium) }
-                                // `questionnaireAnswerPlain` AND NOT `answer.answerText.orEmpty()`.
-                                // `QuestionnaireResponse.answerText` is a `String?` that has always
-                                // held prose and, since the web's interview answer box became a rich
-                                // text box on 2026-08-31, sometimes holds the JSON encoding of a
-                                // document instead. Printed straight, this line shows a researcher
-                                // the literal characters `{"blocks":[{"kind":"PARAGRAPH",…}]}` where
-                                // an artisan's answer belongs — not a crash and not a 500, just the
-                                // braces, on the panel the answer is read back from, and with no
-                                // emptiness check anywhere noticing because a JSON-shaped string is
-                                // not empty.
-                                //
-                                // The flattener is the read boundary declared in
-                                // `QuestionnaireAnswerText.kt` and is used as it stands rather than
-                                // spelled again here: a second answer to "is this a document" is how
-                                // the two come to disagree about one, and the disagreement is silent
-                                // both ways — a document read as prose prints braces, and prose read
-                                // as a document blanks somebody's answer. It is identity on a plain
-                                // string, so every answer written before this renders as it did.
                                 Text(questionnaireAnswerPlain(answer.answerText), color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
                                 val meta = listOfNotNull(answer.interviewTitle, answer.answeredByName?.let { "by $it" }).joinToString(" · ")
                                 if (meta.isNotBlank()) Text(meta, color = Muted, style = MaterialTheme.typography.bodySmall)

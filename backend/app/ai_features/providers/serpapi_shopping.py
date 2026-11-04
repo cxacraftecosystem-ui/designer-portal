@@ -1,19 +1,3 @@
-"""Comparable products through SerpApi's ``google_shopping`` engine.
-
-THE SECOND VENDOR EXISTS SO THERE IS NO FIRST ONE. A capability with a single hosted provider is a
-hardcoded vendor with extra steps: the price goes up, the terms change, the account is refused in a
-jurisdiction, and the feature is gone. This one answers the same question through a different
-company with a different pricing model, and ``auto`` will take whichever is configured.
-
-Same boundary as serper: a documented commerce API, structured fields, no crawling, and only the
-query leaves the building. Same warning too — never run against the real service. The request
-follows SerpApi's published ``google_shopping`` documentation as of 2026-08.
-
-ONE SHAPE DIFFERENCE WORTH KNOWING: SerpApi answers 200 with ``{"error": "..."}`` for a query it
-could not run, where serper uses a status code. That is handled below rather than left to look like
-an empty market, which is a different and much more damaging answer.
-"""
-
 from collections.abc import Sequence
 from typing import Any
 
@@ -23,15 +7,11 @@ from app.ai_features.providers.http import JSON_RESPONSE_CEILING, request_json
 from app.ai_features.runtime import Deadline, throttle
 from app.ai_features.types import Capability, RawListing, ResearchBrief
 
-#: Pages per query. One SerpApi search is one billable search whatever ``num`` says, so the page
-#: size is large and the page count small — the opposite tuning to serper, for the same reason.
 _MAX_PAGES = 2
 _PAGE_SIZE = 20
 
 
 class SerpApiShoppingProvider(MarketResearchProvider):
-    """One GET per page against ``engine=google_shopping``."""
-
     provider_id = "serpapi_shopping"
 
     def search(
@@ -101,9 +81,6 @@ class SerpApiShoppingProvider(MarketResearchProvider):
                 "hl": self.settings.market_research_language,
                 "num": _PAGE_SIZE,
                 "start": start,
-                # In the query string because that is the only place SerpApi accepts it. It is
-                # therefore in the URL of an outbound request: a proxy that logs full URLs would
-                # log this key, which is worth knowing before pointing SERPAPI_ENDPOINT at one.
                 "api_key": api_key,
             },
             headers={"User-Agent": self.settings.market_research_user_agent},
@@ -125,8 +102,6 @@ class SerpApiShoppingProvider(MarketResearchProvider):
             )
         error = first_string(payload, "error")
         if error:
-            # 200 + an error string. Left unhandled this reads as "the market is empty", which is
-            # the one wrong answer this whole module is written to avoid producing.
             raise self._fail(
                 f"SerpApi refused the search: {error}",
                 capability=capability,
@@ -148,18 +123,15 @@ class SerpApiShoppingProvider(MarketResearchProvider):
 
 
 def _now() -> str:
-    from app.ai_features.market_research import utc_now_iso  # avoids a cycle
+    from app.ai_features.market_research import utc_now_iso
 
     return utc_now_iso()
 
 
 def _listing(row: Any, *, provider: str, query: str, retrieved_at: str) -> RawListing:
-    """One SerpApi row as a RawListing. The ONLY vendor-specific knowledge in this file."""
     return RawListing(
         name=first_string(row, "title", "name"),
         seller=first_string(row, "source", "seller", "store"),
-        # ``price`` is the formatted string ("₹1,299"); ``extracted_price`` is a bare number and is
-        # only the fallback, because a number without a currency is a price nobody can check.
         price_text=first_string(row, "price", "extracted_price"),
         url=first_string(row, "product_link", "link", "serpapi_product_api"),
         provider=provider,

@@ -22,14 +22,6 @@ import androidx.compose.ui.unit.dp
 import com.designprototype.workshop.data.DuplicateCandidateDto
 import com.designprototype.workshop.data.PossibleDuplicates
 
-/**
- * "ALREADY RECORDED?" — the artisan form's answer when the server says this person may already be
- * in the register (`POST /artisan-duplicates/check`, or the 409 `artisan_possible_duplicate` hold).
- *
- * Up to three rows (name · place · craft, the server's reason labels), each with Open when the host
- * can open a record. The footer is Cancel and "Different person — save" on one line. Nothing here
- * scores anything; the rows are what the server returned.
- */
 @Composable
 fun PossibleDuplicateSheet(
     candidates: List<DuplicateCandidateDto>,

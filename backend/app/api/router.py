@@ -75,205 +75,51 @@ api_router = APIRouter(prefix="/api")
 
 api_router.include_router(auth.router)
 api_router.add_api_route("/me", auth.me, methods=["GET"], tags=["auth"])
-# Two-step verification — /api/auth/two-factor. Its own module because it is its own mechanism; its
-# /verify ends in auth.open_session, so a sign-in finished there answers exactly as /login does.
 api_router.include_router(two_factor.router)
 api_router.include_router(users.router)
 api_router.include_router(aadhaar.router)
 api_router.include_router(aadhaar.features_router)
-# The platform allow-list — who may sign in AT ALL — and the queue of people asking to. Mounted next
-# to users because it is the other half of "who has an account here", and BEFORE designers because
-# the designer roster is now the narrower of the two lists: it says who is empanelled, this one says
-# who may reach the product. See app/services/access_roster.py for why they are two tables.
 api_router.include_router(access.router)
-# The ministry's annual directory of planned workshops — /api/annual-plan. Mounted next to the two
-# rosters because all three are administrative REGISTERS rather than fieldwork: they say what the
-# institution intends, not what anybody recorded.
-#
-# IT IS NOT `/design-workshops` AND MUST NOT BE MOUNTED UNDER IT. A row on this prefix is a line in a
-# document and not a workshop; a shared prefix would put it one `/{workshop_id}` away from
-# `load_workshop_or_404`, which is the function the whole access model of the real table rests on,
-# and would invite the next reader to widen that loader to fit. See app/services/annual_plan.py's
-# module docstring for the full boundary — the list of surfaces a planned row must never be counted
-# on — and tests/test_annual_plan_is_not_a_workshop.py, which asserts it surface by surface.
 api_router.include_router(annual_plan.router)
-# The shared questionnaire's artisan record (/artisans/{id}/record[.csv]; 404 while QUESTIONNAIRE_V2
-# is off). Before artisans so no catch-all there can shadow it.
 api_router.include_router(questionnaire_v2.artisans_router)
 api_router.include_router(artisans.router)
-# Artisan QR cards: /artisans/{id}/card*, /artisan-cards/* (services/artisan_card.py).
 api_router.include_router(artisan_cards.router)
-# Likely-duplicate artisans and their merges — /api/artisan-duplicates, /api/artisan-merges. Their own
-# prefixes, so nothing is shadowed by /artisans/{artisan_id}.
 api_router.include_router(artisan_duplicates.router)
 api_router.include_router(artisan_duplicates.merges_router)
 api_router.include_router(crafts.router)
 api_router.include_router(craft_codes.router)
 api_router.include_router(craft_categories.router)
 api_router.include_router(cross_portal.router)
-# The Field Repository's searches of this portal (signed peer routes; docs/SEARCH.md).
 api_router.include_router(cross_portal_search.router)
 api_router.include_router(workshops.router)
-# The "Type of workshop" vocabulary — /api/workshop-types. Mounted immediately under `workshops`
-# because the two are read together on every record form: this list fills the FIRST of the form's two
-# workshop dropdowns, and the type chosen there decides whether the second is filled from `Workshop`
-# (above) or from `DesignWorkshop`.
-#
-# ITS OWN PREFIX, AND NOT NESTED UNDER /workshops, for two reasons. The list is not about `Workshop`
-# rows at all — one of its six members routes at `DesignWorkshop` and the rest at `Workshop`, so
-# filing it under either table's prefix would assert something false about the other half. And
-# /workshops already carries GET /{workshop_id}, which would swallow any literal path mounted after
-# it; that is the hazard the notes further down this file record for /design-workshops.
-#
-# IT IS ALSO NOT PART OF `reference`, WHICH IS THE OTHER TEMPTING HOME. Everything on /reference is a
-# pure server-side CONSTANT with no database read — the state list, the districts, the pincode rule —
-# and this is a TABLE an administrator edits at runtime. Putting a mutable, admin-written list behind
-# a prefix whose whole contract is "cache this and re-fetch only when `version` changes" would leave
-# every client serving a vocabulary an admin had already corrected. See routes/workshop_types.py.
 api_router.include_router(workshop_types.router)
 api_router.include_router(products.router)
 api_router.include_router(processes.router)
 api_router.include_router(tools.router)
-# GET /records/completeness-rules — the table behind every record's completeness block.
 api_router.include_router(completeness.router)
-# Interview summaries, key quotes and translations — /api/media/insights and
-# /api/media/{id}/insights. BEFORE media, and the order is load-bearing: media declares
-# GET /{media_id}, which would answer GET /media/insights as a media id.
 api_router.include_router(transcript_insights.router)
-# The transcript pipeline's API (shared/transcript-contract.json), on its own prefix.
 api_router.include_router(transcripts.router)
 api_router.include_router(media.router)
-# Before ``questionnaire`` so its fixed paths are matched first (C28; nothing collides today).
 api_router.include_router(answer_drafts.router)
-# The shared questionnaire (UNIFY_2026-10-21.md): sessions, takes, coverage, answers, inbox,
-# bindings. Every route but GET /questionnaire/config answers 404 while QUESTIONNAIRE_V2 is off.
-# Before the older questionnaire router so its fixed paths are matched first.
 api_router.include_router(questionnaire_v2.router)
 api_router.include_router(questionnaire.router)
-# Custom questionnaires — /api/questionnaires (PLURAL), a form a designer authored themselves, as
-# distinct from the one global artisan questionnaire on the singular prefix above. Mounted after it
-# so the two prefixes are read together by anyone scanning this file.
 api_router.include_router(questionnaire_forms.router)
-# BEFORE design_workshops, and the order is load-bearing rather than stylistic. Both routers carry
-# the /design-workshops prefix, and design_workshops declares GET /{workshop_id} — which matches
-# /design-workshops/eligible-viewers perfectly well and answers 404 "Record not found". Registered
-# the other way round, the admin's designer picker is empty on a server where the route exists.
-# FastAPI matches in registration order, so the literal path has to be mounted first.
 api_router.include_router(design_workshop_viewers.router)
 api_router.include_router(design_workshops.router)
-# The designer's own artisan-list import (C11), /design-workshops/{id}/roster/*. Every path is two
-# segments under the workshop id, so GET /{workshop_id} above cannot swallow it.
 api_router.include_router(design_workshop_roster.router)
-# C9: what a designer may start a stage from. Three segments under the workshop id.
 api_router.include_router(design_workshop_copy.router)
-# The peer/pool rating ledger, /api/design-ratings. ITS OWN PREFIX, and deliberately not nested
-# under /design-workshops, for two reasons that both point the same way. The prefix above is already
-# shared by two routers and carries GET /{workshop_id}, which swallows any literal path mounted
-# after it (see the note above design_workshop_viewers). And the POOL round is by definition the
-# designers load_workshop_or_404 turns away — routes sharing that prefix would invite somebody to
-# teach the shared loader about POOL, which grants stage WRITES as well as reads. See
-# app/services/design_ratings.py for the narrow door it uses instead.
 api_router.include_router(design_ratings.router)
-# The queue a designer asks to be let into a workshop through, /api/design-workshop-access. ITS OWN
-# PREFIX, for the two reasons design_ratings gives just above. The ordering hazard is one of them —
-# /design-workshops already carries GET /{workshop_id}, which swallows any literal path mounted
-# after it — but the deciding one is the same as that router's: the caller of POST
-# /design-workshop-access/requests is BY DEFINITION somebody load_workshop_or_404 turns away, and a
-# route sharing that prefix invites the next reader to widen the shared loader so it fits. It does
-# not need to be nested to be found; the workshop id travels in the body, beside the code that was
-# scanned to obtain it. See app/services/design_workshop_access.py, whose header sets out why that
-# one route answers the same thing whether the workshop exists or not.
 api_router.include_router(design_workshop_access.router)
-# The INSPECTOR tier's read-only surface, /api/design-workshop-inspections, and the admin screen
-# that assigns inspections. ITS OWN PREFIX, for the two reasons the three routers above give — and
-# here the second one is the whole feature rather than a filing preference: every caller of the
-# inspector routes is BY DEFINITION somebody load_workshop_or_404 turns away (an inspector is not
-# in DESIGN_WORKSHOP_ROLES), and a route sharing the /design-workshops prefix invites the next
-# reader to widen that shared loader to fit. Widening it grants STAGE WRITES: since 2026-09-03 that
-# loader role-gates its GRANT arm — a viewer row is honoured only for an account inside
-# DESIGN_WORKSHOP_ROLES — but for_edit=True still carries no role check of its own, so an INSPECTOR
-# added to that set, or admitted through a fourth arm, would be writing stages and not reading them.
-# (This line used to say the loader "performs no role check at all", which was true when it was
-# written and is now the opposite of what it does; the reason for the separate prefix is unchanged.)
-# See app/services/design_workshop_inspectors.py, whose header sets out why read-only here has to be
-# structural rather than a flag on a row.
 api_router.include_router(design_workshop_inspections.router)
-# THE SIXTH SCOPE, /api/design-workshop-oversight: the Assistant Director's and Regional Director's
-# read-only surface, the Ministry Admin's screen that assigns it, and the artisan-list .xlsx import.
-# ITS OWN PREFIX, for the deciding reason the four routers above give — every caller of the
-# officer's routes is BY DEFINITION somebody load_workshop_or_404 turns away (an officer is not in
-# DESIGN_WORKSHOP_ROLES), and a route sharing the /design-workshops prefix invites the next reader
-# to widen that shared loader to fit, which grants STAGE WRITES rather than reads.
-#
-# **THIS POSITION IS STYLISTIC AND IS NOT LOAD-BEARING, AND THAT IS WORTH SAYING OUT LOUD HERE**
-# because three of the comments above this one describe an ordering hazard and a reader will
-# reasonably assume this line inherits it. It does not: /design-workshop-oversight and
-# /design-workshops are DIFFERENT PREFIXES, and Starlette matches the whole path rather than a
-# prefix, so GET /design-workshops/{workshop_id} cannot swallow anything this router declares
-# however the two are registered. It is mounted here because it is the sixth member of the same
-# family and reading them together is the fastest way to understand any of them. The real ordering
-# hazard for this feature is INSIDE its own module, where every literal path is declared before
-# GET /{workshop_id} — see that file's ⚠ paragraph. Moving this line will not fix a 404 on this
-# prefix, and treating it as the cause wastes a debugging session.
 api_router.include_router(design_workshop_oversight.router)
-# THE SANCTIONING AUTHORITY'S SURFACE, /api/design-workshop-approvals: the reports waiting for a
-# sign-off, one report read for it, and the three decisions the review loop's DECISION_EDGES name —
-# approve, revise (withdraw an approval) and hand-on. ITS OWN PREFIX for the deciding reason the
-# routers above give: its callers are very often somebody `load_workshop_or_404` turns away (a
-# Ministry Admin who neither opened the workshop nor holds designer access to it), and a route
-# sharing /design-workshops invites widening that loader, which grants STAGE WRITES. Mounted beside
-# the inspection and oversight routers because it is the last member of the same family: the
-# inspector reads and sends back, the directors read and monitor, the sanctioning authority signs
-# off. Like the oversight line above, the position is not load-bearing — different prefixes cannot
-# swallow each other. See app/services/design_workshop_approvals.py for who may decide and why.
 api_router.include_router(design_workshop_approvals.router)
-# The empanelment roster that gates a designer's sign-in, and the profile their reports are
-# prefilled from. Next to design_workshops because it is the same product surface, and separate
-# from users because the two facts it keeps are deliberately not the role column — see
-# app/services/designers.py.
 api_router.include_router(designers.router)
-# The ministry's sanction register, /api/sanction-orders. NEXT TO `designers` because it writes the
-# same two rosters and the same profile, and ON ITS OWN PREFIX because the workshop it creates is
-# created BY the sanction and not by an admin pressing "new workshop": /design-workshops carries a
-# GET /{workshop_id} that swallows any literal path mounted after it (see the note above
-# design_workshop_viewers), and — the deciding reason — the caller here is by definition somebody
-# `assert_can_create_design_workshops` turns away. A route sharing that prefix invites the next
-# reader to widen DESIGN_WORKSHOP_CREATOR_ROLES, which is the set tests/test_design_workshop_gate.py
-# reads the create route's SOURCE to protect.
 api_router.include_router(sanction_orders.router)
-# THE MINISTRY'S WHOLE-ESTATE REGISTER, /api/ministry-dashboard. Mounted next to the sanction
-# register and the annual plan because all three are the MINISTRY'S instruments rather than
-# fieldwork, and ON ITS OWN PREFIX for the deciding reason the oversight router gives above: every
-# caller here is by definition somebody `load_workshop_or_404` turns away, so a route sharing the
-# /design-workshops prefix invites the next reader to widen that shared loader — which grants STAGE
-# WRITES rather than reads. That prefix also carries a GET /{workshop_id} that would swallow any
-# literal path mounted after it.
-#
-# IT DECLARES NO PARAMETERISED PATH AT ALL, so the ordering hazard three comments above this one
-# describe cannot arise inside it. Every per-workshop read the ministry has already lives on
-# /design-workshop-oversight, and a second door onto one workshop would be a second place to keep
-# the read-only promise.
 api_router.include_router(ministry_dashboard.router)
-# The background stage-data export (C15). Its own module: the register above is read-only by
-# construction and its tests sweep for that.
 api_router.include_router(ministry_stage_data_exports.router)
-# THE MINISTRY'S MONTHLY EXPORT PACKS, /api/ministry-exports (2026-10-18). Every route answers 404
-# while MINISTRY_EXPORTS_ENABLED is off. See app/services/ministry_exports.py.
 api_router.include_router(ministry_exports.router)
 api_router.include_router(dashboard.router)
-# The cross-workshop comparison, /api/analytics/design-workshops. On its own prefix rather than
-# under /design-workshops, which is already shared by two routers and carries a GET /{workshop_id}
-# that would swallow any literal path mounted after it (see the note above design_workshop_viewers).
-# Admin-only inside the module; nothing here is scoped to a caller's own workshops.
 api_router.include_router(analytics.router)
-# HOW THE PLATFORM IS USED, /api/usage — and it is mounted here, immediately under /api/analytics,
-# because the two are the pair most likely to be confused and reading them together is the fastest
-# way to stop confusing them. The one above compares CRAFT OUTCOMES across workshops and observes no
-# person; this one records which SCREENS were reached, by whom, and how long the server took. A
-# second meaning of the word "analytics" would have put a privacy surface behind a name already
-# taken at every layer — the route, the web page /admin/analytics, the guard and the nav label — so
-# the prefix is deliberately its own. See app/api/routes/usage.py for who may read which arm, and
-# app/services/usage.py for the batched writer and the consent rules that gate it.
 api_router.include_router(usage.router)
 api_router.include_router(search.router)
 api_router.include_router(map_coverage.router)
@@ -281,35 +127,21 @@ api_router.include_router(map_points.router)
 api_router.include_router(review.router)
 api_router.include_router(export.router)
 api_router.include_router(data_browser.router)
-# The bulk, admin-authenticated dataset API. Mounted like any other router; what makes it different
-# is the credential it accepts (see app/api/routes/datasets.py and deps.require_dataset_admin).
 api_router.include_router(datasets.router)
-# Transcripts in View data / Download data (0.0.6): app/api/routes/transcript_data.py.
 api_router.include_router(transcript_data.router)
 api_router.include_router(app_release.router)
-# GET /admin/app-versions: which builds are in use (the old-build create cutoff waits on it).
 api_router.include_router(app_versions.router)
-# Next to app_release because it is the same kind of thing: this deployment handing its own client a
-# large immutable binary it cannot get anywhere else. The difference is that the APK is redirected to
-# object storage while these bytes are served from the API itself, which
-# app/services/asr_artifacts.py argues at length.
 api_router.include_router(asr_models.router)
 api_router.include_router(feedback.router)
-# The caller's own stored create answers, for an outbox replay that lost its record id.
 api_router.include_router(idempotency_keys.router)
 api_router.include_router(notifications.router)
 api_router.include_router(preferences.router)
 api_router.include_router(settings.router)
-# The shared transcription service's admin panel: pause, providers, budgets (18 Oct 2026).
 api_router.include_router(transcription_admin.router)
 api_router.include_router(ai_keys.router)
 api_router.include_router(secrets.router)
 api_router.include_router(data_access.router)
 api_router.include_router(tasks.router)
 api_router.include_router(reference.router)
-# Last, and on its own line with this note, because it is the only unauthenticated router here:
-# everything above is scoped to the caller, this one is scoped to nobody. See app/api/routes/public.py.
 api_router.include_router(public.router)
-# The second unauthenticated router (2026-10-18): the office opening an approved report it was
-# e-mailed. The link's secret, in the request body, is the credential. See its module.
 api_router.include_router(report_deliveries.router)

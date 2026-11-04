@@ -30,15 +30,6 @@ import androidx.compose.ui.unit.dp
 import com.designprototype.workshop.data.UserDto
 import kotlinx.coroutines.launch
 
-/**
- * The "Danger zone" card that ends a record's page: its Delete, behind a confirmation.
- *
- * Identical in designer-portal and documentation-portal apart from the package and import lines, so the two apps
- * delete a record with the same card, words and gate. Drawn for content admins
- * ([FieldPermissions.isContentAdmin]: Admin, Master Admin, Ministry Admin) WHETHER OR NOT admin view
- * is on (owner, 2026-10-21) — [mayDelete], the gate every other delete on the handset reads — and for
- * nobody else; the server refuses everyone else regardless.
- */
 object RecordDangerZone {
     const val TITLE = "Danger zone"
     const val CONFIRM_BODY = "This permanently deletes the record."
@@ -49,29 +40,21 @@ object RecordDangerZone {
 
     fun body(noun: String): String = "Permanently deletes this $noun and its links."
 
-    /**
-     * H5 (21 Oct 2026): an interview is soft-deleted. Its answers and recordings stay, and an admin
-     * can restore it, so "permanently" would be untrue.
-     */
     const val INTERVIEW_BODY = "Moves this interview to Deleted. Its answers and recordings are kept, and an admin can restore it."
     const val INTERVIEW_CONFIRM_BODY = "Its answers and recordings are kept. An admin can restore it."
     fun button(noun: String): String = "Delete this $noun"
     fun confirmTitle(noun: String): String = "Delete $noun?"
 
-    /** Whether [user] is shown the card. Admin view does not enter into it. */
     fun visible(user: UserDto?): Boolean = mayDelete(user)
 }
 
 @Composable
 fun RecordDangerZoneCard(
-    /** The record's kind in lower case — "artisan", "media file". */
     noun: String,
     delete: suspend () -> Unit,
     onDeleted: () -> Unit,
     onError: (Throwable) -> Unit,
-    /** In place of "Permanently deletes…", for a record that is not deleted permanently. */
     body: String? = null,
-    /** In place of the confirmation's "This permanently deletes the record." */
     confirmBody: String? = null,
 ) {
     val scope = rememberCoroutineScope()

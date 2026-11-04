@@ -2,19 +2,6 @@ import { expect, test } from "@playwright/test";
 
 import { bannerRowWanted, editingWorkshopId, outstanding } from "@/components/designworkshop/DraftSyncBanner";
 
-/**
- * THE DRAFT BANNER STAYS OFF THE STAGE THAT IS BEING TYPED INTO.
- *
- * The banner is mounted above every protected page. It used to appear 800 ms after the first
- * keystroke on a stage — the autosave marks the stage unsent — inserting a 128 px panel above the
- * caret, which the browser answered by scrolling the page 144 px (desktop) / 286 px (phone) under
- * the designer. The open stage's own form already says "Saved on this device only" in place, so its
- * workshop's row is left off the banner while it carries nothing but unsent stage edits. Anything
- * that needs action still shows.
- *
- * PURE NODE. Run: `npx playwright test e2e/draft-banner-editing-unit.spec.ts --reporter=line`
- */
-
 type State = ReturnType<typeof outstanding>;
 
 function state(overrides: Partial<State> = {}): State {

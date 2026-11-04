@@ -6,26 +6,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * THE BANNER AND THE ROW BENEATH IT, TOLD ONE STORY EACH, ABOUT THE SAME PHONE.
- *
- * [WorkshopSyncStatus.summary] already refuses to route a refused answer through its "waiting to
- * upload" arm, and says why on that branch: *nothing is waiting, the save has already happened and
- * the repository has already declined it.* The device-wide banner drawn directly above the same list
- * did the opposite, because its caller counted `failedStages + failedMedia` and never
- * [WorkshopSyncStatus.refusedAnswers].
- *
- * Measured on SM-M325F / Android 13 against the live API, with a stage whose only outstanding item
- * was two refused MONEY answers and the phone on Wi-Fi:
- *
- *   banner  "Waiting to upload"  ·  "Across 1 workshop(s) on this device. Everything is saved here
- *            and editable offline; it uploads whenever there is a connection."   [cloud-off icon]
- *   row     "2 answers refused — the rest is backed up"                          [error icon]
- *
- * These pin the three sentences the banner may now say and the one it may not: a refusal is never
- * described as waiting for a connection, and the cloud-off icon — which is a claim ABOUT THE NETWORK
- * — is not drawn over one.
- */
 class DwDeviceSyncBannerTest {
 
     @Test
@@ -44,7 +24,6 @@ class DwDeviceSyncBannerTest {
             workshops = 1, stages = 0, files = 0, bytesText = "0 B",
             failures = 0, refusedAnswers = 2,
         )!!
-        // The exact headline the handset drew before this existed.
         assertFalse(
             "the headline fell through to the pending default:\n${banner.headline}",
             banner.headline == "Waiting to upload",
@@ -92,11 +71,6 @@ class DwDeviceSyncBannerTest {
         assertTrue(banner.detail, banner.detail.contains("uploads whenever there is a connection"))
     }
 
-    /**
-     * BOTH AT ONCE IS THE CASE THAT CANNOT BE TOLD IN ONE SENTENCE. The stages and files WILL upload
-     * on the next bar of signal; the refused answers will not, ever, until somebody corrects them.
-     * A banner that says only the first over both is the original defect with a truer headline.
-     */
     @Test
     fun `pending work and a refusal each get their own clause`() {
         val banner = dwDeviceSyncBanner(
@@ -115,11 +89,6 @@ class DwDeviceSyncBannerTest {
         )
     }
 
-    /**
-     * A stage or file the server refused OUTRIGHT is a different fact from an answer refused inside a
-     * save that otherwise succeeded — [WorkshopSyncStatus] keeps them apart for the reason written on
-     * `refusedAnswers`, and the banner must not fold them into one number either.
-     */
     @Test
     fun `an outright refusal and a refused answer are counted apart`() {
         val banner = dwDeviceSyncBanner(
@@ -129,11 +98,6 @@ class DwDeviceSyncBannerTest {
         assertEquals("2 not saved · 1 answer not accepted", banner.headline)
     }
 
-    /**
-     * The one thing that may still reach the old default: a workshop that is outstanding for a reason
-     * none of the four counters names — it has no server record at all. That genuinely is waiting for
-     * a connection, so the sentence is true of it and only of it.
-     */
     @Test
     fun `a workshop that exists only here is still waiting to upload`() {
         val banner = dwDeviceSyncBanner(

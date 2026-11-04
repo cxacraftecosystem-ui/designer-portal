@@ -18,13 +18,6 @@ import {
 } from "@/components/dashboard/ministryDesk";
 import type { User, UserRole } from "@/lib/types";
 
-/**
- * THE MINISTRY DESK FOLDS ON A PHONE — below `sm` it is its title, the counts that need acting on,
- * and "Show all". These pin the pure half (which counts, when it may say "Nothing waiting", the
- * per-browser memory) and the few source facts a renderer test would otherwise hold: the fold is
- * phone-only, the control says whether it is open, and the motion honours reduced motion.
- */
-
 const CARD = join(__dirname, "..", "components", "dashboard", "MinistryDeskCard.tsx");
 const withoutComments = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
 const user = (role: UserRole): User => ({ id: `u-${role}`, email: "a@b.c", name: role, role }) as User;
@@ -66,21 +59,16 @@ test("both plurals of both labels", () => {
 
 test("'Nothing waiting' only once every count the desk carries has answered zero", () => {
   expect(ministryDeskSummary(FULL, { awaitingSanction: 0, awaitingApproval: 0 })).toEqual({ kind: "clear" });
-  // One still loading (or failed): claim nothing, never "Nothing waiting".
   expect(ministryDeskSummary(FULL, { awaitingSanction: 0, awaitingApproval: null })).toEqual({ kind: "unknown" });
   expect(ministryDeskSummary(FULL, { awaitingSanction: null, awaitingApproval: null })).toEqual({ kind: "unknown" });
-  // A positive count still shows while the other is unknown.
   expect(ministryDeskSummary(FULL, { awaitingSanction: null, awaitingApproval: 5 }).kind).toBe("waiting");
 });
 
 test("a count for a row this desk does not carry is never shown or waited on", () => {
-  // An assistant director has no approval row: its count is irrelevant, and its absence does not
-  // hold "Nothing waiting" back.
   const desk = ministryDeskFor(user("ASSISTANT_DIRECTOR"));
   expect(desk.some((row) => row.href === AWAITING_APPROVAL_BADGE_HREF)).toBe(false);
   expect(ministryDeskSummary(desk, { awaitingSanction: 0, awaitingApproval: null })).toEqual({ kind: "clear" });
   expect(ministryDeskSummary(desk, { awaitingSanction: 0, awaitingApproval: 9 })).toEqual({ kind: "clear" });
-  // A desk with neither badged row claims nothing at all.
   const bare = FULL.filter(
     (row) => row.href !== AWAITING_SANCTION_BADGE_HREF && row.href !== AWAITING_APPROVAL_BADGE_HREF
   );
@@ -118,13 +106,9 @@ test("blocked storage never throws: it reads folded and forgets quietly", () => 
 
 test("the fold is phone-only, and the control says whether the desk is open", () => {
   const card = withoutComments(readFileSync(CARD, "utf8"));
-  // The full grid is hidden only below sm, and only while folded.
   expect(card).toContain('"mt-4 grid gap-2.5 max-sm:hidden sm:grid-cols-2 lg:grid-cols-3"');
   expect(card).toContain('"mt-4 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3"');
-  // From sm up the fold hides nothing: no plain `sm:hidden` on the grid in either state.
   expect(card).not.toMatch(/"mt-4 grid gap-2\.5[^"]*(?<!max-)sm:hidden/);
-  // The summary and the toggle are phone-only.
-  // The summary slot holds one row's height while a count is still out, so Show all does not jump.
   expect(card).toContain('<div className="mt-3 min-h-12 sm:hidden">');
   expect(card).toContain('<p className="flex min-h-12 items-center gap-2 text-sm text-ink-500">');
   expect(card).toContain('<ActionGroup fill className="mt-3 sm:hidden">');
@@ -140,7 +124,6 @@ test("the reveal honours both reduced-motion switches and only plays when asked 
   expect(card).not.toMatch(/\buseReducedMotion\(/);
   expect(card).toContain("staggerParent(reduce");
   expect(card).toContain("riseItem(reduce");
-  // A desktop load and a remembered expansion never animate: only a press bumps `reveal`.
   expect(card).toContain('initial={reveal > 0 ? "hidden" : false}');
 });
 

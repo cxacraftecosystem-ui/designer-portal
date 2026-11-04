@@ -1,20 +1,5 @@
 "use client";
 
-/**
- * "Verify with Aadhaar" — for the signed-in account (Settings) and for an artisan record (its edit
- * page). One component, one flow, the handset's flow (`android/.../ui/aadhaar/AadhaarScreens.kt`):
- *
- *   status → consent → method → the method's form → status again.
- *
- * RENDERS NOTHING while the server has both Aadhaar features switched off (`aadhaarFeaturesOf`), and
- * offers only the methods that are on. Consent is asked EVERY time, before any picture is read or
- * file is chosen, and is not remembered: the server refuses a request without it.
- *
- * Nothing the person provides is kept in the browser: the picture is decoded in memory, the ZIP is
- * base64'd in memory, and the number and the code typed for an OTP live in component state until
- * the panel closes. None of it goes near localStorage, IndexedDB or the offline outbox.
- */
-
 import { useCallback, useEffect, useId, useState } from "react";
 import { BadgeCheck, FileArchive, KeyRound, QrCode, ShieldAlert, ShieldCheck } from "lucide-react";
 
@@ -79,7 +64,6 @@ export function AadhaarVerifyPanel({
   recordName
 }: {
   subject: AadhaarSubject;
-  /** The artisan's name, for the heading; the account's own panel needs none. */
   recordName?: string;
 }) {
   const { user, refreshMe } = useAuth();
@@ -91,12 +75,10 @@ export function AadhaarVerifyPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  // The offline e-KYC form.
   const [zip, setZip] = useState<File | null>(null);
   const [shareCode, setShareCode] = useState("");
   const [mobile, setMobile] = useState("");
   const [email, setEmail] = useState("");
-  // The OTP form. The number never leaves this component's state, and it is cleared on every exit.
   const [uid, setUid] = useState("");
   const [otp, setOtp] = useState("");
   const [issued, setIssued] = useState<OtpIssued | null>(null);
@@ -110,7 +92,6 @@ export function AadhaarVerifyPanel({
     } catch {
       setSummary(null);
     }
-    // `subject` is rebuilt by every parent render; its identity is `subjectKey`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [subjectKey]);
 
@@ -457,8 +438,6 @@ export function AadhaarVerifyPanel({
             </span>
           </label>
           {issued ? (
-            // The owner's six boxes (OtpCodeInput): digits only, paste fills all six. Not submitted on
-            // completion here — the Verify button below is the act, as on the rest of this panel.
             <OtpCodeInput
               id="aadhaar-otp"
               label="The six-digit code UIDAI sent"

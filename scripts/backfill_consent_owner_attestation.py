@@ -50,18 +50,17 @@ from app.services import dictation_consent  # noqa: E402
 from app.transcription import ledger  # noqa: E402
 from app.transcription.consent import OWNER_ATTESTATION_NOTE, OWNER_ATTESTATION_SOURCE  # noqa: E402
 
-#: 18 Oct 2026, midday India time, so the date reads as the 18th in every timezone a screen uses.
 ATTESTED_AT = datetime(2026, 10, 18, 6, 30, tzinfo=UTC)
 
 
 @dataclass
 class Plan:
-    workshops: list[tuple[str, str, int]] = field(default_factory=list)  # (id, title, recordings)
+    workshops: list[tuple[str, str, int]] = field(default_factory=list)
     refused: list[tuple[str, str, int]] = field(default_factory=list)
-    kept_refused: bool = False  # True when --keep-refused left the REFUSED ones out
+    kept_refused: bool = False
     refusal_notes: list[str] = field(
         default_factory=list
-    )  # media ids whose consent note is cleared
+    )
 
 
 def _refusal_sentences() -> set[str]:

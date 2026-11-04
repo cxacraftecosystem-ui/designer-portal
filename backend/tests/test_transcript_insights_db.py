@@ -1,11 +1,3 @@
-"""Transcript insights against a REAL Postgres with the migration applied.
-
-What only a real database can show: the unique ``(mediaFileId, version)`` index, the cascade on
-media delete, the new job type being accepted, and enqueue/generate/supersede running through the
-real client. Skips itself unless ``DATABASE_URL`` names a LOCAL database, as
-``test_media_processing_jobs`` does.
-"""
-
 from __future__ import annotations
 
 import json
@@ -76,7 +68,7 @@ def _row(media_id: str, version: int) -> dict:
         "sourceHash": "h",
         "translationStatus": "NOT_NEEDED",
         "provider": "openai",
-        "modelId": "gpt-4o-mini",
+        "modelId": "gpt-6-luna",
         "promptVersion": "transcript-insights/1",
         "generated": Json({"summaryLines": [], "quotes": [], "translationText": None}),
         "generatedAt": datetime.now(UTC),
@@ -116,13 +108,13 @@ async def test_enqueue_and_generate_through_the_real_client(client, monkeypatch)
 
     async def run_chat_verb(**_kwargs):
         return {"available": True, "status": "COMPLETED", "text": reply, "provider": "openai",
-                "model": "gpt-4o-mini"}
+                "model": "gpt-6-luna"}
 
     monkeypatch.setattr(ai, "_run_chat_verb", run_chat_verb)
     media_id = await _media(client)
     job = await ti.enqueue(media_id)
     assert job is not None and job.jobType == "TRANSCRIPT_INSIGHTS" and job.priority == 80
-    assert await ti.enqueue(media_id) is None  # one active job at a time
+    assert await ti.enqueue(media_id) is None
 
     media = await client.mediafile.find_unique(where={"id": media_id})
     first = await ti.generate(media, user_id=None)
@@ -139,7 +131,6 @@ async def test_enqueue_and_generate_through_the_real_client(client, monkeypatch)
 
 
 async def test_the_drain_filter_on_the_job_type_is_valid_sql(client):
-    """``not_in`` on the enum column, as the drain sends it with both kinds held back."""
     rows = await client.mediaprocessingjob.find_many(
         where={"jobType": {"not_in": ["TRANSCRIPTION", "TRANSCRIPT_INSIGHTS"]}}, take=1
     )
@@ -153,5 +144,5 @@ async def test_a_regenerate_claims_an_automatic_job_once(client):
     job = await ti.enqueue(media_id)
     owner = (await client.mediafile.find_unique(where={"id": media_id})).uploadedById
     assert await ti.claim_for_requester(job.id, owner) is True
-    assert await ti.claim_for_requester(job.id, owner) is False  # already claimed
+    assert await ti.claim_for_requester(job.id, owner) is False
     assert await ti.job_requester(job) == owner

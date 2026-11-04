@@ -12,13 +12,6 @@ import {
   twoStepSwitchView
 } from "@/lib/twoStepSwitch";
 
-/**
- * THE TWO-STEP VERIFICATION SWITCH TELLS THE TRUTH (owner's report, 2026-10-17): it was switched on in
- * the emulator, the code was never scanned or checked, and coming back the screen said it was on and
- * asked for an authenticator or recovery code. The switch now reads On only when the server says
- * `enabled` — i.e. `/enable` accepted a code — and a setup in progress or abandoned reads Off.
- */
-
 const off: TwoFactorStatus = { enabled: false, pending: false, recovery_codes_remaining: 0, enabled_at: null };
 const pending: TwoFactorStatus = { ...off, pending: true };
 const on: TwoFactorStatus = {
@@ -71,7 +64,6 @@ test("leaving setup discards it — a short hide (a look at the authenticator) d
   expect(leavingSetupDiscards("switch-off")).toBe(true);
   expect(leavingSetupDiscards("unmount")).toBe(true);
   expect(leavingSetupDiscards("pagehide")).toBe(true);
-  // A short look at the authenticator app keeps the key; a long absence drops it.
   expect(leavingSetupDiscards("hidden")).toBe(false);
   expect(leavingSetupDiscards("hidden", 60_000)).toBe(false);
   expect(leavingSetupDiscards("hidden", SETUP_AWAY_LIMIT_MS)).toBe(false);
@@ -82,10 +74,8 @@ test("the card cancels on pagehide, unmount and a long absence, and its switch i
   const card = readFileSync(path.resolve(__dirname, "../components/settings/TwoStepVerificationCard.tsx"), "utf8");
   expect(card).toContain('window.addEventListener("pagehide", onPageHide)');
   expect(card).toContain("cancelTwoFactorSetup({ keepalive: true })");
-  // Hidden for longer than the limit is a leave; a shorter hide is a trip to the authenticator app.
   expect(card).toContain('document.addEventListener("visibilitychange", onVisibility)');
   expect(card).toContain('leavingSetupDiscards("hidden", away)');
-  // A pending setup with none on this screen is cancelled on load, so a returning client reads Off.
   expect(card).toContain("if (!answer.enabled && answer.pending && !settingUp.current) {");
   expect(card).toContain("<Toggle");
   expect(card).toContain("<OtpCodeInput");

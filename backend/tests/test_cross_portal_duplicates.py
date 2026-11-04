@@ -1,10 +1,3 @@
-"""The duplicate finder's Field Repository half, with the peer mocked.
-
-The daily scan sends exact keys only and stores only the remote id; Link goes through the existing
-link service; a refresh follows a Field Repository merge (RELINK); merging a linked record moves
-the link at the peer first and puts it back when the local transaction fails.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -82,7 +75,6 @@ def test_the_scan_stores_only_the_remote_id_and_pairs_two_locals_on_one_remote(m
         assert all(r.score == 1.0 and r.band == "VERY_LIKELY" and r.artisanBId is None for r in rows)
         within = await db.artisanduplicatecandidate.find_first(where={"kind": "WITHIN", "artisanAId": min(a.id, b.id), "artisanBId": max(a.id, b.id)})
         assert within is not None and within.reasons[0]["code"] == "SAME_FIELD_REPOSITORY_LINK"
-        # A decided pair keeps its decision when the scan runs again.
         await db.artisanduplicatecandidate.update(where={"id": rows[0].id}, data={"status": "NOT_DUPLICATE"})
         await artisan_duplicates.run_peer_scan(SETTINGS)
         assert (await db.artisanduplicatecandidate.find_unique(where={"id": rows[0].id})).status == "NOT_DUPLICATE"
@@ -113,7 +105,6 @@ def test_the_scan_skips_a_decided_artisan_and_a_restart_does_not_ask_again(monke
         sent = {item["ref"] for _, _, body, _ in peer.calls for item in body["items"]}
         assert a.id not in sent
 
-        # A restarted worker sees today's ask and waits a day.
         ran: list[Any] = []
 
         async def fake_scan(settings):
@@ -183,7 +174,6 @@ def test_merging_a_linked_record_moves_the_link_at_the_peer_and_compensates(monk
         pair = await ds.make_pair(keep.id, gone.id)
         survivor = ds.sides(pair, keep.id)
 
-        # The local transaction fails: both peer calls are reversed.
         peer = Peer(default=(200, {}))
         monkeypatch.setattr(cross_portal_client, "peer_call", peer)
         real_tx = artisan_merge._merge_tx
@@ -202,7 +192,6 @@ def test_merging_a_linked_record_moves_the_link_at_the_peer_and_compensates(monk
         ]
         assert (await db.crossportalartisanlink.find_unique(where={"artisanId": gone.id})) is not None
 
-        # Then it succeeds: the link is on the survivor, and undo moves it back at the peer first.
         monkeypatch.setattr(artisan_merge, "_merge_tx", real_tx)
         peer.calls.clear()
         result = await artisan_merge.merge(pair, survivor=survivor, choices={}, expected_updated_at=None, reason=None, user=user, settings=SETTINGS)
@@ -213,7 +202,6 @@ def test_merging_a_linked_record_moves_the_link_at_the_peer_and_compensates(monk
         assert [(m, p) for m, p, _, _ in peer.calls] == [("POST", f"/artisans/R-{t}/links"), ("DELETE", f"/artisans/R-{t}/links/{keep.id}")]
         assert (await db.crossportalartisanlink.find_unique(where={"artisanId": gone.id})).remoteArtisanId == f"R-{t}"
 
-        # An unreachable peer is a 503 and nothing moves.
         from app.services.cross_portal_client import PeerUnavailable
 
         async def down(*args, **kwargs):

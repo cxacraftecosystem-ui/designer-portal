@@ -14,10 +14,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * The handset's half of the 2026-10-17 stage capture work (C6 numbering, C7/C8 counts, the server's
- * suggestions, A15's last stage name), held to the same answers the server and the web give.
- */
 class DwStageCaptureTest {
     private fun p(value: Any): JsonElement = when (value) {
         is Int -> JsonPrimitive(value)
@@ -115,7 +111,6 @@ class DwStageCaptureTest {
         assertEquals(5, rows["r1"]!!["attendedDays"]!!.jsonPrimitive.content.toInt())
         assertEquals(4, rows["r2"]!!["attendedDays"]!!.jsonPrimitive.content.toInt())
 
-        // A legacy workshop with no roster keeps its typed total.
         val legacy = dwComputedPatch(DW_ROSTER, assist, mapOf("totalArtisans" to p(25)), emptyMap())
         assertTrue(legacy.singleton.isEmpty())
     }
@@ -130,7 +125,6 @@ class DwStageCaptureTest {
         val ticked = legacy + ("absentDays" to JsonArray(emptyList()))
         assertEquals(5, DwStageComputed.attendedDays(ticked, days))
 
-        // The patch leaves the typed 3 alone and stamps a counted new row with its tick-list.
         val patch = dwComputedPatch(
             DW_ROSTER,
             DwStageAssistDto(attendanceDays = days),
@@ -156,9 +150,7 @@ class DwStageCaptureTest {
         assertEquals(listOf(1, 3, 4, 5), fill.rows.map { it["dayNumber"]!!.jsonPrimitive.content.toInt() })
         assertEquals("2026-10-07", fill.rows[1]["date"]!!.jsonPrimitive.content)
 
-        // The stored duration wins over the dates, exactly as `setup_duration` reads it.
         assertEquals(listOf(1, 2, 3), DwStageComputed.setupDays(setup + ("durationDays" to p(3))))
-        // Offline days feed the computed patch, so attendance is counted with no signal.
         val patch = dwComputedPatch(
             DW_ROSTER,
             local,
@@ -167,13 +159,11 @@ class DwStageCaptureTest {
         )
         assertEquals(4, patch.rows["participant"]!!.single().second["attendedDays"]!!.jsonPrimitive.content.toInt())
 
-        // The server's answer stays the authority; only what it left empty is filled.
         val server = DwStageAssistDto(stageKey = DW_ROSTER, attendanceDays = listOf(1, 2))
         val enriched = dwLocalStageAssist(DW_ROSTER, server, setup, schedule)!!
         assertEquals(listOf(1, 2), enriched.attendanceDays)
         assertEquals("2026-10-05", enriched.startDate)
         assertTrue(enriched.suggestions.isEmpty())
-        // Nothing to work from, and other stages, are left as they were.
         assertTrue(dwLocalStageAssist(DW_ROSTER, null, null, emptyList())!!.attendanceDays.isEmpty())
         assertNull(dwLocalStageAssist("MARKET_SURVEY_CAPTURE", null, setup, emptyList()))
     }

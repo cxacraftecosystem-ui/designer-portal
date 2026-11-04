@@ -1,103 +1,5 @@
 "use client";
 
-/**
- * WORKSHOP OVERSIGHT — who a design & prototype workshop is FOR, who supervises it, who inspects
- * it, and its roster.
- *
- * Five panels over one chosen workshop: the picker (which now also OPENS one), the designer team,
- * the two officer capacities, the inspectors, and the artisan list. Everything on this page is the
- * ASSIGNER's half of the sixth scope; the officer's own half is `/officers/monitored`, which this
- * account may not even be able to open.
- *
- * ── THIS PAGE SAID "Four panels" UNTIL 0.0.12, AND EVERY ASSIGNMENT ON IT WAS ADD-ONLY ────────
- *
- * The owner's sentence was "they cannot currently unassign someone". That was TRUE of three of the
- * five relations and FALSE of one, and the four answers are different in kind — which is why the
- * change is a page rewrite rather than four buttons:
- *
- *  - **Assistant Director / Regional Director** — the DELETE already existed (`PUT` with a null id)
- *    and so did a button, buried in a small grey card BELOW the name, while the directory under it
- *    offered only "Name as …". The gap was an AFFORDANCE, not a route: the unassign now lives
- *    inside the control, as `noneLabel`, where somebody looking for it will find it.
- *  - **The designer team** — the removal existed (`remove_one_viewer`) and was reachable from NO
- *    route this account could call, and this page could not even SEE who held the workshop: the
- *    read answered `designerName` as a bare string. Both halves landed in 0.0.12 —
- *    `GET …/{id}` now carries `designers`, and `PUT …/{id}/designers` is the whole-set write.
- *  - **Inspectors** — the whole feature was `require_admin`, so a Ministry Admin could stage a
- *    workshop into PRE_SUBMISSION and then cause nobody at all to inspect it. The routes moved to
- *    `require_workshop_assigner` and the panel is mounted here, told which workshop by a prop.
- *  - **The artisan roster** — no list, no removal, nowhere. `GET /artisans?designWorkshopId=…`
- *    existed and NOTHING in the product called it, which is exactly why nobody noticed the roster
- *    could not be corrected: there was no list to correct it from.
- *
- * ── THE WORKSHOP PICKER IS NOT `DesignWorkshopSelect`, AND THAT IS A BUG FIX RATHER THAN A
- * PREFERENCE ─────────────────────────────────────────────────────────────────────────────────
- *
- * That component reads `GET /design-workshops`, which does not refuse a MINISTRY_ADMIN — it scopes
- * anybody who is not an admin to the VIEWER relation, which a Ministry Admin holds on no workshop.
- * The answer is a 200 with an empty page: a screen that says there are no workshops, in a repository
- * full of them, on the first control the primary user of this page touches. This page reads
- * `GET /design-workshop-oversight/workshops` instead, which is gated on the same predicate as the
- * page itself. **It is also why `DesignWorkshopInspectorsPanel` is handed a `workshopId` here** —
- * its own picker reads that same wrong endpoint, and two selectors on one screen disagreeing about
- * whether the repository is empty is the same defect wearing a duplicate control.
- *
- * ── THE WORKSHOP IS ALSO OPENED HERE, THROUGH A THIRD DOOR AND NOT A WIDER GATE ───────────────
- *
- * `POST /design-workshops` is `assert_can_create_design_workshops` = {ADMIN, MASTER_ADMIN}, and a
- * MINISTRY_ADMIN is not an admin anywhere in this codebase — so the one account that decides who
- * every workshop is for could not open one, and the journey stopped at "choose a workshop somebody
- * else made". `POST /design-workshop-oversight/workshops` is the third door onto the SAME
- * `open_design_workshop`, exactly as the annual plan's promote route is the second. The form here
- * is deliberately NOT the 275-line create form from /design-workshops: it composes the same
- * decisions (`designerCreateFields` for the two designer keys, `WorkshopDesignerPicker` for who,
- * `workshopKindOptions` for the kind, `DateRangePicker` for the fortnight) and leaves out the
- * offline arm, because /officers is an office desktop and a local draft this account could never
- * sync is a trap rather than a safety net.
- *
- * ── FIVE PANELS, ONE WORKSHOP, AND NOTHING IS FETCHED UNTIL ONE IS CHOSEN ─────────────────────
- *
- * Every panel below the picker is scoped to the chosen workshop, so each renders a plain sentence
- * until there is one rather than an empty control that looks broken.
- *
- * ── THE PICKERS ARE SERVER-SEARCHED, NOT CLIENT-FILTERED ─────────────────────────────────────
- *
- * Both directories are capped server-side (2000 officers, 500 designers) and both take a `search`
- * parameter. A client-side filter over a server-truncated list answers "No matches" about records
- * that exist, which is this repository's most repeated bug class wearing a search box. So the box is
- * above the list — or inside the control through `serverQuery` — wired to the server, and the cut is
- * stated when it happens. The one control that DOES filter in the browser is the artisan roster,
- * because its options are one workshop's own rows and not a window over a table.
- *
- * ── WHO MAY BE NAMED: THE SERVER'S DIRECTORIES, MINUS THE READER ─────────────────────────────
- *
- * `capacities` on each officer row says which slots that account may hold. Until the owner's ruling
- * of 2026-10-09 it was EMPTY for a Ministry Admin, who was listed and could never be chosen. Ruling
- * D3 lets a Ministry Admin, an admin and the master admin be named designer, Assistant Director,
- * Regional Director or inspector on a workshop, so every picker on this page offers them — from the
- * server's directory, never from a role list re-derived here — and a row that cannot fill the slot
- * being chosen is drawn DISABLED with its own reason rather than omitted (`pickers.ts`).
- *
- * NO PICKER ON A WORKSHOP THAT EXISTS OFFERS THE READER. Nobody appoints themselves; the server
- * refuses it with a 409 and leaves the appointer out of its officer and inspector directories, and
- * the pickers here drop them too, so an older server cannot put the one refused choice at the top of
- * the list. THE START FORM'S DESIGNER PICKER DOES OFFER THEM, and that is the server's rule rather
- * than an exception to it: opening a workshop appoints nobody, and the create door subtracts the
- * creator from the named set before it validates anything. The other separation rules — one person
- * may not hold both posts on a workshop, nor inspect a workshop they also supervise, nor be named on
- * a workshop they authored — are per-workshop facts the server answers on save with a 409 whose
- * sentence names the rule; every panel prints that sentence verbatim rather than guessing.
- *
- * ── A POST ON THE CHOSEN WORKSHOP MAKES IT READ-ONLY FOR THE READER ──────────────────────────
- *
- * An assigner may hold a post on the very workshop they have chosen here. While they do, that
- * workshop is read-only for them — its content (its stages, its details, its artisan list) and its
- * designer team alike — so the page says so under the picker, points them at the read-only page the
- * post opens it on, and switches off the two panels here that write it: Designers and the artisan
- * list. Naming OTHER people to its posts stays open: supervising a workshop is not a reason to be
- * unable to staff it. Generating its report stays theirs too, on the workshop's own Report screen.
- */
-
 import Link from "next/link";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Lock, Plus, Save, UserCheck } from "lucide-react";
@@ -174,16 +76,8 @@ import { officerOptionsForPost, officersOfferedTo } from "./pickers";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
-/** 300 ms, this app's number, for the reason every other debounced search here gives. */
 const SEARCH_DEBOUNCE_MS = 300;
 
-/**
- * The failures this page can suffer, told apart in words.
- *
- * `isUnreachable` rather than `isTransient`: a repository that ANSWERED and then refused must not be
- * reported as a connection problem, or an officer spends the afternoon restarting their router over
- * a 403.
- */
 function describeFailure(error: unknown, subject: string): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
     return `No connection — couldn't load ${subject}.`;
@@ -191,15 +85,6 @@ function describeFailure(error: unknown, subject: string): string {
   return error.message;
 }
 
-/**
- * What a refused WRITE on this page says.
- *
- * THE SERVER'S SENTENCE, ALMOST BARE, and that is the important arm rather than the fallback. Every
- * refusal on this prefix names the account, says what is wrong with it, says where the remedy is —
- * "clear that on the access screen first", "withdraw it from inspection first", "name the designer
- * it is for instead" — and ends in "Nothing was changed." Paraphrasing any of that would replace a
- * sentence an officer can act on with one they cannot.
- */
 function describeRefusal(error: unknown, subject: string): string {
   if (!(error instanceof ApiError) || isUnreachable(error)) {
     return "No connection — nothing changed.";
@@ -207,20 +92,16 @@ function describeRefusal(error: unknown, subject: string): string {
   return error.message || `Couldn't save ${subject}. Try again.`;
 }
 
-/** A debounced value, so every search box on this page behaves identically. */
 function useDebounced(value: string): string {
   const [applied, setApplied] = useState(value);
   useEffect(() => {
     const term = value.trim();
-    // Clearing the box does NOT wait: an empty term is the unnarrowed list, the one request that is
-    // always about to be wanted and never about to be superseded by the next letter.
     const timer = window.setTimeout(() => setApplied(term), term ? SEARCH_DEBOUNCE_MS : 0);
     return () => window.clearTimeout(timer);
   }, [value]);
   return applied;
 }
 
-/** Name a person without ever leaking an id: their name, else their email, else a neutral word. */
 function personLabel(person: { name?: string | null; email?: string | null } | null | undefined): string {
   return person?.name?.trim() || person?.email?.trim() || "Unknown user";
 }
@@ -232,15 +113,6 @@ export default function WorkshopOversightPage() {
   const [workshop, setWorkshop] = useState<DwSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  /**
-   * WHO HOLDS WHAT ON THE CHOSEN WORKSHOP, read once at page level so the picker's link and the
-   * artisan list can ask whether the READER holds a post there. The panels below keep their own
-   * reads — each is a whole edit in flight — and call `refreshStaffing` after a save, so taking the
-   * reader off a post lifts the read-only notice without a reload.
-   *
-   * `null` is "not known", and a failed read stays `null` rather than becoming "holds nothing": the
-   * notice is a courtesy ahead of the server's own 403, never a claim that no post is held.
-   */
   const [staffing, setStaffing] = useState<DwWorkshopStaffing | null>(null);
   const staffingGeneration = useRef(0);
   const workshopId = workshop?.id ?? null;
@@ -274,14 +146,6 @@ export default function WorkshopOversightPage() {
       <div>
         <PageHeader title="Workshop oversight" icon={<UserCheck className="h-5 w-5" aria-hidden />} />
         <section className="panel px-6 py-14 text-center" aria-live="polite">
-          {/*
-            PURPLE, DELIBERATELY, ON THE ONE PANEL OF THIS PAGE THAT IS NOT A MINISTRY SURFACE.
-            Every other accent here moved to the `ministry` ramp in 0.0.12, and this padlock did not:
-            a refusal is shown to somebody who is NOT a ministry account — a designer, a professor, a
-            Regional Director — and painting the ministry's own colour around the notice that they
-            are not of the ministry would be a lie told in colour. `AppShell` makes the same call one
-            level up and stamps `data-surface="ministry"` only when the page is actually served.
-          */}
           <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-purple-50 text-purple-700">
             <Lock className="h-5 w-5" aria-hidden />
           </div>
@@ -330,8 +194,6 @@ export default function WorkshopOversightPage() {
       />
 
       {workshop && readOnlyReason ? (
-        // UNDER THE PICKER AND ABOVE EVERY PANEL, because it is about the workshop and not about one
-        // control. Worded, not merely tinted: colour alone is a signal some readers never get.
         <p className="mt-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
           {readOnlyReason}
         </p>
@@ -340,10 +202,6 @@ export default function WorkshopOversightPage() {
       {workshop ? (
         <>
           <DesignerPanel
-            // REMOUNTED ON THE WORKSHOP, and that is load-bearing rather than tidy. The picker
-            // inside holds a `fetchEligible` in a REF and does not re-read when the prop changes,
-            // and this panel's baseline/pending pair is a whole edit in flight; keying the subject
-            // is what `WorkshopDesignerPicker`'s own note asks a consumer to do.
             key={workshop.id}
             workshop={workshop}
             onError={setError}
@@ -356,18 +214,6 @@ export default function WorkshopOversightPage() {
             onError={setError}
             onSaved={refreshStaffing}
           />
-          {/*
-            THE FOURTH PANEL, MOUNTED AND NOT REBUILT. It is the same component /workshop-access/
-            manage draws, told which workshop rather than choosing one — see its header for why a
-            second selector here would be a second, contradictory reading of the repository.
-
-            IT SITS AFTER THE DESIGNER PANEL ON PURPOSE. `_assert_every_id_may_inspect`'s fourth
-            refusal turns away anybody already on the workshop as its creator or a co-designer, so
-            "name Rekha as a designer, then name Rekha as an inspector" is a natural mis-click once
-            the two controls are four inches apart. Ordering them the way the decision is actually
-            taken — who runs it, then who examines it — is what makes the refusal legible when it
-            comes, and the panel surfaces the server's sentence verbatim rather than pre-empting it.
-          */}
           <div className="mt-4">
             <DesignWorkshopInspectorsPanel
               key={`inspectors-${workshop.id}`}
@@ -391,22 +237,6 @@ export default function WorkshopOversightPage() {
   );
 }
 
-// --------------------------------------------------------------------------------------
-// 1. The workshop — choose one, or open one
-// --------------------------------------------------------------------------------------
-
-/**
- * The three staffing answers, as rows.
- *
- * DECLARED AS A CONSTANT OUTSIDE THE COMPONENT so its identity never changes.
- * `SearchableSelect` re-takes its pinned-selection snapshot from an effect keyed on `options`
- * IDENTITY, so an inline array here would re-pin on every render — which is the defect written up
- * at `SearchableSelect.tsx:145-158`, and it is the one that makes the next Enter toggle the
- * neighbouring row.
- *
- * `searchable` is deliberately NOT passed: two rows of a vocabulary compiled into this file is
- * exactly what the shared threshold answers correctly on its own.
- */
 const STAFFING_ROWS: DropdownOption[] = [
   { value: "staffed", label: "With a designer named" },
   { value: "unstaffed", label: "With nobody named yet" }
@@ -422,13 +252,9 @@ function WorkshopPicker({
   chosen: DwSummary | null;
   onChoose: (workshop: DwSummary | null) => void;
   onError: (message: string | null) => void;
-  /** The posts the READER holds on the chosen workshop — see the page's `staffing`. */
   posts: readonly WorkshopPost[];
-  /** The chosen workshop's people, or null while unknown. Read for the designer-row arm below. */
   staffing: DwWorkshopStaffing | null;
 }) {
-  // WHO IS READING, because the link into the workshop tree below is not offered to everybody and
-  // the rule is about this account rather than about the page's gate. See that link's comment.
   const { user } = useAuth();
   const [query, setQuery] = useState("");
   const applied = useDebounced(query);
@@ -436,8 +262,6 @@ function WorkshopPicker({
   const [rows, setRows] = useState<DwSummary[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [opening, setOpening] = useState(false);
-  // A generation counter rather than an abort: `apiFetch` takes no `AbortSignal`, and what matters
-  // is ignoring the late answer.
   const generation = useRef(0);
 
   const reload = useCallback(() => {
@@ -457,8 +281,6 @@ function WorkshopPicker({
       })
       .catch((err) => {
         if (generation.current !== current) return;
-        // The list is NOT emptied. An empty list under an error banner reads as "there are no
-        // workshops", which is the one thing this control must never say by accident.
         onError(describeFailure(err, "the workshop list"));
       });
   }, [applied, staffed, onError]);
@@ -467,15 +289,6 @@ function WorkshopPicker({
     reload();
   }, [reload]);
 
-  /**
-   * WHY THIS LIST IS EMPTY — four answers, because only one of them is "there is nothing here".
-   *
-   * Saying "no workshop matches that search" to somebody who typed nothing and only moved the
-   * staffing dropdown names the wrong control: the narrowing they would then go looking for is not
-   * the one that is on, and the one that is on is the one that would answer their question. The two
-   * staffing sentences are also worth saying as facts rather than as absences — "every workshop has
-   * a designer named on it" is a genuinely good answer to the question this page is opened to ask.
-   */
   const emptySentence = applied
     ? staffed
       ? "No workshop matches that search and that staffing."
@@ -486,7 +299,6 @@ function WorkshopPicker({
         ? "No workshop has a designer yet."
         : "No workshops yet. Start one above.";
 
-  /** Where a post the reader holds on the chosen workshop lets them read it, or null. */
   const readPath = chosen ? heldPostReadPath(posts, chosen.id) : null;
 
   return (
@@ -507,9 +319,6 @@ function WorkshopPicker({
       </div>
 
       {chosen ? (
-        // S0a's inline-swap row for this file. It is an inner `div` and NOT a `.panel`, which is
-        // what keeps it out of the scoped `[data-surface="ministry"] .panel` rule's way — that
-        // selector is (0,2,0) and would beat a border utility on the same element.
         <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border border-ministry-200 bg-ministry-50 px-3 py-2 dark:border-ministry-900 dark:bg-ministry-950/40">
           <span className="min-w-0 flex-1">
             <span className="block truncate font-medium text-ink-900">
@@ -522,44 +331,6 @@ function WorkshopPicker({
             </span>
           </span>
           <StatusBadge status={chosen.status} />
-          {/*
-            THE WAY INTO THE WORKSHOP ITSELF, OFFERED ONLY WHEN IT WILL RESOLVE.
-
-            ⚠ THE SENTENCE THAT STOOD HERE WAS WRONG AND THE LINK IT JUSTIFIED 404'd FOR THE TIER
-            THIS PAGE IS BUILT FOR. It read: "the three directorate tiers joined
-            `DESIGN_WORKSHOP_ROLES` on 2026-09-14, so `load_workshop_or_404` admits them by ROLE and
-            the workshop tree is genuinely reachable". Role is not an arm of that loader. It admits
-            on `record.createdById === user.id`, OR `is_admin(user)`, OR (`can_run_design_workshops(user)`
-            AND a `DesignWorkshopViewer` row) — role gates the GRANT arm only, and it is `and`, so the
-            role alone short-circuits to false. A Ministry Admin holds a viewer grant on no workshop;
-            this file's own header says exactly that, four paragraphs up, as the reason the picker is
-            not `DesignWorkshopSelect`. `officers/oversight.ts` states the real rule correctly —
-            "Reaching a workshop still needs the creator arm, an admin, or a viewer grant" — and this
-            comment carried the claim without the correction.
-
-            So the reader was shown "Open this workshop" on a workshop they were naming designers on
-            one click earlier, and got the deliberately ambiguous "no such record / not one this
-            account may open" sentence for it.
-
-            WHAT IS LEFT IS THE TWO ARMS THAT DO HOLD, and between them they cover the case that made
-            the link worth having: an ADMIN reads the whole tree, and a Ministry Admin who opened the
-            workshop through the inline form above IS its `createdById`, so the workshop they just
-            started is reachable the moment it appears here. A link rather than a button because it
-            navigates; the island nav's active-route rule then lights `/design-workshops`, which is
-            correct: that is where the reader now is.
-
-            AND THE ABSENCE IS EXPLAINED RATHER THAN LEFT BLANK, which is this page's own rule for
-            the disabled rows in its pickers — a control that is simply missing is indistinguishable
-            from one that is broken.
-
-            TWO ARMS JOINED THEM ON 2026-10-09, both from the owner's ruling D3. A Ministry Admin may
-            now be NAMED on a workshop's designer team by somebody else, which is the loader's third
-            arm — so the team `staffing` carries is read for the reader's own row. And a reader who
-            holds a POST on this workshop is offered the READ-ONLY page that post opens it on, ahead
-            of everything else: the workshop tree would still open for an admin, and every save in
-            it would be refused, so the link that would resolve is not the link that would help.
-            `/officers/monitored/{id}` is right only then — it is scoped to the reader's own rows.
-          */}
           {readPath ? (
             <Link href={readPath} className="field-button-secondary">
               Read this workshop
@@ -585,9 +356,6 @@ function WorkshopPicker({
             <StartWorkshopForm
               onOpened={(created) => {
                 setOpening(false);
-                // The new workshop becomes the chosen one, so the four panels below open on it
-                // immediately. There is no second read: the create answers `workshop_summary`,
-                // which is the same shape this list is built from.
                 onChoose(created);
               }}
               onError={onError}
@@ -602,18 +370,6 @@ function WorkshopPicker({
               placeholder="Search by title, craft, cluster or workshop code"
               value={query}
             />
-            {/*
-              WHICH OF THE TWO HUNDRED WORKSHOPS HAS NOBODY NAMED ON IT — the question a ministry
-              administrator opens this page to answer, and until 0.0.12 the only way to answer it
-              was to choose each workshop in turn and read the panel below.
-
-              `noneLabel` rather than an "All workshops" row: a control that filters says everything
-              BY ABSENCE, and `lib/workshopOptions` carries the argument for why a hand-built
-              `{ value: "", label: … }` row in `options` is never a second one of these.
-
-              `advanceOnSelect={false}` because this dropdown FILTERS the screen it sits on; moving
-              focus away from the control being adjusted is wrong on a list funnel.
-            */}
             <FieldBlock label="Staffing">
               <Dropdown
                 advanceOnSelect={false}
@@ -627,7 +383,6 @@ function WorkshopPicker({
           </div>
 
           {rows === null ? (
-            // null is "still asking" and [] is "genuinely none".
             <p className="mt-3 text-sm text-ink-700">Loading…</p>
           ) : rows.length === 0 ? (
             <p className="mt-3 text-sm text-ink-700">{emptySentence}</p>
@@ -648,12 +403,6 @@ function WorkshopPicker({
                       {row.craftName ? ` · ${row.craftName}` : ""}
                       {row.startDate ? ` · ${formatDate(row.startDate)}` : ""}
                     </span>
-                    {/*
-                      WHOSE WORKSHOP IT IS, ON THE ROW. `designerName` has always been on the wire —
-                      `workshop_summary` carries it — and this picker drew everything except the one
-                      fact the page exists to change. "No designer named" is drawn rather than
-                      omitted, because an absent line reads as a row that has not finished loading.
-                    */}
                     <span className="truncate text-xs text-ink-500">
                       {row.designerName?.trim() ? (
                         <>
@@ -670,8 +419,6 @@ function WorkshopPicker({
             </ul>
           )}
           {truncated ? (
-            // SAID, ALWAYS. A list that quietly stops is indistinguishable from a place with no more
-            // records, and this one stops at twenty.
             <p className="mt-2 text-xs text-ink-500">
               Showing the latest 20. Search for others.
             </p>
@@ -682,44 +429,6 @@ function WorkshopPicker({
   );
 }
 
-/**
- * OPEN A WORKSHOP WITHOUT LEAVING THIS PAGE — the third creation door's form.
- *
- * ── IT COMPOSES THE CREATE FORM'S DECISIONS AND COPIES NONE OF ITS JSX ────────────────────────
- *
- * The 275-line form on /design-workshops is not extracted and not duplicated. What is SHARED is
- * every decision that could be got wrong twice:
- *
- *  - `designerCreateFields` (through `createOversightWorkshop`) decides which of the two designer
- *    keys reach the wire — the ONE place in this client that reads a ticked set and a chosen lead.
- *  - `WorkshopDesignerPicker` is the picker itself, with `fetchEligible` pointed at this page's own
- *    door; the `seen` label cache, the generation counter, the lead resolver and the
- *    `MAX_NAMED_DESIGNERS` trim are its, not a second copy.
- *  - `workshopKindOptions` reads the six kinds off the served registry with a compiled-in floor.
- *  - `DateRangePicker` + `toIsoDate` are the fortnight, as ONE range control: two native date boxes
- *    format themselves by the BROWSER's locale, so 02/03/2026 is February or March depending on the
- *    laptop, and two independent boxes can also be entered backwards.
- *
- * ── AND WHAT IT DELIBERATELY LEAVES OUT ──────────────────────────────────────────────────────
- *
- * **The offline arm.** `createWorkshopOrKeepItHere` exists because a designer opens a workshop in a
- * courtyard; ministry surfaces are an office desktop by standing decision, and `createLocalDraft`
- * gates on `canRunDesignWorkshops` and would strand a draft this account cannot create through the
- * ordinary door either. A failure here is reported and nothing is kept.
- *
- * **Report template, notes and the linked `Workshop` row.** The report format is chosen by whoever
- * generates the report, `notes` is the designer's own scratch column, and the `Workshop` link is a
- * designer's cross-reference. None of the three is an officer's answer, and the server's body does
- * not accept them.
- *
- * ── THE UNSAVED-CHANGES GUARD IS DELIBERATELY NOT MOUNTED ────────────────────────────────────
- *
- * `useLeaveGuard` belongs to a page whose whole content is a form. This is a disclosure ON a page
- * with four other panels, and a second `UnsavedChangesDialog` would be a second provider consumer
- * fighting the one in the protected layout over a control the reader can close with one press.
- * Closing it is one click and loses a title; the cost of getting the provider wrong is a page
- * nobody can leave.
- */
 function StartWorkshopForm({
   onOpened,
   onError
@@ -733,9 +442,6 @@ function StartWorkshopForm({
   const [duration, setDuration] = useState<{ from?: Date; to?: Date }>({});
   const [designerUserIds, setDesignerUserIds] = useState<string[]>([]);
   const [leadDesignerId, setLeadDesignerId] = useState("");
-  // Seeded from the module cache so a registry already in memory needs no round trip; the fetch
-  // below refreshes it. A failure is SILENT AND CORRECT — `workshopKindOptions` falls back to the
-  // compiled-in floor, which can never offer a token the server would refuse.
   const [registry, setRegistry] = useState<DwRegistry | null>(() => peekStageRegistry());
 
   useEffect(() => {
@@ -750,7 +456,6 @@ function StartWorkshopForm({
     };
   }, []);
 
-  // The craft is picked from the list, never typed (REQUIREMENTS_2026-10-20 §2.4).
   const [craftPick, setCraftPick] = useState({ id: "", name: "" });
 
   const kindChoices = useMemo(() => workshopKindOptions(registry), [registry]);
@@ -761,8 +466,6 @@ function StartWorkshopForm({
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // React nulls `event.currentTarget` across an await, so the FormData must be built before any
-    // async work — not after the first `await`, where it reads as null and every field is empty.
     const form = new FormData(event.currentTarget);
     const title = String(form.get("title") ?? "").trim();
     if (!title) return;
@@ -779,11 +482,8 @@ function StartWorkshopForm({
       const created = await createOversightWorkshop({
         title,
         workshopKind: workshopKind || undefined,
-        // The pair is resolved by `designerCreateFields` inside the call, so the sentence the
-        // picker printed about who leads it and the body on the wire cannot disagree.
         designerUserIds,
         lead: leadDesignerId,
-        // The picked craft from the master list; the server writes its name from the id.
         craftId: craftPick.id || undefined,
         craftName: craftPick.name || undefined,
         clusterName: text("clusterName"),
@@ -794,9 +494,6 @@ function StartWorkshopForm({
       });
       onOpened(created);
     } catch (err) {
-      // PANEL-LEVEL, immediately above the buttons. A create can be refused for a reason only this
-      // banner can carry — an ineligible designer anywhere in the list refuses the WHOLE create and
-      // the 422 names every account it objected to.
       setRefusal(describeRefusal(err, "that workshop"));
     } finally {
       setCreating(false);
@@ -818,8 +515,6 @@ function StartWorkshopForm({
         <Field label="Workshop title" required>
           <TextInput name="title" maxLength={220} required />
         </Field>
-        {/* FieldBlock, not Field: `Field` is a <label>, and a <label> wrapped around a themed
-            dropdown forwards a stray click into the menu and slams it shut after one pick. */}
         <FieldBlock label="Type of workshop">
           <Dropdown
             ariaLabel="Type of workshop"
@@ -850,19 +545,6 @@ function StartWorkshopForm({
         </div>
       </div>
 
-      {/*
-        FULL WIDTH AND OUTSIDE THE GRID, because it is three stacked controls (a server-backed
-        search box, a notice, the picker) rather than a box. `fetchEligible` points it at THIS
-        page's door: the picker's default is `GET /design-workshops/eligible-viewers`, which is
-        `require_admin` and 403s the Ministry Admin this form is for.
-
-        THE READER IS OFFERED HERE, unlike on the Designers panel below. That panel writes to a
-        workshop that exists, where naming yourself is the self-appointment the server answers with
-        a 409. This form CREATES one: `open_design_workshop` subtracts the creator from the named set
-        before it validates anything and writes no designer row for them — their access is the
-        workshop's `createdById` — so ticking yourself is accepted, and leaving the reader off would
-        refuse what the API allows.
-      */}
       <WorkshopDesignerPicker
         values={designerUserIds}
         onChange={setDesignerUserIds}
@@ -887,56 +569,6 @@ function StartWorkshopForm({
   );
 }
 
-// --------------------------------------------------------------------------------------
-// 2. The designers
-// --------------------------------------------------------------------------------------
-
-/**
- * WHO THE WORKSHOP IS FOR — a whole-team edit with an explicit Save.
- *
- * ── WHAT THIS REPLACED, AND WHY A LIST OF BUTTONS WAS THE WRONG SHAPE ─────────────────────────
- *
- * A flat `<ul>` of every eligible designer with a "Name as designer" button per row. Three things
- * were wrong with it and only the first was visible: one press wrote immediately, so a mis-click
- * moved a ministry report's authorship for however long the next press took; it could only ADD, so
- * a co-designer named by mistake could never be taken off from anywhere this account could reach;
- * and it never showed who currently held the workshop, because the read answered `designerName` as
- * a bare string with no ids in it.
- *
- * ── THE THREE RULES IT COPIES FROM `DesignWorkshopInspectorsPanel`, WHICH ARE THE HOUSE RULES ──
- *
- * **SAVING IS EXPLICIT.** The picker edits a PENDING set, the panel says what is unsaved, and one
- * button sends it.
- *
- * **THE OPTIONS ARE eligible ∪ CURRENTLY-ASSIGNED ∪ TICKED-THIS-SITTING.** The middle group is the
- * load-bearing one: this is a whole-set body, so an option that is not rendered is a row the next
- * Save asks the server to delete. A designer whose empanelment lapsed last week is exactly that
- * person. `WorkshopDesignerPicker` already carries the third group (its `seen` cache rescues a tick
- * made under an earlier search); the second is why `selected` is seeded from the SERVER's rows and
- * never from the eligible list.
- *
- * **THE SERVER'S ANSWER BECOMES THE BASELINE, NEVER OUR OWN PAYLOAD.** Another officer may have
- * changed the set between this page loading and Save being pressed, and treating the body we sent
- * as the truth would leave the screen showing a membership nobody has.
- *
- * ── AND ONE RULE OF ITS OWN: THE LEAD MOVES ONLY WHEN SOMEBODY MOVES IT ───────────────────────
- *
- * `leadUserId` is sent ONLY when the officer has explicitly chosen a lead in this sitting. Adding a
- * co-designer must not rewrite stage 1, must not re-copy a profile and must not restamp whose name
- * the report carries — and a panel that derived the lead from tick order would do all three on a
- * save that was about somebody else entirely. The derivation itself is `namedDesignerTeam`, the same
- * pure function the picker prints its lead line from and the create form's submit uses, so the
- * sentence on screen and the body on the wire cannot disagree.
- *
- * ⚠ **`WorkshopDesignerPicker`'S OWN COPY IS THE CREATE FORM'S AND IS PARTLY FALSE HERE.** Two of
- * its sentences — "Leave it empty if you do not know yet — stage 1 then carries whoever creates the
- * workshop" and the empty-roster notice's "this one can still be started" — assume a workshop that
- * does not exist yet, and a third points at "Designers on a workshop", a panel on
- * /workshop-access/manage that a Ministry Admin is REDIRECTED away from. The control is used rather
- * than forked, because forking is how two copies start disagreeing about the cap, the lead or the
- * label cache; the correction is the sentence this panel prints IMMEDIATELY ABOVE it, which a
- * reader meets first. Closing it properly means copy props on a file this slice does not own.
- */
 function DesignerPanel({
   workshop,
   onError,
@@ -945,31 +577,14 @@ function DesignerPanel({
 }: {
   workshop: DwSummary;
   onError: (message: string | null) => void;
-  /** Told after every save the server accepted, so the page re-reads who holds what. */
   onSaved?: () => void;
-  /**
-   * Why the reader may see this team and not change it, or null — a post they hold on this workshop.
-   * Naming a designer is a write to the workshop's designer team (it also copies the lead's profile
-   * into stage 1), and the server refuses it to whoever inspects or supervises the workshop. The team
-   * stays on screen; the picker and Save are held, and the sentence is drawn above them.
-   */
   readOnlyReason?: string | null;
 }) {
   const { user } = useAuth();
-  /** The notice's live region, which Save names while it explains why Save is held. */
   const heldNoticeId = useId();
-  /** The saved set, as the server last answered it. `null` is "still asking". */
   const [held, setHeld] = useState<DwNamedDesigner[] | null>(null);
   const [baseline, setBaseline] = useState<string[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
-  /**
-   * The lead the officer chose IN THIS SITTING, or "" for "they have not touched it".
-   *
-   * KEPT APART FROM THE SERVER'S ANSWER ON PURPOSE. The picker resolves a lead for its own sentence
-   * whether or not anybody chose one, and reading that resolution back as an intention would move
-   * the report's authorship on a save whose only real change was adding a co-designer — silently,
-   * under a 200.
-   */
   const [leadChoice, setLeadChoice] = useState("");
   const [designerName, setDesignerName] = useState<string | null>(workshop.designerName ?? null);
   const [saving, setSaving] = useState(false);
@@ -978,7 +593,6 @@ function DesignerPanel({
   const [refusal, setRefusal] = useState<string | null>(null);
   const announcementId = useId();
 
-  /** Whom the SERVER says the report names, or "" when it cannot tell. */
   const baselineLead = useMemo(
     () => held?.find((row) => row.isLead)?.userId ?? "",
     [held]
@@ -987,9 +601,6 @@ function DesignerPanel({
   const load = useCallback(async () => {
     try {
       const detail: DwWorkshopOversight = await getWorkshopOversight(workshop.id);
-      // COERCED, NOT TRUSTED: an API deployed before this key answers without it, and reading
-      // `undefined` as `[]` would draw "nobody is named on this workshop" over a workshop that has
-      // a whole team — the silent-emptiness bug on the one field this page exists to change.
       const rows = detail.designers;
       if (rows === undefined) {
         setHeld(null);
@@ -1015,20 +626,8 @@ function DesignerPanel({
     void load();
   }, [load]);
 
-  /**
-   * THE LEAD THIS PANEL IS ASKING FOR, AND IT IS NOTHING AT ALL WHEN NOTHING IS TICKED.
-   *
-   * `namedDesignerTeam` promotes a bare `lead` into a ONE-PERSON TEAM when `chosen` is empty
-   * (`lib/designWorkshops.ts`), which is right for the create form — a lead named there IS the
-   * choice — and is a silent re-add here. An officer who unticks the only designer on the workshop
-   * would have `baselineLead` handed straight back to the resolver, and Save would post the very
-   * person they had just removed, under a 200, with the screen agreeing. The baseline lead is a
-   * DISPLAY resolution only, so it stands down the moment the selection is empty — which is also
-   * what stops the picker printing "the report will carry …" over an empty tick list.
-   */
   const leadIntent = selected.length === 0 ? "" : leadChoice || baselineLead;
 
-  /** The team and the lead, resolved by the rule the wire uses. */
   const resolved = useMemo(
     () => namedDesignerTeam({ chosen: selected, lead: leadIntent }),
     [selected, leadIntent]
@@ -1042,41 +641,10 @@ function DesignerPanel({
     () => baseline.filter((id) => !selected.includes(id)),
     [baseline, selected]
   );
-  // Read off `leadIntent`, not `leadChoice`, so that emptying the workshop is expressed by the
-  // TEAM going empty and never as a lead move — otherwise a lead chosen earlier in the sitting and
-  // then unticked would put `leadUserId` on an empty body and count as an extra unsaved change.
   const leadMoved = Boolean(leadIntent) && leadIntent !== baselineLead;
   const dirty = added.length > 0 || removed.length > 0 || leadMoved;
   const overCap = selected.length > MAX_NAMED_DESIGNERS;
 
-  /**
-   * EMPTYING A WORKSHOP IS ALLOWED, AND THIS NOTICE IS WHAT REPLACED THE REFUSAL THAT STOOD HERE.
-   *
-   * ⚠ **`strandsTheDesigner` LIVED ON THIS LINE AND THE REASON IT GAVE WAS FACTUALLY FALSE.** It
-   * disabled Save whenever the report named somebody and nothing was ticked, and told the reader
-   * that "nobody is the designer" was not a state this product could express. The product CREATES
-   * that state every time a workshop is opened without naming a designer: design workshop
-   * `cmsxcdc2y000` ("Test", IN_PROGRESS) sits in the live database with `designerName = None`,
-   * measured there on 2026-09-20. What was missing was never the STATE — it was the TRANSITION
-   * BACK to it. You could start with no designer and you could not return, so a mistaken add was a
-   * one-way door, which is exactly what an officer reported: a designer added by accident, a panel
-   * demanding a replacement she did not want to name, and a Save button dead beside "1 unsaved
-   * change".
-   *
-   * The transition is symmetric now, and what replaces the refusal is NOT NOTHING. Emptying a
-   * workshop is consequential, so the reader is told BEFORE the click rather than after it: the
-   * notice below names all three consequences — no named designer, a cover page that then names
-   * nobody, and the profile details already copied into stages 1 and 3 left exactly as they are —
-   * and Save is ENABLED underneath it. Worded, not merely tinted: a signal carried only by colour
-   * is one some readers never get.
-   *
-   * ── THE ONE REFUSAL THIS SCREEN STILL KEEPS FOR ITSELF, AND WHY IT IS SOUND ──────────────────
-   *
-   * Dropping the lead WHILE OTHERS REMAIN is choosing among a team, not emptying a workshop: there
-   * is a replacement to name, and a report with three designers on it and no author is a state
-   * nobody asked for. With nothing ticked there is no replacement and that sentence would simply be
-   * wrong — hence `selected.length > 0`, this client's half of the server's `and wanted`.
-   */
   const emptiesTheWorkshop = selected.length === 0 && removed.length > 0;
   const dropsTheLeadWithNoReplacement =
     Boolean(baselineLead) && removed.includes(baselineLead) && !leadMoved && selected.length > 0;
@@ -1096,33 +664,22 @@ function DesignerPanel({
     : `${selected.length} selected — unsaved (+${added.length}, −${removed.length}${leadMoved ? ", new lead" : ""}).`;
 
   async function save() {
-    // `emptiesTheWorkshop` is deliberately absent from this list: it is a WARNING, not a refusal,
-    // and a guard that quietly swallowed the click would be the disabled button all over again.
-    // `readOnlyReason` is not swallowed silently either: the button it disables has it written above.
     if (!dirty || overCap || dropsTheLeadWithNoReplacement || readOnlyReason) return;
     setSaving(true);
     setRefusal(null);
     setSaved(null);
     try {
       const answer = await putWorkshopDesigners(workshop.id, {
-        // THE WHOLE SET, and every id in it was rendered: this is a whole-set BODY, so an id the
-        // screen did not draw is an id the server is being asked to remove.
         userIds: resolved.team,
-        // OMITTED UNLESS SOMEBODY MOVED IT — see the state's own note.
         ...(leadMoved ? { leadUserId: resolved.lead } : {})
       });
       setHeld(answer.designers);
       const ids = answer.designers.map((row) => row.userId);
-      // The ANSWER becomes the baseline, never what was sent.
       setBaseline(ids);
       setSelected(ids);
       setLeadChoice("");
       setDesignerName(answer.designerName);
       setLostAccess(answer.removedDesigners);
-      // WHAT THE SERVER ACTUALLY DID. The empty answer is a real saved outcome as of 2026-09-20
-      // and no longer an unreachable branch, so it says what the workshop is LEFT like rather than
-      // only counting rows — and the clause under it answers the question the warning raised before
-      // the click, rather than reporting a stage write that a removal does not perform.
       const nowEmpty = answer.designers.length === 0;
       setSaved(
         [
@@ -1147,9 +704,6 @@ function DesignerPanel({
       );
       onSaved?.();
     } catch (err) {
-      // PANEL-LEVEL, not a toast and not the page banner: the refusal is about THIS panel's
-      // control, the panel is tall, and `aria-live="polite"` never interrupts — which is exactly
-      // wrong for something the reader must act on.
       setRefusal(describeRefusal(err, "that change"));
     } finally {
       setSaving(false);
@@ -1165,16 +719,6 @@ function DesignerPanel({
           {designerName?.trim() || "nobody yet"}
         </span>
       </p>
-      {/*
-        THE CORRECTION, ABOVE THE CONTROL AND NOT BELOW IT. `WorkshopDesignerPicker`'s own hint is
-        the create form's, and what still needs correcting here are its sentences about a workshop
-        that does not exist yet ("stage 1 then carries whoever creates the workshop") and its
-        pointer at "Designers on a workshop", a panel a Ministry Admin is redirected away from.
-        ⚠ THIS COMMENT ALSO CORRECTED THE HINT'S "may be left empty", on the grounds that the server
-        refused an empty set here. It does not, and since 2026-09-20 it must not — see
-        `emptiesTheWorkshop` for the measurement that ended that rule. A reader meets this paragraph
-        first. See this panel's header for why the control is composed rather than forked.
-      */}
       <p className="mt-1 text-xs leading-5 text-ink-500">
         Ticked designers can work on this workshop; the lead&apos;s name goes on the report. While
         other designers stay ticked, the lead cannot simply be dropped — pick another lead. You can
@@ -1191,8 +735,6 @@ function DesignerPanel({
           {saved}
         </div>
       ) : null}
-      {/* The page draws the same sentence above every panel; it is repeated HERE because this is
-          the panel it switches off, and the other two panels beside it stay live for the reader. */}
       <HeldPostNotice refusal={readOnlyReason} id={heldNoticeId} className="mt-3" />
 
       {held === null ? (
@@ -1206,18 +748,11 @@ function DesignerPanel({
               lead={leadIntent}
               onLeadChange={setLeadChoice}
               disabled={saving || Boolean(readOnlyReason)}
-              // THIS PAGE'S DOOR, not the picker's default. `GET /design-workshops/eligible-viewers`
-              // is `require_admin` and 403s a Ministry Admin; this one runs the same query behind
-              // the same predicate as the page and answers the same four keys.
               fetchEligible={listAssignableDesigners}
-              // NEVER THE READER, who may not name themselves. Still DRAWN if they already hold a
-              // designer row here, because this is a whole-set save and an undrawn row is a removal.
               excludeUserIds={user ? [user.id] : undefined}
             />
           </div>
 
-          {/* WHAT IS CURRENTLY SAVED, spelled out — the picker's trigger says "2 selected", which
-              is the PENDING answer and not the state of the repository. */}
           <div className="mt-3">
             {held.length === 0 ? (
               <p className="text-sm text-ink-500">
@@ -1264,12 +799,6 @@ function DesignerPanel({
             ) : null}
           </div>
 
-          {/* ONE REFUSAL AND ONE WARNING, both stated BEFORE the Save rather than discovered from
-              a 422, and both WORDED rather than merely tinted because colour alone is a signal some
-              readers never get. They are mutually exclusive by construction — the refusal needs a
-              non-empty selection and the warning an empty one — so the order below is for the
-              reader and not for correctness: what STOPS the save comes before what merely explains
-              it. Save is disabled under the refusal and ENABLED under the warning. */}
           {dropsTheLeadWithNoReplacement ? (
             <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-5 text-amber-800">
               {labelById.get(baselineLead) ?? "That designer"} is the lead. Choose a new lead first.
@@ -1289,8 +818,6 @@ function DesignerPanel({
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <ActionGroup className="max-sm:w-full"><button
               className="field-button"
-              // `emptiesTheWorkshop` is NOT in this list, and that is the whole of the fix: the
-              // notice above explains the consequence and the officer decides.
               disabled={!dirty || saving || overCap || dropsTheLeadWithNoReplacement || Boolean(readOnlyReason)}
               onClick={save}
               aria-describedby={readOnlyReason ? heldNoticeId : undefined}
@@ -1313,7 +840,7 @@ function DesignerPanel({
                 Discard changes
               </button>
             ) : null}
-            {/* Colour never carries the meaning on its own — the word "unsaved" does. */}</ActionGroup>
+            </ActionGroup>
             {dirty ? (
               <span className="text-xs text-amber-800 dark:text-amber-100">
                 {added.length + removed.length + (leadMoved ? 1 : 0)} unsaved change
@@ -1324,13 +851,6 @@ function DesignerPanel({
         </>
       )}
 
-      {/*
-        THE RESULTING COUNT, PLUS WHAT IS STILL UNSENT. The multi-select has an `aria-live` of its
-        own, but it lives inside a portalled panel that unmounts the moment the picker closes, so a
-        reader who ticks two names and closes the panel would hear nothing about where the workshop
-        now stands. Rendered from the first paint, empty or not, because assistive technology only
-        announces mutations inside a region that already existed.
-      */}
       <p className="sr-only" role="status" aria-live="polite" id={announcementId}>
         {announcement}
       </p>
@@ -1338,40 +858,6 @@ function DesignerPanel({
   );
 }
 
-// --------------------------------------------------------------------------------------
-// 3. The two capacities
-// --------------------------------------------------------------------------------------
-
-/**
- * THE ASSISTANT DIRECTOR AND THE REGIONAL DIRECTOR — one searchable select each.
- *
- * ── WHY A SINGLE-SELECT AND NOT THE MULTI-SELECT THE OTHER THREE PANELS DRAW ──────────────────
- *
- * **IT IS BLOCKED AT THE DATABASE, NOT HERE.** `DesignWorkshopOversight`'s primary key is
- * `[designWorkshopId, capacity]` and the schema states the reason outright: a
- * `@@unique([designWorkshopId, userId, capacity])` would admit two Assistant Directors, and the
- * requirement — and the line on a report that prints it — has room for one. Making these
- * multi-select is a migration, a new primary key and a rewrite of `apply_oversight`,
- * `has_oversight_scope`, `oversight_by_clause` and `DesignWorkshopOversightIn` — the last of which
- * could no longer express "set / leave alone / unassign" with two scalar fields. That is a product
- * decision and a schema change, not a dropdown refactor.
- *
- * ── WHERE THE UNASSIGN WENT, AND WHY THE OWNER COULD NOT FIND IT ──────────────────────────────
- *
- * It was always here: `PUT` with a null id deletes the row, and a button said "Unassign". It sat
- * inside a small grey card BELOW the officer's name, while the directory under it offered only
- * "Name as …" — so the screen read as add-only to everybody who used it. `noneLabel` puts the same
- * act INSIDE the control that names somebody, which is where a reader looks for it: "Nobody is
- * assigned" is a row you choose, exactly like a person.
- *
- * ── EACH SAVE IS IMMEDIATE, AND THAT IS UNCHANGED ON PURPOSE ─────────────────────────────────
- *
- * The other panels batch into an explicit Save because they write a SET and an unrendered row is a
- * deletion. This one writes one scalar per request and `DesignWorkshopOversightIn` is built for it:
- * an omitted key leaves that capacity exactly as it stands, so choosing an Assistant Director while
- * a colleague names a Regional Director cannot undo their work. Batching the two would mean a body
- * that always carries both, which is the one shape that CANNOT say "leave the other one alone".
- */
 function OversightPanel({
   workshop,
   onError,
@@ -1379,7 +865,6 @@ function OversightPanel({
 }: {
   workshop: DwSummary;
   onError: (message: string | null) => void;
-  /** Told after every change the server accepted, so the page re-reads who holds what. */
   onSaved?: () => void;
 }) {
   const { user } = useAuth();
@@ -1392,15 +877,6 @@ function OversightPanel({
   const [saving, setSaving] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
   const generation = useRef(0);
-  /**
-   * Every officer this mount has been shown, across every search it has run.
-   *
-   * MERGED, NEVER REPLACED. The option list is a moving window over the directory, so the officer
-   * currently holding a post is not in the answer to the next search term — and without a
-   * remembered label the trigger would fall back to naming them by their cuid. It is a label cache
-   * and not a second source of eligibility: nothing is ever offered from here that the server did
-   * not offer first.
-   */
   const [seen, setSeen] = useState<Map<string, DwOfficer>>(() => new Map());
 
   const reload = useCallback(() => {
@@ -1441,16 +917,7 @@ function OversightPanel({
       });
   }, [applied, onError]);
 
-  /**
-   * ONE CAPACITY PER REQUEST, and the body carries only that key.
-   *
-   * An omitted key leaves that capacity exactly as it stands; sending both every time would mean a
-   * screen that can never say "leave the other one alone", so choosing an Assistant Director while
-   * somebody else was naming a Regional Director would silently undo their work.
-   */
   async function assign(capacity: DwOversightCapacity, userId: string | null) {
-    // NOBODY TAKES THEMSELVES OFF A POST. A slot the reader holds is switched off below; this keeps the
-    // rule for any other way in, and says the server's reason rather than spending its 409.
     if (user?.id && (current?.oversight ?? []).some((row) => row.capacity === capacity && row.userId === user.id)) {
       setRefusal(selfReleaseRefused(capacity));
       return;
@@ -1463,14 +930,9 @@ function OversightPanel({
         : { regionalDirectorId: userId };
     try {
       const result = await putWorkshopOversight(workshop.id, body);
-      // THE SERVER'S SET, NEVER AN ECHO OF WHAT WAS SENT — two administrators on one screen must not
-      // each end up believing their own payload was the outcome.
       setCurrent((currently) => (currently ? { ...currently, oversight: result.oversight } : currently));
       onSaved?.();
     } catch (err) {
-      // A SEPARATION-OF-DUTIES REFUSAL IS A 409 WHOSE SENTENCE NAMES THE RULE — the same person in
-      // both posts, an inspector of this workshop, somebody who authored it, the reader themselves —
-      // and it reaches the reader verbatim, which is the only wording that says what to do instead.
       setRefusal(describeRefusal(err, "that officer"));
     } finally {
       setSaving(false);
@@ -1481,15 +943,8 @@ function OversightPanel({
     () => new Map((current?.oversight ?? []).map((row) => [row.capacity, row])),
     [current]
   );
-  /** The base of the two slots' own-post notes, each suffixed with its capacity. */
   const ownPostNote = useId();
 
-  /**
-   * The rows for each slot — who may hold it, who may not and why, and whoever holds it now — built
-   * by `officerOptionsForPost` (`pickers.ts`), which also leaves the reader out: nobody appoints
-   * themselves. ONE ARRAY PER SLOT, MEMOISED, so a re-render that changed nothing hands the dropdown
-   * the same options rather than a fresh array to re-pin its selection against.
-   */
   const rowsByCapacity = useMemo(
     () =>
       new Map<DwOversightCapacity, DropdownOption[]>(
@@ -1525,12 +980,6 @@ function OversightPanel({
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         {CAPACITIES.map((capacity) => {
           const row = held.get(capacity);
-          /*
-            THE READER'S OWN POST STAYS AS IT IS. Choosing anybody else, or "Nobody is assigned", would
-            take them off it, and nobody takes themselves off a post (`selfReleaseRefusal`) — the
-            server answers it with a 409. So the slot is drawn with them in it and switched off, with
-            the reason under it; the other slot stays theirs to fill.
-          */
           const own = Boolean(user?.id) && row?.userId === user?.id;
           const ownNoteId = `${ownPostNote}-${capacity}`;
           return (
@@ -1541,23 +990,12 @@ function OversightPanel({
                 <>
                   <Dropdown
                     ariaLabel={`The ${CAPACITY_LABELS[capacity]} of this workshop`}
-                    // FILTERS NOTHING AND FILLS A FIELD, so the default `advanceOnSelect` is right:
-                    // the reader's next stop is the other slot.
                     disabled={saving || own}
                     describedBy={own ? ownNoteId : undefined}
-                    // THE UNASSIGN, INSIDE THE CONTROL. See this panel's header.
                     noneLabel="Nobody is assigned"
                     onChange={(next) => assign(capacity, next || null)}
                     options={rowsByCapacity.get(capacity) ?? []}
                     placeholder="Nobody is assigned"
-                    /*
-                      ONE TERM, BOTH SLOTS, ONE REQUEST PER KEYSTROKE. The two dropdowns read the
-                      SAME directory, and only one panel can be open at a time (`AnchoredPopover`
-                      keeps a stack), so a shared term costs nothing and halves the `ILIKE` scans
-                      over `User` — which is the query this debounce exists for. Opening the second
-                      slot with the first's term still in the box is usually right, because the two
-                      officers on one workshop are usually colleagues in one office.
-                    */
                     serverQuery={{
                       value: query,
                       onChange: (next) => setQuery(next.slice(0, OVERSIGHT_SEARCH_MAX)),
@@ -1587,8 +1025,6 @@ function OversightPanel({
       </div>
 
       {officers !== null && officersOfferedTo(officers, user?.id) === 0 ? (
-        // ASKED OF WHO IS OFFERED, NOT OF THE SERVER'S ANSWER: an older server still lists the
-        // reader, who is left out above, so a list holding only them is an empty one to read.
         <p className="mt-3 text-sm text-ink-700">
           {applied
             ? "No matches."
@@ -1604,42 +1040,6 @@ function OversightPanel({
   );
 }
 
-// --------------------------------------------------------------------------------------
-// 4. The artisan roster
-// --------------------------------------------------------------------------------------
-
-/**
- * WHO IS ON THIS WORKSHOP'S ARTISAN ROSTER — and how one of them is taken off again.
- *
- * ── THE LIST IS NEW, AND ITS ABSENCE IS WHY THE REMOVAL WAS NEVER MISSED ──────────────────────
- *
- * `GET /artisans?designWorkshopId=…` has existed for as long as the column has and NOTHING in this
- * product called it, on either client. This panel offered a pro-forma, an upload and an import
- * history, and never once said who was actually on the list — so "the roster cannot be corrected"
- * never surfaced as a complaint, because there was nothing to correct it from.
- *
- * ── THE CONTROL IS A MULTI-SELECT OVER THIS WORKSHOP'S OWN ROWS, AND NOT OVER THE REPOSITORY ──
- *
- * A picker over every artisan on record would be the wrong control twice over: these are fifteen to
- * forty regulated person-records that arrive BY WORKBOOK, with an Aadhaar number, a craft, a place
- * and a photograph each, and nothing about that is a thing to tick out of a dropdown of thousands.
- * So the options are the roster itself, every one of them ticked, and UNTICKING is the act. Adding
- * is the pro-forma below, which is the only door that carries the fifteen columns an artisan record
- * needs.
- *
- * `searchable` because the options are fetched RECORDS rather than a vocabulary written in this
- * file — and the browser's own filter is the right one here, unlike everywhere else on this page,
- * because these options are one workshop's whole roster and not a window over a table. Past the
- * server's ceiling the notice below says so.
- *
- * ── UNFILES, NEVER DELETES — AND SAYS WHAT IT DID NOT DO ─────────────────────────────────────
- *
- * `Artisan.designWorkshopId` is a nullable link. Clearing it leaves the artisan's record, their
- * photographs, their products, their tools and their interviews exactly as they were; `createdBy`
- * is `Restrict` and untouched. **It does NOT remove the stage-3 participant row the import wrote**,
- * because that is a stage write on a report that may be under inspection, and the sentence under
- * the control says so rather than leaving an officer to find out from a report.
- */
 function ArtisanListPanel({
   workshop,
   onError,
@@ -1647,18 +1047,6 @@ function ArtisanListPanel({
 }: {
   workshop: DwSummary;
   onError: (message: string | null) => void;
-  /**
-   * Why the READER may not change this workshop's roster — they hold a post on it — or null.
-   *
-   * THIS PANEL AND THE DESIGNERS PANEL, AND NEITHER OF THE OTHER TWO. This one writes the
-   * workshop's CONTENT: an upload files artisan records against it and writes a row per artisan into
-   * stage 3, and taking somebody off unfiles them. The Designers panel writes its DESIGNER TEAM, and
-   * the coordinator's ruling of 2026-10-09 takes both from a post holder (it said "this panel and no
-   * other" until that ruling). Naming the Assistant Director, the Regional Director and the
-   * inspectors names OTHER people to posts, which a post holder may still do. Reading stays open —
-   * the roster, the import history and the pro-forma — because a post takes the workshop's writes
-   * away and nothing else.
-   */
   readOnlyReason?: string | null;
 }) {
   const locked = Boolean(readOnlyReason);
@@ -1678,7 +1066,6 @@ function ArtisanListPanel({
     try {
       const list = await listWorkshopArtisans(workshop.id);
       setRoster(list.artisans);
-      // The SERVER'S answer becomes the baseline, never our own idea of what should be left.
       setKeeping(list.artisans.map((row) => row.id));
       setRosterTruncated(Boolean(list.truncated));
     } catch (err) {
@@ -1720,9 +1107,6 @@ function ArtisanListPanel({
     setDownloading(true);
     setRefusal(null);
     try {
-      // THE WORKSHOP ID TRAVELS, ALWAYS. With it the Details sheet names the workshop and carries
-      // the State, District and Venue that blank cells fall back to — and it is what the upload
-      // checks against the URL, which is what stops a list being filed under the wrong workshop.
       const file = await downloadArtisanProForma(workshop.id);
       saveBlobToDisk(file.blob, file.fileName);
     } catch (err) {
@@ -1734,8 +1118,6 @@ function ArtisanListPanel({
 
   async function upload(files: File[]) {
     const [file] = files;
-    // `DropCard` already ignores a drop while disabled; checked again here so the lock does not
-    // depend on one component's handling of four drag events.
     if (!file || locked) return;
     setUploading(true);
     setRefusal(null);
@@ -1744,8 +1126,6 @@ function ArtisanListPanel({
       const result = await uploadArtisanList(workshop.id, file);
       setReport(result);
       reloadHistory();
-      // The import writes rows into the roster, so the list above has to re-read or it would show
-      // the state before the upload while the report beside it counted fourteen new artisans.
       await reloadRoster();
     } catch (err) {
       setRefusal(describeRefusal(err, "that artisan list"));
@@ -1754,15 +1134,6 @@ function ArtisanListPanel({
     }
   }
 
-  /**
-   * Take the unticked artisans off the roster.
-   *
-   * SEQUENTIAL AND NOT PARALLEL, collecting failures rather than throwing at the first — the same
-   * rule the bulk review actions keep. Fifteen `DELETE`s fired at once would be fifteen ways to
-   * half-finish, and an officer who is shown one error has been told nothing about the other
-   * fourteen. The SERVER'S list is then re-read as the new baseline, so a row another officer
-   * unfiled while this one was choosing is reflected rather than resurrected.
-   */
   async function removeUnticked() {
     if (!comingOff.length || locked) return;
     setRemoving(true);
@@ -1773,8 +1144,6 @@ function ArtisanListPanel({
     for (const row of comingOff) {
       try {
         const answer = await unlinkWorkshopArtisan(workshop.id, row.id);
-        // `unlinked: false` is not a failure. Two officers working one list is ordinary, and "that
-        // artisan is already off this roster" is a state to report rather than an error to raise.
         if (answer.unlinked) taken += 1;
       } catch {
         failed.push(row.name);
@@ -1799,14 +1168,11 @@ function ArtisanListPanel({
     <section className="panel mt-4 p-4">
       <h2 className="font-display text-base font-bold tracking-tight text-ink-900">Artisan list</h2>
       {readOnlyReason ? (
-        // THE REASON, ON THE PANEL WHOSE CONTROLS IT SWITCHES OFF. The page says it once above the
-        // panels; a disabled upload with no sentence beside it reads as a broken upload.
         <p className="mt-1 text-xs leading-5 text-ink-500">
           Read-only while you hold a post on this workshop.
         </p>
       ) : null}
 
-      {/* ── WHO IS ON IT ─────────────────────────────────────────────────────────────────────── */}
       <FieldBlock
         label="Artisans on this workshop"
         hint={
@@ -1830,9 +1196,6 @@ function ArtisanListPanel({
             onChange={setKeeping}
             options={rosterOptions}
             placeholder="Nobody is on this roster"
-            // The options are one workshop's own rows rather than a window over a table, so the
-            // control's own filter box searches all of them — which is the one place on this page
-            // where a client-side filter is the right search.
             searchable
             values={keeping}
           />
@@ -1890,14 +1253,13 @@ function ArtisanListPanel({
           >
             Discard changes
           </button>
-          {/* Colour never carries the meaning on its own — the word does. */}</ActionGroup>
+          </ActionGroup>
           <span className="text-xs text-amber-800 dark:text-amber-100">
             {comingOff.length} artisan{comingOff.length === 1 ? "" : "s"} unticked, not yet saved
           </span>
         </div>
       ) : null}
 
-      {/* ── HOW THEY GET ON IT ───────────────────────────────────────────────────────────────── */}
       <h3 className="mt-5 font-display text-sm font-bold tracking-tight text-ink-900">
         Add artisans from the pro-forma
       </h3>

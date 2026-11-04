@@ -1,189 +1,3 @@
-"""BULK SANCTION ORDERS: reconciling what a sheet says against what the rosters know.
-
-The parser (``sanction_orders_xlsx``) answers "what do the cells say". This module answers the two
-questions that need the database — **who are these people**, and **is there anything here only a
-human can decide** — and then records the orders the human agreed to.
-
-══ THE ONE SHAPE THAT MAKES THIS DIFFERENT FROM THE OTHER TWO IMPORTERS ═════════════════════════
-
-"Designer Name(s)" and "Designer Email(s)" each hold a comma-separated list and the Nth name goes
-with the Nth address. Nothing else in this product has two columns that correspond positionally, and
-a positional correspondence is a thing a spreadsheet loses silently: one extra comma, one name typed
-into the wrong cell, one row sorted while only half the columns were selected, and every pairing
-below it is wrong while every cell still looks perfectly reasonable.
-
-So the whole design of this module is one rule:
-
-    **AUTO-RESOLVE EVERYTHING MECHANICAL. ASK ONLY WHERE A HUMAN COULD LEGITIMATELY HAVE MEANT
-    SOMETHING DIFFERENT. REFUSE, WITHOUT ASKING, ANYTHING THAT WOULD OVERTURN A DECISION AN
-    ADMINISTRATOR TOOK ON A SCREEN.**
-
-A confirmation dialog that asks about everything is as useless as one that asks about nothing: an
-officer who is asked forty questions answers them the way they answer a cookie banner.
-
-══ EVERY WAY THE TWO COLUMNS CAN FAIL TO TALLY, AND WHAT HAPPENS TO EACH ════════════════════════
-
-**A** = auto-resolved, imported, a ``warning`` problem says what was assumed.
-**H** = the row goes to the human; nothing about it is written until they answer.
-**R** = refused outright, an ``error`` problem says why, and it is NEVER offered for confirmation.
-
-── STRUCTURAL: the two cells disagree about SHAPE ───────────────────────────────────────────────
-
- 1. **An empty segment from a doubled or trailing comma** — ``"Ramesh, , Kavita"``. **A.** Dropped
-    and counted, by :func:`sanction_orders_xlsx.split_list_cell`. **THIS HAPPENS FIRST, BEFORE THE
-    COUNTS ARE COMPARED**, and the ordering is the whole point: left in, a trailing comma in one
-    cell and not the other manufactures a count mismatch (#2) out of a typo, and sends a perfectly
-    unambiguous row to a human for a decision there was nothing to decide.
-
- 2. **N names, M addresses, N ≠ M, both non-empty.** **H.** This cannot be guessed — an extra name
-    could belong at any position, and pairing "as far as they go" would file work under the wrong
-    person from the mismatch down. Both lists are shown, paired as far as they go, with the surplus
-    named; the officer re-pairs or drops the row.
-
- 3. **Names cell empty, addresses populated.** **A** where every address resolves to somebody this
-    product already has a name for, with a warning naming the names it used; **H** where any address
-    is new, because ``SanctionOrderCreate.designerName`` is required and nobody in the building
-    knows what that person is called. (The briefing called this wholly auto-resolvable; it is not —
-    a brand-new address is the ORDINARY case here, and it is precisely the case with no name to
-    fall back on.)
-
- 4. **Addresses cell empty, names populated.** **H**, always, even when every name resolves to
-    exactly one active roster row. A name is not an identity. Where a unique active roster row does
-    match, its address is PRE-FILLED so the officer is accepting a proposal rather than typing;
-    where it does not, the officer supplies it. Never silently picked: the cost of being wrong is a
-    workshop and a credential issued to somebody who shares a name with the intended designer.
-
- 5. **Both cells empty.** **R.** The order names nobody, and a sanction order that names nobody is
-    not a sanction order.
-
-── IDENTITY: a name or an address does not resolve ──────────────────────────────────────────────
-
- 6. **The address is on no roster and has no account.** **A, and this is the ORDINARY CASE, not an
-    error.** The whole point of a sanction order is that the designer is not here yet: the order
-    admits them, empanels them, mints the account and issues the sign-in link. No problem is
-    emitted, because nothing was assumed.
-
- 7. **The name differs from the name on the record the address resolves to.** **A.** The ADDRESS is
-    the identity. The order is recorded under the resolved account and **the stored record is not
-    changed** — a warning says both spellings, in the shape ``artisan_import._report_disagreements``
-    already uses. Compared after folding case and whitespace, so "RAMESH  KUMAR" against "Ramesh
-    Kumar" is silent: that is a difference in typing and not a difference in fact.
-
- 8. **The name and the address name two DIFFERENT KNOWN PEOPLE.** **H.** This is #7's dangerous
-    twin and the officer's "where the two do not tally" case in its sharpest form — the signature of
-    a column that has slipped by one row. It is distinguished from #7 by a deliberately narrow test:
-    the address must already belong to somebody with a name on file, AND the sheet's name must
-    independently match an active roster row that is NOT this address. Both candidates are shown
-    with their name and address; the officer picks one or drops the row. **The narrowness is the
-    feature** — a test that fired whenever a name merely existed elsewhere would ask about every
-    order naming a common name, which is the "asks about everything" failure above.
-
- 9. **The name matches more than one roster row, and the address decided.** **Not asked, and no
-    warning either.** That two other designers share this name is a fact about the roster and not
-    about this row, and a warning about it is noise on a row where nothing was assumed. It becomes
-    #4's problem only when the name is being used AS the identity.
-
-10. **The address is on the roster but the empanelment was ENDED.** **R.** ``SANCTION_EMPANELMENT_
-    ENDED``, verbatim from the single-order path. Not confirmable: restoring an empanelment is an
-    administrator's act on the roster screen, and a spreadsheet must not be able to take it.
-
-11. **The address is valid and the account is NOT empanelled at all** (no roster row). **A** — this
-    is #6 with an account already in existence, and ``ensure_empanelled`` writes the row inside the
-    order's own transaction. Only an empanelment somebody ENDED is a refusal; never having had one
-    is the ordinary state of a designer being sanctioned for the first time.
-
-── DUPLICATION ──────────────────────────────────────────────────────────────────────────────────
-
-12. **The same address twice in one cell.** **A.** Collapsed keeping the first position, with a
-    warning naming it. The paired name is dropped with it, so the correspondence survives the
-    collapse — dropping one side only is how a de-duplication turns into a mis-pairing.
-
-13. **Two spellings in one cell that are one mailbox** — ``r.kumar@gmail.com`` and
-    ``rkumar+dch@gmail.com``. **A**, collapsed on ``designers.canonical_email``, with a warning
-    naming BOTH spellings, because this one is invisible otherwise. It is also not cosmetic: two
-    rows for one account would violate ``SanctionOrderDesigner``'s composite primary key at the last
-    statement of the order's transaction.
-
-14. **The same designer named on two different ROWS of the sheet.** **Not a failure at all.** Two
-    sanction orders for one designer is ordinary — quite unlike ``artisan_import``, where a person
-    cannot be recorded twice. No problem is emitted and nothing is collapsed across rows.
-
-15. **The same order number twice in the sheet, or already in the register.** **R** for both, with
-    different sentences: the in-file one names the other Excel row (in the parser); the register one
-    is ``SANCTION_DUPLICATE_TEMPLATE``, which names the existing order, its workshop, its designer
-    and the day it was recorded.
-
-── STANDING: refusals that survive any confirmation ─────────────────────────────────────────────
-
-16. **The address is BARRED on the platform allow-list** (REJECTED or SUSPENDED). **R.**
-17. **The account exists and cannot run a design workshop** (INSPECTOR, PROFESSOR, a directorate
-    tier). **R.** Naming them would write a viewer row ``load_workshop_or_404`` refuses to honour.
-18. **The address is one of the uploading officer's own spellings.** **R.** The person who approves
-    the money is not the person who spends it — and compared over ``email_match_keys`` on both
-    sides, so one dot does not step over it.
-19. **Two accounts already answer to one mailbox.** **R.** Picking one is not a decision an import
-    takes on an institution's behalf.
-
-**#10 AND #16-19 ARE THE FIVE THAT ARE NEVER OFFERED FOR CONFIRMATION**, and that is the governing
-rule rather than five separate decisions: each is a fact about a decision an administrator took on a
-screen, and a confirmation step that could overturn one would make a spreadsheet the senior
-authority. Every one of their sentences is imported from ``services/sanction_orders`` and not
-re-worded, so the refusal an officer meets here is byte-for-byte the one they meet on the form —
-which is what ``test_the_refusal_sentence_is_identical_on_every_surface`` exists to keep true.
-
-A SIXTH JOINED THEM ON 2026-10-09, unnumbered because it is not a way a sheet goes wrong but a door
-the register closed: any spelling of the master admin's mailbox (``SANCTION_MASTER_MAILBOX``). The
-account an order would create there is the one nobody but the master admin may hold, so it is refused
-on the form and here alike — ``designer_standing_verdict`` answers it, before any read.
-
-══ WHITESPACE AND CASE ══════════════════════════════════════════════════════════════════════════
-
-Folded and silent, everywhere, in both columns. NFKC, then every run of whitespace (including the
-non-breaking and zero-width kinds a pasted cell carries) to one space, then case. An officer is not
-asked about "Ramesh  Kumar" versus "Ramesh Kumar", and the address is lower-cased the way both
-rosters already lower-case it. **What is stored is never the folded form** — the fold is for
-comparison only, and a name folded onto a ministry record would be the app deciding how somebody's
-name is written.
-
-══ ONE TRANSACTION PER ORDER, LOOPED — AND THAT IS A DELIBERATE DIVERGENCE ══════════════════════
-
-``annual_plan.apply_parsed_plan`` puts the WHOLE SHEET in one ``db.tx()`` and argues at length for
-it, because "a directory is a document, not a stream of independent records". **This importer does
-the opposite and the next reader must not assume one copied the other.**
-
-A sanction order is not a line in a document; it is an instrument. Each one is already individually
-all-or-nothing — that is the guarantee ``create_from_sanction``'s transaction exists to give — and
-that is exactly the guarantee an officer needs. Two hundred orders in ONE transaction would be up to
-1400 writes plus 200 account creations inside a single 30-second window, and **one bad row at
-position 190 would roll back 189 recorded ministry orders**. Looped, a failure part-way leaves N
-recorded orders and a report saying precisely which; the officer corrects the rest of the sheet and
-uploads it again, and the ones already recorded are refused as duplicates by number rather than
-recorded twice.
-
-``MAX_SANCTION_ROWS`` is what bounds the loop; see the parser for why that number is 200 and not the
-annual plan's 600.
-
-══ AN IMPORT ISSUES FIRST SIGN-IN LINKS EXACTLY AS THE FORM DOES (2026-10-10) ═══════════════════
-
-``create_from_sanction`` mints one INVITE link per account it creates and returns it; this module
-used to throw them away and leave every imported designer to be re-issued a link by hand from the
-register. The owner ruled that out: an import is the same door as the form, so it hands the links
-back the same way — ``created[].credentialLinks`` per recorded order, and ``credentialLinksIssued``
-counting them. Nothing about the issuance itself differs, because nothing here mints anything: the
-issuer is the officer pressing confirm (``issuedById``, re-checked at redemption by
-``account_provisioning.issuer_still_manages``), the purpose is INVITE for an account this order just
-created and NO link at all for an account that already existed, the master admin's mailbox is
-refused before any row is written, and a promotion afterwards withdraws the link
-(``credential_links.revoke_outstanding``).
-
-THE COST THE OLD HEADER NAMED IS ANSWERED RATHER THAN DENIED. Many live credentials on one screen:
-each is shown once, the screen says so beside each, and every one of them can be withdrawn there or
-re-issued later from its designer's own button on the register — so a closed tab strands nobody. The
-throttle cannot refuse a sheet that names one designer on many rows, because only the row that
-CREATES the account mints a link; the rows after it find the account and mint none. A link the
-throttle does refuse comes back as a warning against its Excel row, and the order still stands.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -220,48 +34,22 @@ __all__ = [
     "review_sheet",
 ]
 
-#: Four megabytes, the number ``annual_plan`` uses, mirrored on the client as its own ``MAX_BYTES``.
-#:
-#: The SERVER'S is the one that decides; the client's copy exists so the refusal arrives before a
-#: ministry letterhead PDF is pushed up a village connection. A sheet of 200 sanction orders with
-#: six columns is tens of kilobytes, so anything near this ceiling is not the sheet.
 MAX_UPLOAD_BYTES = 4 * 1024 * 1024
 
-#: The verdicts a reviewed row can carry. Spelled as constants because the client branches on them
-#: and a typo in a string literal on either side is a row that renders in no panel at all.
 READY = "ready"
 REVIEW = "review"
 REFUSED = "refused"
 
 
-# --------------------------------------------------------------------------------------
-# What the review produces
-# --------------------------------------------------------------------------------------
-
 
 @dataclass
 class ProposedDesigner:
-    """One person this row proposes to name, after the sheet and the rosters have been reconciled.
-
-    ``userId`` is ``None`` for the ordinary case (#6) and that is not a missing value: it means this
-    order will MINT the account, which is what the whole feature is for. The client draws the
-    difference, because "a new account will be created for this person" and "this order will be
-    filed under an account that already exists" are two different things for an officer to agree to.
-
-    ``empanelled`` is ``False`` for somebody who has simply never been empanelled, which is ordinary
-    and is not a refusal (#11); an empanelment that was ENDED never reaches this dataclass, because
-    it is refused one function up.
-    """
-
     name: str
     email: str
     canonical: str
     userId: str | None = None
     accountExists: bool = False
     empanelled: bool = False
-    #: Where the name came from when the sheet did not give one: ``"record"`` for #3, ``"sheet"``
-    #: otherwise. Rendered, because "we filled this in for you" is exactly the assumption an officer
-    #: should be able to see and disagree with.
     nameSource: str = "sheet"
 
     def payload(self) -> dict[str, Any]:
@@ -278,17 +66,6 @@ class ProposedDesigner:
 
 @dataclass
 class RowQuestion:
-    """One thing about this row that only the officer can settle.
-
-    ``code`` is for the client's layout and ``question`` is the sentence a person reads; both travel
-    because a client that had only the code would have to re-word the question, and this repository
-    has four places that could paraphrase a rule and one of them already cost an officer their
-    understanding of who owns what.
-
-    ``candidates`` is populated only where there is a closed set to choose FROM (#4's roster match,
-    #8's two people). An empty list is not an empty dropdown: it means the answer has to be typed.
-    """
-
     code: str
     question: str
     candidates: list[dict[str, Any]] = field(default_factory=list)
@@ -299,8 +76,6 @@ class RowQuestion:
 
 @dataclass
 class ReviewedRow:
-    """One sheet row with a verdict on it."""
-
     sheetRow: int
     sanctionOrderNo: str
     sanctionOrderDate: date | None
@@ -309,11 +84,7 @@ class ReviewedRow:
     verdict: str
     designers: list[ProposedDesigner] = field(default_factory=list)
     questions: list[RowQuestion] = field(default_factory=list)
-    #: Why this row is refused. Always set when ``verdict == REFUSED`` and always ``None`` otherwise
-    #: — a reason on a row that is going to be recorded is a sentence nothing renders.
     reason: str | None = None
-    #: The surplus, for #2 only: the entries that had no partner. Drawn beside the paired ones so
-    #: the officer can see WHERE the two lists stopped agreeing rather than only that they did.
     unpairedNames: list[str] = field(default_factory=list)
     unpairedEmails: list[str] = field(default_factory=list)
 
@@ -324,10 +95,6 @@ class ReviewedRow:
             "sanctionOrderDate": (
                 self.sanctionOrderDate.isoformat() if self.sanctionOrderDate else None
             ),
-            # A DECIMAL STRING AND NEVER A NUMBER, at this layer as at every other. See
-            # ``schemas/sanction_orders``: ``jsonable_encoder`` turns a ``Decimal`` into a ``float``,
-            # and a preview that rendered 4,50,000.00000000001 would be a preview an officer cannot
-            # confirm — and would send that float straight back on the confirm.
             "sanctionAmount": (str(self.sanctionAmount) if self.sanctionAmount is not None else None),
             "notes": self.notes,
             "verdict": self.verdict,
@@ -339,10 +106,6 @@ class ReviewedRow:
         }
 
 
-# --------------------------------------------------------------------------------------
-# The reconciliation
-# --------------------------------------------------------------------------------------
-
 
 def _problem(
     row: int | None, severity: str, reason: str, sheet: str | None, value: str | None = None
@@ -351,25 +114,6 @@ def _problem(
 
 
 async def _roster_rows_by_name(names: list[str]) -> dict[str, list[Any]]:
-    """Folded name → the ACTIVE roster rows spelled that way. One query for the whole sheet.
-
-    **ACTIVE ONLY, AND THAT IS NOT AN OPTIMISATION.** This index answers two questions — "whose
-    address is this, when the sheet gave only a name" (#4) and "does this name independently name
-    somebody else" (#8) — and a suspended roster row is the right answer to neither. Proposing a
-    suspended designer's address in #4 would walk the officer into a refusal they had been invited
-    to make; counting one in #8 would ask about a collision with somebody who cannot be named
-    anyway.
-
-    ONE ``find_many`` WITH AN ``OR`` OF INSENSITIVE EQUALITIES, and not one query per name. The
-    alternative on a two-hundred-row sheet is four hundred round trips before the officer sees
-    anything. The list is bounded by :data:`_NAME_LOOKUP_CAP`; past it the index is simply smaller
-    and the two features that use it degrade to "no proposal" and "not detected", which is the
-    honest failure — see :func:`review_sheet`, which says so on the report rather than silently.
-
-    ``fullName`` IS NULLABLE ON ``DesignerRoster`` and most rows carry one only because
-    ``ensure_empanelled`` copies the administrator's own spelling off the allow-list. A row with no
-    name simply does not appear in this index, which is correct: it cannot match a name.
-    """
     wanted = [name for name in names if name][:_NAME_LOOKUP_CAP]
     if not wanted:
         return {}
@@ -388,34 +132,16 @@ async def _roster_rows_by_name(names: list[str]) -> dict[str, list[Any]]:
     return index
 
 
-#: How many distinct names one sheet may look up by name.
-#:
-#: A ceiling on a query this builds an ``OR`` for, not a product rule. Two hundred rows of a
-#: realistic sheet carry well under a hundred distinct names; a sheet that carries eight thousand is
-#: a malformed file, and an ``OR`` of eight thousand insensitive equalities is a query that will not
-#: come back. What is lost past the cap is stated on the report rather than silently absorbed.
 _NAME_LOOKUP_CAP = 400
 
 
 def _pair_cells(
     row: ParsedSanctionRow, sheet: str | None, problems: list[ParseProblem]
 ) -> tuple[list[tuple[str, str]], list[str], list[str], list[RowQuestion]]:
-    """The two cells into ``[(name, address)]``, plus whatever could not be paired.
-
-    Everything in here is structural — it needs no database and it is where failures #1, #2, #3, #4,
-    #5, #12 and #13 are decided. Returns ``(pairs, unpaired_names, unpaired_emails, questions)``;
-    ``pairs`` may carry an empty name (the address is known and the name will be taken from the
-    record) or an empty address (the officer must supply one).
-    """
     names = list(row.designerNames)
     emails = list(row.designerEmails)
     questions: list[RowQuestion] = []
 
-    # ── #12 AND #13: COLLAPSE ON THE MAILBOX, DROPPING THE PAIRED NAME WITH IT ────────────────
-    # The paired name goes with the address it was a duplicate of. Dropping one side only is how a
-    # de-duplication turns into a mis-pairing — "Ramesh, Ramesh, Kavita" against
-    # "r@gmail.com, r@gmail.com, k@gmail.com" would otherwise leave two names and two addresses
-    # offset by one, and Kavita would be recorded under Ramesh's mailbox.
     aligned = len(names) == len(emails) and bool(emails)
     kept_emails: list[str] = []
     kept_names: list[str] = []
@@ -423,8 +149,6 @@ def _pair_cells(
     for index, address in enumerate(emails):
         mailbox = designers.canonical_email(address)
         if not mailbox:
-            # Not an address this system can use. Kept in place rather than dropped, so the counts
-            # still line up and the standing verdict can refuse it by name with its own sentence.
             kept_emails.append(address)
             if aligned:
                 kept_names.append(names[index])
@@ -454,11 +178,9 @@ def _pair_cells(
         names = kept_names
     emails = kept_emails
 
-    # ── #5: BOTH EMPTY ────────────────────────────────────────────────────────────────────────
     if not names and not emails:
         return [], [], [], questions
 
-    # ── #4: ADDRESSES EMPTY. Always a question; the proposal is filled in one level up. ───────
     if not emails:
         questions.append(
             RowQuestion(
@@ -474,11 +196,9 @@ def _pair_cells(
         )
         return [(name, "") for name in names], [], [], questions
 
-    # ── #3: NAMES EMPTY. Resolved against the records one level up; may still become a question.
     if not names:
         return [("", address) for address in emails], [], [], questions
 
-    # ── #2: COUNTS DIFFER ─────────────────────────────────────────────────────────────────────
     if len(names) != len(emails):
         paired = min(len(names), len(emails))
         questions.append(
@@ -504,7 +224,6 @@ def _pair_cells(
 
 
 def _english_list(items: list[str]) -> str:
-    """``"A, B and C"``. One sentence-builder, so no question reads like a machine."""
     clean = [item for item in items if item]
     if not clean:
         return "nobody"
@@ -527,13 +246,6 @@ async def _review_one_row(
     standing: dict[str, Any],
     roster_rows: dict[str, Any],
 ) -> ReviewedRow:
-    """One sheet row, reconciled. The order of the checks below is the order of the verdicts.
-
-    **R BEATS H, ALWAYS.** A row that both asks a question and trips a standing refusal is REFUSED
-    and is not offered for confirmation, because confirming it would be the officer agreeing to
-    something the product will not do — and because the five standing refusals are administrators'
-    decisions that a spreadsheet must not be able to overturn.
-    """
     reviewed = ReviewedRow(
         sheetRow=row.sheetRow,
         sanctionOrderNo=row.sanctionOrderNo,
@@ -546,24 +258,10 @@ async def _review_one_row(
     def refuse(reason: str) -> ReviewedRow:
         reviewed.verdict = REFUSED
         reviewed.reason = reason
-        # ── AND THE QUESTIONS GO WITH IT. R BEATS H, AND A REFUSED ROW MUST ASK NOTHING. ────────
-        # A row can reach here having already collected one: mismatched counts (a question) on a row
-        # that ALSO names a barred address (a refusal). Leaving the question on it would put a
-        # control on the officer's screen that cannot change the outcome — they would re-pair the
-        # names, press confirm, and meet the same refusal — and it would imply that settling the
-        # pairing was what the row needed. The refusal sentence is the whole story of a refused row.
-        #
-        # ``test_a_standing_refusal_beats_a_question_on_the_same_row`` is what found this: the first
-        # draft set the verdict and left the list alone, which passed every single-cause test.
         reviewed.questions = []
         problems.append(_problem(row.sheetRow, "error", reason, sheet, row.sanctionOrderNo))
         return reviewed
 
-    # ── THE THREE FACTS OF THE INSTRUMENT ─────────────────────────────────────────────────────
-    # The parser has already said, in its own words, WHY each of these is missing (an unreadable
-    # date, an amount with two figures in it). What it cannot say is what that means for the ORDER,
-    # which is this: an instrument with no date or no amount is not an instrument. The parser's
-    # sentence and this one are both on the report and neither repeats the other.
     if row.sanctionOrderDate is None:
         return refuse(
             f"Sanction order '{row.sanctionOrderNo}' has no date that could be read, so it cannot "
@@ -575,11 +273,6 @@ async def _review_one_row(
             "be recorded. The amount is one of the three facts the instrument consists of."
         )
 
-    # ── #15: ALREADY IN THE REGISTER ──────────────────────────────────────────────────────────
-    # The in-file half is the parser's (it can see both rows); this is the register half, and its
-    # sentence is ``SANCTION_DUPLICATE_TEMPLATE`` — which names the existing order, its workshop,
-    # its designer and the day it was recorded, because the officer's next move differs between "I
-    # already did this" and "the ministry issued two orders with one number".
     taken = await sanction_orders.duplicate_reason(fold_order_no(row.sanctionOrderNo))
     if taken is not None:
         return refuse(taken)
@@ -589,7 +282,6 @@ async def _review_one_row(
     reviewed.unpairedEmails = unpaired_emails
     reviewed.questions = questions
 
-    # ── #5 ────────────────────────────────────────────────────────────────────────────────────
     if not pairs:
         return refuse(
             f"Sanction order '{row.sanctionOrderNo}' names no designer at all — both the name and "
@@ -608,7 +300,6 @@ async def _review_one_row(
 
     for name, address in pairs:
         if not address:
-            # ── #4: the officer has to supply it. The roster is asked for a PROPOSAL only. ────
             matches = by_name.get(fold_name(name), [])
             question = reviewed.questions[0] if reviewed.questions else None
             if question is not None and question.code == "no-addresses":
@@ -628,25 +319,15 @@ async def _review_one_row(
             verdict = await sanction_orders.designer_standing_verdict(address, officer=officer)
             standing[verdict.canonical] = verdict
 
-        # ── #10, #16-19 AND THE MASTER'S MAILBOX: THE SIX NEVER OFFERED FOR CONFIRMATION ─────
         if verdict.refusal is not None:
             return refuse(verdict.refusal.detail)
 
         account = verdict.user
-        # ── THE ROSTER ROW IS READ ONCE PER MAILBOX, FOR TWO SEPARATE QUESTIONS ──────────────
-        # "What is this person called" (the fallback when the account has no name, and when the
-        # sheet gave none) and "are they empanelled". Both need the same row, so it is read once and
-        # memoised alongside the standing verdict — a sheet naming one designer on five rows asks
-        # this once. The memo is scoped to ONE request and is never process-lifetime: an
-        # administrator ending an empanelment mid-import must be obeyed by the next upload.
         if verdict.canonical in roster_rows:
             roster = roster_rows[verdict.canonical]
         else:
             roster = await db.designerroster.find_first(where={"email": {"in": verdict.keys}})
             roster_rows[verdict.canonical] = roster
-        # ``isActive`` IS THE EMPANELMENT AND ``None`` IS NOT A REFUSAL. Never having been empanelled
-        # is the ordinary state of somebody being sanctioned for the first time (#11); an empanelment
-        # somebody ENDED never reaches this line, because ``designer_standing_verdict`` refused it.
         empanelled = bool(roster is not None and getattr(roster, "isActive", False))
 
         on_file = (
@@ -663,15 +344,11 @@ async def _review_one_row(
         )
 
         if not name:
-            # ── #3: THE NAME CELL WAS EMPTY ──────────────────────────────────────────────────
             if on_file:
                 proposed.name = on_file
                 proposed.nameSource = "record"
                 assumed_names.append(on_file)
             else:
-                # The address is new AND nobody gave a name. There is nothing in the building that
-                # knows what this person is called, and ``designerName`` is required — so this is
-                # the one arm of #3 that a human has to answer.
                 reviewed.questions.append(
                     RowQuestion(
                         "unknown-name",
@@ -683,11 +360,6 @@ async def _review_one_row(
                     )
                 )
         elif on_file and fold_name(on_file) != fold_name(name):
-            # ── #7 vs #8: THE NAME DISAGREES WITH THE RECORD THE ADDRESS RESOLVES TO ─────────
-            # The narrow test: does the sheet's name INDEPENDENTLY name somebody else who is on the
-            # roster and active? If it does, the two columns name two different known people and
-            # only the officer can say which they meant (#8). If it does not, the address is the
-            # identity and the disagreement is a spelling (#7).
             others = [
                 match
                 for match in by_name.get(fold_name(name), [])
@@ -731,9 +403,6 @@ async def _review_one_row(
                         name,
                     )
                 )
-                # #7's resolution: the ADDRESS is the identity, and the name that goes on the order
-                # is the one the record holds. Keeping the sheet's spelling here would put a name on
-                # a ministry instrument that disagrees with the account it was filed under.
                 proposed.name = on_file
                 proposed.nameSource = "record"
 
@@ -761,17 +430,6 @@ async def _review_one_row(
 async def review_sheet(
     parsed: ParsedSanctionSheet, *, officer: Any
 ) -> dict[str, Any]:
-    """The whole sheet, reconciled into three lists and a bag of problems.
-
-    ``ready`` will be recorded as it stands, ``needsReview`` is the confirmation step's subject, and
-    ``refused`` is never recorded whatever the officer answers. **All three travel, including the
-    empty ones**, because the counts have to add up on screen: ``rowsRead = recorded + skipped +
-    refused`` is the arithmetic ``ImportReport`` argues for, and it can only be checked if every
-    number including the zeroes is drawn.
-
-    NOTHING IS WRITTEN HERE. Not an account, not a roster row, not a ledger row — this is a read, and
-    an officer who uploads the wrong file and closes the tab has changed nothing.
-    """
     problems = list(parsed.problems)
     names_to_look_up: list[str] = []
     for row in parsed.rows:
@@ -779,13 +437,8 @@ async def review_sheet(
     distinct = list(dict.fromkeys(name for name in names_to_look_up if name))
     by_name = await _roster_rows_by_name(distinct)
     if len(distinct) > _NAME_LOOKUP_CAP:
-        # SAID RATHER THAN SWALLOWED. Past the cap the two name-driven features degrade — a row with
-        # no address gets no proposal, and a name/address disagreement is not detected — and an
-        # officer who was not told would read "nothing to review" as "nothing wrong".
         problems.append(
             _problem(
-                # None AND NOT 0 — the client draws "This workbook" for a null row and "Row 0" for a
-                # zero, and there is no row 0 in a spreadsheet. This problem is about the sheet.
                 None,
                 "warning",
                 (
@@ -798,14 +451,7 @@ async def review_sheet(
             )
         )
 
-    # ONE MEMO FOR THE WHOLE SHEET, keyed on the canonical mailbox. A sheet naming one designer on
-    # five rows asks the four standing questions about them once — see ``designer_standing_verdict``,
-    # which was split out of ``resolve_named_designer`` for exactly this. It is scoped to one request
-    # and is never a process-lifetime cache: an administrator barring an address mid-import must be
-    # obeyed by the next upload, not by the next restart.
     standing: dict[str, Any] = {}
-    #: The same memo for the roster row behind each mailbox, which answers two questions per
-    #: designer ("what are they called" and "are they empanelled") and is otherwise read twice.
     roster_rows: dict[str, Any] = {}
 
     reviewed: list[ReviewedRow] = []
@@ -825,10 +471,6 @@ async def review_sheet(
     return {
         "sheet": parsed.sheet,
         "sourceFilename": parsed.sourceFilename,
-        # THE SHEET'S OWN COUNT AND NOT ``len(ready) + len(needsReview) + len(refused)``. A row the
-        # parser could not read at all (no order number, a duplicate of an earlier row) is counted
-        # here and appears in none of the three lists, so deriving this number from them would
-        # quietly under-report the size of the file the officer uploaded.
         "rowsRead": parsed.rowCount + _rows_the_parser_dropped(problems, parsed),
         "ready": [row.payload() for row in reviewed if row.verdict == READY],
         "needsReview": [row.payload() for row in reviewed if row.verdict == REVIEW],
@@ -838,16 +480,6 @@ async def review_sheet(
 
 
 def _rows_the_parser_dropped(problems: list[ParseProblem], parsed: ParsedSanctionSheet) -> int:
-    """How many rows of the sheet never became a :class:`ParsedSanctionRow`.
-
-    A row with no order number, a second row carrying a number already used, a row past
-    ``MAX_SANCTION_ROWS`` — each leaves an ``error`` problem with its own Excel gutter row and no
-    parsed row. They belong in ``rowsRead`` because the officer typed them and can see them in the
-    file; leaving them out would make the panel's arithmetic say the sheet was smaller than it is.
-
-    Counted by DISTINCT ROW NUMBER, because one row can carry several problems (an unreadable date
-    AND an over-long name) and counting problems would double-count it.
-    """
     parsed_rows = {row.sheetRow for row in parsed.rows}
     dropped = {
         problem.row
@@ -857,22 +489,8 @@ def _rows_the_parser_dropped(problems: list[ParseProblem], parsed: ParsedSanctio
     return len(dropped)
 
 
-# --------------------------------------------------------------------------------------
-# The write
-# --------------------------------------------------------------------------------------
-
 
 def _create_body(row: SanctionImportRowIn, *, sheet_filename: str | None) -> SanctionOrderImportRow:
-    """One confirmed row as the body the single-order path already knows how to record.
-
-    **THE LEAD IS ELEMENT 0 AND THE REST ARE ``coDesigners``**, which is where the confirmation
-    screen's positional list is split back into the shape ``SanctionOrderCreate`` has always had.
-    Position 0 is the lead everywhere in this feature: the pro-forma's help sheet says so, the
-    officer's confirmation screen says so, and this is the line that makes it true.
-
-    Validated by ``SanctionOrderImportRow`` — the officer's own form schema plus two provenance
-    columns — so an imported order cannot hold a value the form would refuse.
-    """
     lead, *rest = row.designers
     return SanctionOrderImportRow(
         sanctionOrderNo=row.sanctionOrderNo,
@@ -888,38 +506,15 @@ def _create_body(row: SanctionImportRowIn, *, sheet_filename: str | None) -> San
 
 
 async def apply_confirmed_rows(body: SanctionImportConfirm, officer: Any) -> dict[str, Any]:
-    """Record every row the officer said to record. ONE TRANSACTION PER ORDER — see the header.
-
-    Every refusal that the preview could answer is asked AGAIN here, because it has to be: the
-    confirmation is stateless, so what arrives is the client's word for what the sheet said, and
-    minutes may have passed. ``create_from_sanction`` is the one door — nothing here writes a row
-    itself — so a stale or a hand-edited confirmation meets exactly the rules the officer's own form
-    meets, in exactly the same words.
-
-    **THE LOOP NEVER RAISES OUT.** An ``HTTPException`` from one order is that ORDER's refusal and
-    not the import's: two hundred rows must not be lost to the one at position 190. It is turned
-    into an ``error`` problem carrying its own detail, verbatim, against the Excel row it came from.
-    A non-HTTP exception is caught too and logged with the row number — it is the shape a driver
-    fault takes, and an officer who gets a 500 after 189 orders were recorded cannot tell that from
-    an import that did nothing.
-    """
     recorded: list[dict[str, Any]] = []
     problems: list[ParseProblem] = []
     skipped = 0
-    # SEEDED FROM THE CLIENT'S ECHO AND NOT FROM ZERO. A row the preview refused for an unreadable
-    # date or amount has no legal shape in ``SanctionImportRowIn`` — the date is a required ``date``
-    # — so it cannot be sent back at all, and counting only what arrives would leave the report's
-    # ``rowsRead = recorded + skipped + refused`` short by exactly the rows nobody could describe.
-    # Their SENTENCES are already on the preview, which the officer has seen and the client keeps on
-    # screen beside this report; what is added here is only the arithmetic.
     refused = body.refusedBeforeConfirm
     accounts_created = 0
     links_issued = 0
 
     for row in body.rows[:MAX_SANCTION_ROWS]:
         if row.action == "skip":
-            # COUNTED AND NAMED, NEVER SILENTLY DROPPED. The officer chose this, and the report
-            # lists the Excel row so they can correct the sheet and upload it again.
             skipped += 1
             problems.append(
                 _problem(
@@ -963,9 +558,6 @@ async def apply_confirmed_rows(body: SanctionImportConfirm, officer: Any) -> dic
                 _problem(
                     row.sheetRow,
                     "error",
-                    # VERBATIM. This is the fourth place in the stack that could paraphrase a
-                    # refusal and the one where paraphrasing costs an officer their understanding of
-                    # who owns what.
                     str(exc.detail),
                     body.sheet,
                     row.sanctionOrderNo,
@@ -973,12 +565,6 @@ async def apply_confirmed_rows(body: SanctionImportConfirm, officer: Any) -> dic
             )
             continue
         except Exception:
-            # NOT A BLANKET SWALLOW OF A BUG — a blanket ``except`` around a write is how a create
-            # that could not honour its body becomes a silent success. It is here because the unit
-            # of failure is ONE ORDER: this loop's whole argument is that a fault at position 190
-            # must not roll back 189 recorded ministry orders, and an exception that escaped would
-            # do exactly that to the report rather than to the database. Logged with the row number
-            # because the officer's sentence cannot carry a stack trace.
             refused += 1
             log.exception(
                 "sanction import: row %s (%s) failed and was not recorded",
@@ -1007,9 +593,6 @@ async def apply_confirmed_rows(body: SanctionImportConfirm, officer: Any) -> dic
             if designer.get("accountCreated")
         ]
         accounts_created += len(minted)
-        # THE LINKS THE ORDER MINTED, HANDED BACK AS THE FORM HANDS THEM BACK — see the header. A
-        # link the throttle refused is that designer's warning, against this Excel row; the order
-        # stands either way.
         links = list(created.get("credentialLinks") or [])
         links_issued += sum(1 for entry in links if entry.get("link"))
         for entry in links:
@@ -1032,8 +615,6 @@ async def apply_confirmed_rows(body: SanctionImportConfirm, officer: Any) -> dic
                 "designWorkshopId": order["designWorkshopId"],
                 "designers": order.get("designers", []),
                 "accountsCreated": len(minted),
-                # The whole order, so the officer's screen can write the prewritten message that
-                # names it beside each link, as it does for an order typed on the form.
                 "sanctionOrder": order,
                 "credentialLinks": links,
             }
@@ -1051,18 +632,10 @@ async def apply_confirmed_rows(body: SanctionImportConfirm, officer: Any) -> dic
     return {
         "sheet": body.sheet,
         "sourceFilename": body.sourceFilename,
-        # ── THE FOUR COUNTS, AND THEY MUST ADD UP ON SCREEN ──────────────────────────────────
-        # ``rowsRead = recorded + skipped + refused`` is the arithmetic ``ImportReport`` argues for.
-        # ``rowsRead`` is the count the PREVIEW reported and the client echoed back, not
-        # ``len(body.rows)``: if those two differ, rows went missing between the two requests, and
-        # the panel drawing both is the only way anybody would ever see it.
         "rowsRead": body.rowsRead,
         "recorded": len(recorded),
         "skipped": skipped,
         "refused": refused,
-        # HOW MANY PEOPLE THIS PRESS LET IN, and how many first sign-in links came back for them.
-        # Not derivable from the row counts — one order can mint three accounts and the next none.
-        # The two differ only where the throttle refused a link, and that row carries a warning.
         "accountsCreated": accounts_created,
         "credentialLinksIssued": links_issued,
         "created": recorded,
@@ -1080,20 +653,6 @@ async def _write_the_ledger_row(
     refused: int,
     problems: list[ParseProblem],
 ) -> str | None:
-    """One ``SanctionOrderImport`` row: which upload did this, and who pressed it.
-
-    THE SHAPE IS ``DwArtisanImport``'S AND THE CASE FOR IT IS STRONGER HERE, NOT WEAKER. That import
-    files people onto a workshop; this one MINTS ACCOUNTS AND ADMITS PEOPLE TO THE PLATFORM. "Which
-    upload created these forty accounts, and who pressed it" is not derivable from anything else
-    once the workbook is closed — and the workbook itself is deliberately NOT stored, exactly as the
-    artisan import says of its own.
-
-    **WRITTEN LAST AND NEVER ALLOWED TO FAIL THE IMPORT.** The orders are already committed, each in
-    its own transaction; an exception here would answer 500 to an officer whose orders were recorded
-    and send them to record them all again into two hundred duplicates. It is a ledger, and a ledger
-    that cost the thing it records would be the wrong trade — so it is logged and the report still
-    goes back, with ``importId: null`` saying honestly that no ledger row exists.
-    """
     try:
         row = await db.sanctionorderimport.create(
             data={
@@ -1103,9 +662,6 @@ async def _write_the_ledger_row(
                 "recorded": recorded,
                 "skipped": skipped,
                 "refused": refused,
-                # THE SENTENCES AS THE CLIENT RENDERED THEM, as JSON rather than a child table —
-                # the reason ``DwArtisanImport.problems`` is JSON: these are written to be read once,
-                # not rows anything queries.
                 "problems": [problem.payload() for problem in problems],
                 "uploadedById": getattr(officer, "id", None),
             }

@@ -25,71 +25,12 @@ import type { MediaFile } from "@/lib/types";
 import { useConfirm } from "@/components/dialogs";
 import { useAdminView } from "@/components/AdminViewProvider";
 
-// Transcript statuses that mean a job is still running (shared vocabulary with the backend).
 const IN_FLIGHT_TRANSCRIPT = new Set(["QUEUED", "PROCESSING", "PENDING", "RUNNING"]);
 
-/**
- * How many attachments one request asks for. 100 is not a preference, it is the CEILING: `GET /media`
- * declares `pageSize: int = Query(20, ge=1, le=100)`, so no single request can ever return more and
- * raising this number silently gets a 422 instead of more files. That ceiling is the whole reason
- * for the paging below — see `refresh`.
- */
 const PAGE_SIZE = 100;
 
-/**
- * How many attachments there have to be before the panel offers a chooser.
- *
- * A multi-select over one file is furniture: the answer is on screen already and the control adds a
- * click to reach it. Two is where "which of these do I want to look at" becomes a real question.
- *
- * THIS IS NOT THE `searchable` RULE AND MUST NOT BE READ AS ONE. That rule is about a control whose
- * OWN behaviour flips at eight options — a filter box that appears on one deployment and not on
- * another — and this is a whole control appearing when there is something for it to do, which is what
- * "Show older files" below already does at `hidden > 0`. The chooser itself always passes
- * `searchable` explicitly, because its options are records.
- */
 const CHOOSER_FLOOR = 2;
 
-/**
- * Shows the media already attached to a saved record (by linked type/id), with each item's
- * upload provenance (who uploaded it, when) and — for audio — its transcript / a "transcribing…"
- * spinner while the Whisper job is still running. Used on every edit page so previously uploaded
- * media is always visible.
- *
- * ── THE CHOOSER, AND WHAT IT IS HONESTLY FOR ────────────────────────────────────────────────────
- *
- * The owner asked for "media on the artisan record" to be a multi-select dropdown. This panel is the
- * half of the record page's media that LISTS what is attached, so the chooser lands here — and what
- * it selects is WHICH ATTACHMENTS THE PANEL SHOWS, nothing else.
- *
- * IT DOES NOT AND CANNOT SELECT A VALUE, and that is a fact about the schema rather than a choice
- * made here. A `MediaFile` is attached to a record by its own columns — a tag pair plus a typed
- * foreign key, written by `media_relation_data` when the file is uploaded — and no record type has a
- * column for "which of my files are the chosen ones": no featured set, no display order, no purpose.
- * So a multi-select that produced a VALUE would have to invent that concept, and inventing it in a
- * dropdown is inventing it in the wrong place — it would need a column, a write path, a report role
- * and an answer to what the old rows mean. A chooser over the listing is the same control doing the
- * part of the job that exists today, and it needs no migration to be honest.
- *
- * The upload half is untouched: `MediaCaptureField` on the record page still attaches and captures
- * exactly as before, and a file uploaded there appears here on the next refresh regardless of what is
- * picked. Nothing in this panel is a form value — the record forms mark themselves dirty from
- * `<form onInput>`, and a filter deliberately does not call `markDirty`, because narrowing what you
- * are looking at is not an unsaved change.
- *
- * EMPTY MEANS EVERYTHING, by absence — the same rule as `useWorkshopScope` and `filters.types`. If
- * "nothing picked" meant "show nothing", then a panel whose files arrive over the network would blank
- * itself between the request and the answer, and there would be two spellings of "all of them".
- *
- * ── A FILE OF A WORKSHOP THE READER INSPECTS OR SUPERVISES IS READ-ONLY TO THEM ─────────────────
- *
- * The server refuses a post holder — any tier, the admin arm included — the delete and the re-run
- * transcript of any file that belongs to that workshop (2026-10-09). A file belongs to it through the
- * RECORD it hangs off when the record is filed there (`recordHold`, the record form's own answer),
- * and through its own two columns (`mediaWorkshopIds`). Those files' ✕ and "Transcribe now" are
- * held, each tile says so in words, and one notice above the gallery gives the server's sentence;
- * a 403 that arrives anyway is printed as the server wrote it.
- */
 export function ExistingMedia({
   linkedRecordType,
   linkedRecordId,
@@ -99,76 +40,28 @@ export function ExistingMedia({
 }: {
   linkedRecordType: string;
   linkedRecordId: string;
-  /**
-   * The answer for the design workshop the RECORD is filed under — `useRecordFilingHold(...).stored`
-   * on the record forms, `null` where the record can be filed under none (a craft, a crafts workshop).
-   *
-   * REQUIRED, AND WITH NO DEFAULT, because `undefined` is an answer here: "still asking", which holds
-   * every file. A default of `null` would turn a form's pending answer into "nothing held" — the trap
-   * `heldPostReason` exists for — so every mount has to say which it means.
-   */
   recordHold: HeldPostRefusal;
   title?: string;
-  /**
-   * A record's READ-ONLY page (owner ruling, 2026-10-16: a record opens to be read, and changing it
-   * is the separate "Update"). The files are still previewed, played and transcribed, and each one
-   * gains a Download button; the ✕ is not drawn at all — removing a file is a change to the record
-   * and belongs to the Update form, where this same panel draws it.
-   */
   readOnly?: boolean;
 }) {
   const [items, setItems] = useState<MediaFile[] | null>(null);
-  // Removing a file is a delete, and deletes are the content admins' alone, whether or not admin
-  // view is on (owner, 2026-10-21). Everybody else attaches and edits; the ✕ is not drawn for them.
   const { canDeleteRecords } = useAdminView();
   const mayRemove = !readOnly && canDeleteRecords;
-  /**
-   * How many files the SERVER says are attached, which is not the same number as `items.length` and
-   * was being printed as if it were. The panel asked for one page of 100 — the endpoint's maximum —
-   * threw `PageResult.total` away, and rendered `{items.length} files already attached`. A record
-   * carrying a bulk import (the /media form takes a multi-file selection against one linked record)
-   * therefore reported its own PAGE SIZE as a fact: "100 files already attached", for 100 or for
-   * 340. Audit 2026-08-15 (MINOR, frontend).
-   */
   const [total, setTotal] = useState(0);
-  /**
-   * How many pages this panel currently holds. It starts at one and only grows, by the button under
-   * the list. `/media` orders `createdAt desc`, so the files that fall off the end are the OLDEST —
-   * and this panel is the only per-record screen that can open or remove them, which is what made
-   * the invisible tail worth a control rather than only an honest sentence.
-   */
   const [pagesLoaded, setPagesLoaded] = useState(1);
   const [busy, setBusy] = useState(false);
   const [active, setActive] = useState<PreviewMedia | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
-  /**
-   * Which attachments the reader has picked out to look at. EMPTY MEANS ALL OF THEM — see the header.
-   *
-   * Ids and not indexes: the list is rewritten in place by the 15s transcript poll, by "Show older
-   * files" and by a delete, and an index into an array that three other things reorder selects
-   * whatever happens to be in that slot next.
-   */
   const [picked, setPicked] = useState<string[]>([]);
-  /**
-   * Which refresh is the current one. Two can overlap easily now: the 15s transcript poll fires on
-   * its own timer while "Show older files" is fetching two pages, and each writes the whole list.
-   * Same counter as the list pages (/artisans, /products, /tools, /processes, /media) and for the
-   * same reason — `listResource` takes no AbortSignal, so the late answer is ignored rather than
-   * cancelled. Without it a poll that started before the button can land after it and drop the older
-   * page the designer just asked for, which looks exactly like the button not working.
-   */
   const currentRefresh = useRef(0);
 
   const confirm = useConfirm();
-  /** Each loaded file's own workshops, asked once per distinct workshop — see the header. */
   const heldFor = useHeldPostRefusals((items ?? []).flatMap(mediaWorkshopIds));
-  /** One file's hold: the record's, or its own workshops' — refused if either is. */
   const holdOf = (media: MediaFile): HeldPostRefusal => mediaWriteHold([recordHold, heldFor(mediaWorkshopIds(media))]);
   const heldNoticeId = useId();
 
   async function removeMedia(media: MediaFile) {
-    // A held ✕ is disabled; this keeps the rule for anything that reaches the function some other way.
     if (writesHeld(holdOf(media))) return;
     const ok = await confirm({
       title: "Remove this file?",
@@ -183,9 +76,6 @@ export function ExistingMedia({
     try {
       await apiFetch(`/media/${media.id}`, { method: "DELETE" });
       setItems((current) => (current ? current.filter((m) => m.id !== media.id) : current));
-      // The count is the server's, so it has to move when we delete a row without re-asking. Left
-      // alone, removing a file from a 3-file record would leave the sentence reading "3 files
-      // already attached" over two tiles — the same class of lie this panel was just fixed for.
       setTotal((current) => Math.max(0, current - 1));
       setActive((current) => (current && current.key === media.id ? null : current));
     } catch (err) {
@@ -195,18 +85,6 @@ export function ExistingMedia({
     }
   }
 
-  /**
-   * Load every page this panel is currently showing, oldest request first, and keep the server's
-   * `total` beside the rows.
-   *
-   * It re-reads page 1 rather than appending only the new page on purpose: a delete anywhere in the
-   * list shifts every later row forward a slot, so appending page 2 to a stale page 1 would both
-   * duplicate a row and skip one. Re-reading is one extra request on a screen that already polls
-   * every 15 seconds, and it cannot drift.
-   *
-   * The loop stops early on a short page so a record with exactly 100 files does not pay for a
-   * second, empty request every poll.
-   */
   const refresh = useCallback(async () => {
     const generation = (currentRefresh.current += 1);
     setBusy(true);
@@ -226,32 +104,19 @@ export function ExistingMedia({
         if (result.items.length < PAGE_SIZE) break;
       }
       setItems(collected);
-      // `total` is what the sentence prints, so it must never be able to read as FEWER files than
-      // are drawn on screen — a server that answers a stale count while a page is being appended
-      // would otherwise produce "2 files already attached" above 102 tiles.
       setTotal(Math.max(serverTotal, collected.length));
     } catch {
       if (generation !== currentRefresh.current) return;
-      // Keep whatever we already have; only show the empty list on a failed FIRST load.
       setItems((current) => current ?? []);
     } finally {
       if (generation === currentRefresh.current) setBusy(false);
     }
   }, [linkedRecordType, linkedRecordId, pagesLoaded]);
 
-  /**
-   * A different record is a different list: blank it and go back to one page. Separate from the
-   * fetch effect below because `refresh` also changes identity when `pagesLoaded` grows, and
-   * blanking the list there would replace the tiles with "Loading attached media…" every time
-   * somebody pressed "Show older files" — the older files would arrive, but the screen would have
-   * thrown away everything already on it to get them.
-   */
   useEffect(() => {
     setItems(null);
     setTotal(0);
     setPagesLoaded(1);
-    // A different record's files are different files, so a pick made against the last one would
-    // filter this one down to nothing and look exactly like a record with no media on it.
     setPicked([]);
   }, [linkedRecordType, linkedRecordId]);
 
@@ -259,20 +124,6 @@ export function ExistingMedia({
     refresh();
   }, [refresh]);
 
-  /**
-   * Forget a pick whose file is no longer here.
-   *
-   * A deleted file, and a file that fell out of the pages currently loaded, both leave an id in
-   * `picked` that matches nothing — and since the filter below is an intersection, a selection made
-   * entirely of such ids renders an empty gallery over a record that has files. That is the
-   * silent-emptiness failure this repository keeps hitting, in miniature: nothing is wrong and the
-   * screen says there is nothing here.
-   *
-   * Only ever SHRINKS the selection, and only against a list that has arrived (`items === null` is
-   * "not answered yet", not "no files"), so it can never turn a real pick into "show everything"
-   * while a request is in flight. It also cannot loop: the guard compares lengths and the intersection
-   * is idempotent.
-   */
   useEffect(() => {
     if (items === null) return;
     setPicked((current) => {
@@ -283,16 +134,6 @@ export function ExistingMedia({
     });
   }, [items]);
 
-  /**
-   * One option per attached file. Declared HERE, above the early returns below, because it is a hook.
-   *
-   * The LABEL is what the tile shows — the caption if the uploader wrote one, otherwise the original
-   * filename — so the row in the dropdown and the row in the gallery read as the same file. The value
-   * is the id, which is deliberately NOT searched by `SearchableSelect` (a 25-character CUID matches
-   * a great many two-letter queries), so everything worth searching has to be in the label or the
-   * hint: the hint carries the kind of file and when it was uploaded, which is how somebody says
-   * "the audio from Tuesday" to a control.
-   */
   const chooserOptions = useMemo<DropdownOption[]>(
     () =>
       (items ?? []).map((media) => ({
@@ -303,23 +144,14 @@ export function ExistingMedia({
     [items]
   );
 
-  /**
-   * The files actually drawn: the pick, or all of them when nothing is picked (see the header).
-   *
-   * An INTERSECTION rather than a lookup of `picked`, so the order stays the list's own `createdAt
-   * desc` and a file that has gone cannot appear as a hole. `picked` is pruned against `items` above,
-   * so this can only be short when the reader asked for it to be.
-   */
   const shown = useMemo(() => {
     if (!picked.length) return items ?? [];
     const want = new Set(picked);
     return (items ?? []).filter((media) => want.has(media.id));
   }, [items, picked]);
 
-  // While any audio transcript is still in flight, re-fetch every 15s so the transcript block
-  // updates without a manual page reload. The interval is cleared as soon as nothing is in flight.
   const anyTranscriptInFlight = (items ?? []).some(
-    (media) => media.mediaType === "AUDIO" && IN_FLIGHT_TRANSCRIPT.has((media.transcriptStatus ?? "").toUpperCase())
+    (media) => (media.mediaType === "AUDIO" || media.mediaType === "VIDEO") && IN_FLIGHT_TRANSCRIPT.has((media.transcriptStatus ?? "").toUpperCase())
   );
 
   useEffect(() => {
@@ -333,21 +165,12 @@ export function ExistingMedia({
   if (items === null) return <p className="text-sm text-ink-muted">Loading attached media…</p>;
   if (items.length === 0) return <p className="text-sm text-ink-muted">No media attached to this record yet.</p>;
 
-  /**
-   * Attached but not on screen. Clamped at zero because `total` and `items` are written by two
-   * different paths — a delete decrements `total` locally, a poll rewrites both — and a transient
-   * negative would render "-1 older files are not listed here", which is worse than the lie this
-   * whole change removes.
-   */
   const hidden = Math.max(0, total - items.length);
 
   return (
     <section className="grid gap-3 rounded-lg border border-line-200 bg-field-100 p-4">
       <div>
         <h3 className="font-display font-bold text-lg text-ink">{title}</h3>
-        {/* `total` — the server's count — not `items.length`, which is only how many of them this
-            panel has asked for so far. Those two numbers were the same thing right up until a
-            record carried more than one page, which is precisely when the sentence mattered. */}
         <p className="mt-1 text-sm text-ink-muted">
           {total} file{total === 1 ? "" : "s"} already attached. Audio transcripts appear once processing finishes.
           {mayRemove ? " Use the ✕ on a file to remove it." : " Open a file to preview it, or download it."}
@@ -368,7 +191,6 @@ export function ExistingMedia({
           </p>
         ) : null}
         {error ? <p className="mt-1 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
-        {/* Why some ✕s and re-runs are held: one notice for the gallery, a word on each held tile. */}
         <HeldPostNotice
           refusal={mediaListNotice(shown.map(holdOf), "removed or re-transcribed")}
           id={heldNoticeId}
@@ -378,12 +200,6 @@ export function ExistingMedia({
         />
       </div>
       {items.length >= CHOOSER_FLOOR ? (
-        /*
-          WHICH FILES TO LOOK AT. `FieldBlock` is not used and neither is `Field`: this panel is not a
-          form and `Field` is a `<label>`, which forwards a stray click into the menu and slams it shut
-          after one pick. A `<span className="field-label">` plus an explicit `ariaLabel` is the
-          arrangement every themed dropdown outside a form uses here.
-        */
         <div className="grid gap-1">
           <span className="field-label">Which files to show</span>
           <MultiSelectDropdown
@@ -392,20 +208,10 @@ export function ExistingMedia({
             options={chooserOptions}
             placeholder={`All ${items.length} file${items.length === 1 ? "" : "s"}`}
             ariaLabel="Which attached files to show"
-            // The options are RECORDS — one per uploaded file — so the filter box is this call site's
-            // decision and not the option count's. A record with nine attachments would otherwise grow
-            // a filter box the same record with seven does not have.
             searchable
-            // A control that filters the list it sits above must not advance or ask to be confirmed:
-            // the effect is on screen as each file is ticked, and "Confirm" over a change that has
-            // already happened is a button that does nothing. Same reason `WorkshopScopeSelect` and the
-            // list funnels pass it.
             confirmOnSelect={false}
           />
           {picked.length ? (
-            // The count and the way back, together. A filtered gallery with no statement of how many
-            // files are being withheld is indistinguishable from a record that only has these — the
-            // exact reading this panel already refuses for its own page cap.
             <p className="text-xs text-ink-muted">
               Showing {shown.length} of the {items.length} files loaded.{" "}
               <button
@@ -425,22 +231,6 @@ export function ExistingMedia({
           )}
         </div>
       ) : null}
-      {/*
-        ONE COLUMN OF CARDS WAS THE DEPTH PROBLEM, AND THE 200px RAIL WAS WHY IT HAD TO BE ONE.
-
-        This list was a single `grid gap-3` stack whose every card was `sm:grid-cols-[200px_1fr]`:
-        a fixed 200px tile rail beside the provenance and the transcript. That is a horizontal card
-        already, and the right shape — what it could not do is sit beside another one, because a
-        rail measured in pixels leaves a half-width card about 90px for everything else. So a
-        record carrying a bulk import (the /media form takes a multi-file selection against one
-        linked record, and this panel pages to 100 at a time) was a hundred cards of vertical
-        scrolling on a laptop with room for two abreast — "the depth grows too long", exactly.
-
-        `MediaPreviewTile` now sizes its own thumbnail against the space it is handed rather than
-        against a fixed track, so the rail is gone and the card can be laid out two-up. TWO and not
-        three or four: each of these carries a `TranscriptBlock`, which is paragraphs of transcribed
-        speech and not a caption, and the column count has to be chosen for what a card holds.
-      */}
       <MediaCardGrid label={title} maxColumns={2}>
         {shown.map((media) => {
           const preview: PreviewMedia = {
@@ -458,9 +248,6 @@ export function ExistingMedia({
           };
           const hold = holdOf(media);
           return (
-            // `content-start` because the wrapping <li> stretches this card to its row's height so
-            // neighbours line up; without it the rows inside would stretch with it and float the
-            // transcript away from the file it belongs to.
             <div key={media.id} className="grid content-start gap-2 rounded-md border border-line-200 bg-field-50 p-2">
               <MediaPreviewTile
                 item={preview}
@@ -483,8 +270,6 @@ export function ExistingMedia({
                 <div className="text-xs text-ink-muted">
                   Uploaded by {media.uploadedBy?.name ?? "Unknown"} · {formatDateTime(media.createdAt)}
                 </div>
-                {/* An admin re-run replaces the row in place, so the 15s poll (and any later
-                    refresh) does not put the stale transcript back on screen a moment later. */}
                 <TranscriptBlock
                   media={media}
                   readOnly={readOnly}

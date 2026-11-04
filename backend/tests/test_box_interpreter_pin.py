@@ -1,30 +1,3 @@
-"""THE API BOX'S INTERPRETER IS PINNED IN TWO FILES, AND THEY MUST AGREE.
-
-Since 2026-10-09 every release venv on the EC2 box is built from upstream CPython, installed from
-a python-build-standalone release and checked against a pinned SHA-256 before it is unpacked — not
-from Ubuntu's python3.14 (3.14.4 on 26.04) and not from the deadsnakes PPA. The pin is four values:
-the CPython version, the python-build-standalone release (a date tag) that carries it, that
-release's asset URL, and the asset's SHA-256 from the release's SHA256SUMS. They are written twice,
-on purpose:
-
-* ``.github/workflows/deploy-backend.yml`` (``BOX_PYTHON_*`` in the deploy job's env), which
-  installs the interpreter on every deploy and builds the release venv from it, and
-* ``infra/terraform/user_data.sh``, which installs the same build at a rebuilt box's first boot,
-  before any deploy has run — the file cannot read the workflow, so it carries its own copy.
-
-A bump that reaches one file and not the other gives a rebuilt box one interpreter at first boot and
-another at its first deploy, and the deploy's venv step then builds every release on a different
-directory than the one the box was provisioned with. Nothing on the box would fail; it would just
-quietly stop being the configuration anybody reviewed. So this reads both files and fails the suite
-when they disagree, when the URL does not name the version and the release it sits beside, or when
-the digest is not a SHA-256 — the same checks the deploy's install step makes on the box, made here
-where a mistake costs a red test rather than a refused deploy.
-
-It also holds two limits that nothing else in CI checks: EC2's 16 KB cap on user data (`terraform
-validate` enforces it, and no workflow runs terraform), and that CI's backend jobs test the same
-minor the box runs. Reads files only; needs no database and imports nothing from ``app``.
-"""
-
 import re
 from pathlib import Path
 
@@ -38,8 +11,6 @@ CHECKS = ROOT / ".github" / "workflows" / "checks.yml"
 PYPROJECT = ROOT / "backend" / "pyproject.toml"
 
 KEYS = ("VERSION", "BUILD", "URL", "SHA256")
-# EC2 refuses user data over 16 KB, measured before base64; the AWS provider's validation is the
-# same number in bytes.
 EC2_USER_DATA_LIMIT = 16384
 
 
@@ -105,10 +76,6 @@ def test_both_files_install_into_the_same_versioned_directory():
 
 
 def test_both_files_byte_compile_the_standard_library_before_the_rename():
-    # The install_only tarball ships the stdlib as source (3 .pyc for 1,059 modules), and the units
-    # run as a user who cannot write __pycache__ into the root-owned install, so without this every
-    # API and queue-worker start recompiles every stdlib module it imports, inside the restart window
-    # (deploy-backend.yml's install step has the measurement). In staging, so a failure installs nothing.
     for path in (DEPLOY, USER_DATA):
         text = path.read_text(encoding="utf-8")
         compile_at = text.find("-m compileall")
@@ -122,7 +89,6 @@ def test_both_files_byte_compile_the_standard_library_before_the_rename():
 
 
 def test_no_apt_source_is_asked_for_python_any_more():
-    # The deadsnakes PPA was the 24.04 source until 2026-10-09; comments may still say why it went.
     for path in (DEPLOY, USER_DATA):
         text = path.read_text(encoding="utf-8")
         assert "add-apt-repository" not in text, f"{path.name} adds an apt repository again"
@@ -135,9 +101,6 @@ def test_no_apt_source_is_asked_for_python_any_more():
 
 
 def test_the_runner_builds_the_release_venv_with_the_boxs_exact_build():
-    # Since 2026-10-19 the runner builds the whole release venv (client included) and ships it, so
-    # it must use the box's own interpreter: the same pinned python-build-standalone archive,
-    # checked against the same SHA-256, at the same /opt/cpython path the venv's symlinks name.
     text = DEPLOY.read_text(encoding="utf-8")
     runner = text[text.index("- name: Install the pinned CPython on the runner") :]
     runner = runner[: runner.index("- name: Ship the runner-built venv")]

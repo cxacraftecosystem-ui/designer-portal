@@ -8,10 +8,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * "Links on sync": a card scanned offline into a stage's artisan box is resolved before the stage is
- * sent, or the stage is held with the server's sentence. Never dropped, never sent half-linked.
- */
 class PendingCardsTest {
     private val pending = "card:D-7K3QM-9XA2F-HQ"
     private val stage = JsonObject(

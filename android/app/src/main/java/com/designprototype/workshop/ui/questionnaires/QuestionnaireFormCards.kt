@@ -33,11 +33,6 @@ import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 
-/*
- * The form detail's newer cards (UNIFY §4.2, 22 Oct 2026): sessions on this form, its workshop
- * bindings, the overflow menu, the kind dialog, P16 and the deleted-form banner.
- */
-
 @Composable
 internal fun FormSurfaceCard(content: @Composable () -> Unit) {
     ElevatedCard(
@@ -54,10 +49,6 @@ private fun CardHeading(text: String) {
     Text(text, display = true, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
 }
 
-/**
- * Sessions on this form (v2 on): Start session is the primary action; with [onOpenSessions] the two
- * sit on one line. A form needs live questions to be answered; a deactivated one takes none.
- */
 @Composable
 internal fun FormSessionsCard(
     canStart: Boolean,
@@ -76,7 +67,6 @@ internal fun FormSessionsCard(
     }
 }
 
-/** Why a form cannot start a session now, or null when it can. */
 fun formSessionBlock(isActive: Boolean, deleted: Boolean, activeQuestions: Int, onPhoneOnly: Boolean): String? = when {
     deleted -> "Deleted — restore it to start a session."
     !isActive -> "Deactivated — can't record new answers."
@@ -85,7 +75,6 @@ fun formSessionBlock(isActive: Boolean, deleted: Boolean, activeQuestions: Int, 
     else -> null
 }
 
-/** A9: the design workshops this form is bound to, primary first. Read-only on this handset. */
 @Composable
 internal fun FormBindingsCard(lines: List<BindingLine>) {
     FormSurfaceCard {
@@ -101,7 +90,6 @@ internal fun FormBindingsCard(lines: List<BindingLine>) {
     }
 }
 
-/** The form's overflow menu. Nothing is drawn when there is nothing to offer. */
 @Composable
 internal fun FormOverflowMenu(items: List<FormMenuItem>, onPick: (FormMenuItem) -> Unit) {
     if (items.isEmpty()) return
@@ -124,7 +112,6 @@ internal fun FormOverflowMenu(items: List<FormMenuItem>, onPick: (FormMenuItem) 
     }
 }
 
-/** The kind (A8), as its own small dialog from the menu. Blank is "not stated". */
 @Composable
 internal fun FormKindDialog(current: String?, onDismiss: () -> Unit, onSave: (String) -> Unit) {
     var picked by remember { mutableStateOf(current.orEmpty()) }
@@ -149,7 +136,6 @@ internal fun FormKindDialog(current: String?, onDismiss: () -> Unit, onSave: (St
     )
 }
 
-/** P16: Delete this form? · Admins can restore it from Deleted. · Cancel · Delete. */
 @Composable
 internal fun FormDeleteDialog(busy: Boolean, onDismiss: () -> Unit, onDelete: () -> Unit) {
     AlertDialog(
@@ -161,7 +147,6 @@ internal fun FormDeleteDialog(busy: Boolean, onDismiss: () -> Unit, onDelete: ()
     )
 }
 
-/** A deleted form opened from Deleted: one sentence and, for its author or a content admin, Restore. */
 @Composable
 internal fun DeletedFormBanner(mayRestore: Boolean, busy: Boolean, onRestore: () -> Unit) {
     FormSurfaceCard {

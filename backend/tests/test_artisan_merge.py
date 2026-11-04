@@ -1,10 +1,3 @@
-"""Merging two records of one artisan, and undoing it (services/artisan_merge.py).
-
-Database-backed and service-level: every test is ONE ``asyncio.run`` of a coroutine that connects
-``db``, does its work and disconnects (tests/conftest.py explains why nothing else is safe here).
-Skips itself unless DATABASE_URL points at a local database.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -60,13 +53,12 @@ def test_merge_moves_every_row_and_undo_puts_the_world_back():
         result = await _merge(pair, survivor, user=user, choices={"name": gone_side, "notes": "BOTH"})
         assert result["merge"]["mergedId"] == gone.id and result["survivorId"] == keep.id
 
-        # The merged record is gone; everything it held is on the survivor.
         assert await db.artisan.find_unique(where={"id": gone.id}) is None
         after = await db.artisan.find_unique(where={"id": keep.id})
         assert after.name == gone.name
-        assert after.phone == "9829012345"  # the survivor's was empty, so the other side's is the default
+        assert after.phone == "9829012345"
         assert "Keeps the old blocks." in after.notes and "Prints dabu on Tuesdays." in after.notes
-        assert after.aadhaarFingerprint == ds.fp(t)  # unique key taken from the deleted record
+        assert after.aadhaarFingerprint == ds.fp(t)
         assert after.pehchanCardNumber == f"RJ{t}"
         assert after.extraMetadata["specialisation"] == "Dabu" and after.extraMetadata["age"] == "about 50"
         assert (await db.productdocumentation.find_unique(where={"id": w["product"].id})).artisanId == keep.id
@@ -77,7 +69,7 @@ def test_merge_moves_every_row_and_undo_puts_the_world_back():
         assert await db.toolartisan.count(where={"artisanId": keep.id}) == 2
         assert await db.questionnairesectionstatus.count(where={"artisanId": keep.id}) == 2
         s1 = await db.questionnairesectionstatus.find_first(where={"artisanId": keep.id, "sectionId": w["s1"].id})
-        assert s1.status == "COMPLETED"  # the survivor's row wins (one of the three states, owner amendment 2)
+        assert s1.status == "COMPLETED"
         assert await db.dataaccessscopeitem.count(where={"recordId": keep.id}) == 2
         assert await db.recordaccesstoken.count(where={"recordId": keep.id}) == 1
         assert await db.entrycomment.count(where={"recordId": keep.id}) == 1
@@ -88,7 +80,6 @@ def test_merge_moves_every_row_and_undo_puts_the_world_back():
         assert sorted(len(x.artisanIds) for x in tasks) == [1, 2]
         i_gone = await db.questionnaireinterview.find_unique(where={"id": w["i_gone"].id})
         assert keep.id in i_gone.artisanSetKey and gone.id not in i_gone.artisanSetKey
-        # prisma-client-py has no JSON-path filter, so the merge revision is picked out here.
         revisions = await db.recordrevision.find_many(where={"recordId": keep.id})
         revision = next(
             (r for r in revisions if isinstance(r.changes, dict) and (r.changes.get("merge") or {}).get("mergedId") == gone.id),
@@ -96,7 +87,6 @@ def test_merge_moves_every_row_and_undo_puts_the_world_back():
         )
         assert revision is not None and revision.changes["merge"]["fields"]["name"] == gone_side
 
-        # A merged id still leads somewhere.
         assert await artisan_merge.resolve(gone.id) == keep.id
         payload = {"artisanId": gone.id, "artisanIds": [gone.id, keep.id], "linkedRecordType": "artisan", "linkedRecordId": gone.id}
         await artisan_merge.redirect_payload(payload)
@@ -177,7 +167,6 @@ def test_undo_refusals():
     async def scenario():
         t = ds.tag()
         user = await ds.admin(t)
-        # Expired.
         a = await ds.artisan(user, f"Kamal {t}")
         b = await ds.artisan(user, f"Kamal {t}")
         pair = await ds.make_pair(a.id, b.id)
@@ -186,13 +175,11 @@ def test_undo_refusals():
         with pytest.raises(HTTPException) as caught:
             await artisan_merge.undo(result["merge"]["id"], user=user, settings=ds.NO_PEER)
         assert caught.value.status_code == 409 and _code(caught.value) == "merge_undo_expired"
-        # Purge clears the snapshot; the redirect survives.
         await artisan_merge.purge()
         row = await db.artisanmerge.find_unique(where={"id": result["merge"]["id"]})
         assert row.snapshot is None and row.moves is None and row.snapshotPurgedAt is not None
         assert await artisan_merge.resolve(b.id if pair.artisanAId == a.id else a.id) is not None
 
-        # Chained: the survivor was merged again.
         c = await ds.artisan(user, f"Mohan {t}")
         d = await ds.artisan(user, f"Mohan {t}")
         e = await ds.artisan(user, f"Mohan {t}")
@@ -200,12 +187,11 @@ def test_undo_refusals():
         first = await _merge(p1, ds.sides(p1, c.id), user=user)
         p2 = await ds.make_pair(c.id, e.id)
         await _merge(p2, ds.sides(p2, e.id), user=user)
-        assert await artisan_merge.resolve(d.id) == e.id  # two hops
+        assert await artisan_merge.resolve(d.id) == e.id
         with pytest.raises(HTTPException) as caught:
             await artisan_merge.undo(first["merge"]["id"], user=user, settings=ds.NO_PEER)
         assert _code(caught.value) == "merge_undo_later_first"
 
-        # Conflict: the restored fingerprint is now held by someone else.
         f = await ds.artisan(user, f"Sohan {t}")
         g = await ds.artisan(user, f"Sohan {t}", aadhaarFingerprint=ds.fp("conf" + t), aadhaarLast4="1111")
         p3 = await ds.make_pair(f.id, g.id)
@@ -236,7 +222,6 @@ def test_every_blocker_refuses_with_409():
             ({"pehchanCardNumber": f"P1{t}"}, {"pehchanCardNumber": f"P2{t}"}, "different_pehchan"),
         ]
         if aadhaar_fingerprint.LEGACY_COLUMN_PRESENT:
-            # Only while the legacy column exists: once it is dropped no row can be "not reached".
             cases.append(({"aadhaarNumber": f"9{t[:3]}0000{t[3:7]}"[:12]}, {}, "aadhaar_backfill_pending"))
         for a_extra, b_extra, expect in cases:
             a, b, pair = await blocked(a_extra, b_extra, expect)
@@ -260,7 +245,6 @@ def test_every_blocker_refuses_with_409():
             await _merge(pair, "A", user=user)
         assert caught.value.status_code == 409
 
-        # Interview set collision, resolved through the existing interview merge.
         a, b, pair = await blocked({}, {}, "interview")
         keep_side = ds.sides(pair, a.id)
         w = await db.workshop.create(data={"title": f"WI {t}", "date": datetime.now(UTC), "place": "Bagru", "createdById": user.id})

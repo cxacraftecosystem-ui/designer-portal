@@ -5,13 +5,6 @@ import { expect, test } from "@playwright/test";
 
 import { actionGroupClass, actionGroupShape } from "@/components/ui/actionGroupLayout";
 
-/*
-  THE BUTTON-ROW RULE, held in one place. One button on its line is centred; two share one line and
-  never wrap past it; three or more stack full width on a phone and become one row of pills above
-  `sm`. The three shared surfaces that draw button rows — the page header, a list row and a dialog
-  footer — must route through the primitive, so the rule cannot drift screen by screen.
-*/
-
 const ROOT = join(__dirname, "..");
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
@@ -31,7 +24,6 @@ test("one button is centred, and a pinned primary may span a phone's width", () 
 });
 
 test("in a list row or table cell a lone action follows the column's alignment", () => {
-  // RowActions is right-aligned; a row with one action must not sit centred beside rows of three.
   expect(actionGroupClass(1, "end", false, true)).toContain("justify-end");
   expect(actionGroupClass(1, "end", false, true)).not.toContain("justify-center");
   expect(actionGroupClass(1, "start", false, true)).toContain("justify-start");
@@ -44,7 +36,6 @@ test("two buttons share one line and never wrap", () => {
   expect(two).toContain("max-sm:[&>*]:flex-1");
   expect(two).toContain("max-sm:[&>*]:min-w-0");
   expect(actionGroupClass(2, "end")).toContain("justify-end");
-  // From sm up too, a long pair in a narrow card wraps inside its buttons instead of overflowing.
   expect(two).toContain(" [&>*]:min-w-0 ");
   expect(two).toContain("[&>*]:whitespace-normal");
   expect(two).toContain("max-w-full");

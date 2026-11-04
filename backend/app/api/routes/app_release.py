@@ -1,14 +1,3 @@
-"""Android releases: what the newest build is, and how anyone gets hold of it.
-
-**One resolver, not two.** The phone's over-the-air check and the web portal's download link are the
-same question asked by two clients — "which build is current?" — and they used to answer it
-separately: the phone asked this API, while the browser was handed a URL that had been *copied* into
-a page. Anything copied drifts. So both now go through :func:`_latest_release`, and the download is a
-fixed, versionless address (``/app/download``) that re-resolves on every click instead of a link to
-one particular build. A page left open overnight, a bookmarked link, a URL pasted into a chat — all
-of them fetch whatever is newest at the moment they are used, because none of them names a build.
-"""
-
 import logging
 from typing import Any
 
@@ -26,55 +15,24 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/app", tags=["app"])
 
-# The type Android's package installer expects. Sent explicitly because a browser handed
-# application/octet-stream may offer to "open" the file with something else, and because the type
-# stored on the object is only ever as right as whatever uploaded it.
 APK_MEDIA_TYPE = "application/vnd.android.package-archive"
 
 
 async def _latest_release() -> Any | None:
-    """THE published release — the single definition of "latest" this API has.
-
-    Highest version code wins, because that is the number devices compare; the publish timestamp only
-    breaks a tie. Every caller below goes through here, so the update prompt on a phone and the
-    download button in a browser can never be talking about different builds.
-    """
     return await db.apprelease.find_first(
         order=[{"versionCode": "desc"}, {"publishedAt": "desc"}],
     )
 
 
 def _durable_url(release: Any) -> str | None:
-    """The long-lived, unsigned URL for a release's APK — what an installed phone downloads.
-
-    Derived from the object key rather than read from the stored ``url`` column. The column is a
-    convenience copy written at publish time and can only ever be as correct as the storage config
-    was on that day; the key is the fact. The column is the fallback for the reverse case — a
-    deployment with no public base URL configured, where nothing can be derived.
-    """
     key = getattr(release, "objectKey", None)
     return (public_url_for_key(key) if key else None) or getattr(release, "url", None)
 
 
 def _download_filename(release: Any) -> str:
-    """``DesignWorkshop_Android-App_Release-Build_v1.1.17.apk`` — the version, in the name, in the user's Downloads folder.
-
-    Whoever is sideloading this is comparing it against what is already on the phone, and often
-    keeping several. A name that carries the version answers "which build is this?" without them
-    having to install it and look.
-
-    Cosmetic only, which is why the rebrand could touch it: this string is handed to S3 as a
-    ``response-content-disposition`` override on a signed URL, so it names the file the browser
-    writes and nothing else. No stored object key, no published release row and no installed APK
-    is addressed by it, so an older build downloaded after this change simply arrives under the
-    new name. The one thing that must stay in step is the filename quoted to the user in
-    ``frontend/components/settings/GetTheAppPanel.tsx`` — that panel promises this exact pattern,
-    and a promise that no longer matches the download is how a user concludes the button is broken.
-    """
     version = str(
         getattr(release, "versionName", "") or getattr(release, "versionCode", "") or "latest"
     )
-    # NAMING 2.1: DesignWorkshop_Android-App_Release-Build_v1.1.17.apk
     return naming.export_filename(
         "Android-App", "Release-Build", "apk", dated=False, sequence=f"v{version}"
     )
@@ -85,28 +43,6 @@ async def publish_release(
     payload: AppReleasePublishRequest,
     current_user: Any = Depends(require_master_admin),
 ) -> dict[str, Any]:
-    """Master-admin only: record a new app release. The APK has already been uploaded to object
-    storage (via /media/presign) by the publishing device; this stores the version metadata so other
-    devices can discover and self-install it.
-
-    The version code is stored AS SENT (2026-10-21). It used to be re-derived from the version name,
-    but the name restarted at 0.0.1 while the code must keep rising (Android will not install a
-    lower code over an installed app), so the code is set in android/app/build.gradle.kts and every
-    publisher sends it. The publishers refuse a code at or below the published one.
-
-    The download URL is critical: other devices only show the forced-update prompt when the release
-    carries a non-blank URL. So if the client didn't send one, derive it from the object key here — a
-    release must never be published without a way to download it, or the push silently does nothing.
-
-    ``sizeBytes`` is stored EXACTLY AS SENT too: only the
-    publisher has the file, and the server has no way to measure the object it was handed a key for
-    without a HEAD it does not make anywhere else on this route. What it therefore records is the
-    publisher's claim about the bytes it uploaded, which is precisely what a downloading phone needs
-    to compare against: the two are the same measurement of the same file, taken by the process that
-    had it. It is optional, and ``None`` records no claim (see the schema for why it may never become
-    required). Nothing else on this route reads it — the check lives on the device, in
-    ``android/…/data/AppUpdateIntegrity.kt``.
-    """
     url = payload.url or public_url_for_key(payload.objectKey)
     created = await db.apprelease.create(
         data={
@@ -124,19 +60,6 @@ async def publish_release(
 
 @router.get("/release/latest")
 async def latest_release(_: Any = Depends(get_current_user)) -> dict[str, Any]:
-    """The current release (highest versionCode), or an empty object when none has been published.
-
-    The URL is recomputed from the object key on the way out (see :func:`_durable_url`), so a row
-    saved with a blank or stale ``url`` column still tells a device where the APK is — a forced-update
-    check must never skip a real release over a bookkeeping detail.
-
-    ``sizeBytes`` rides out with the rest of the row through ``jsonable_encoder``, additively: it is
-    ``None`` on every release published before the column existed, and a client that has never heard
-    of the key ignores it (``ApiClient.json`` on Android, ``apiFetch`` in the browser, both lenient
-    about unknown fields). The phone compares it against the file it actually downloaded — see
-    ``android/…/data/AppUpdateIntegrity.kt`` for why a length rather than a hash, and why ``None``
-    must go on downloading exactly as before rather than refusing.
-    """
     release = await _latest_release()
     if not release:
         return {}
@@ -149,37 +72,6 @@ async def latest_release(_: Any = Depends(get_current_user)) -> dict[str, Any]:
 
 @router.get("/download")
 async def download_latest_apk() -> RedirectResponse:
-    """Redirect to the newest published APK. This is the address the web portal's download button
-    points at, and it deliberately names no version.
-
-    **Unauthenticated, on purpose.** A browser cannot attach a bearer token to a plain link
-    navigation, so an authenticated endpoint here would mean a button that only works via JavaScript
-    — and it would be guarding nothing: the object this redirects to is world-readable already,
-    because every phone in the field fetches exactly that URL with no credentials at all when it
-    self-updates.
-
-    **Uncacheable, on purpose — and that has to include the failures.** This response is the
-    only moving part in the whole arrangement: the link is fixed and the bytes are immutable, so an
-    intermediary that cached *this* redirect for a day would pin every new visitor to yesterday's
-    build and reintroduce the exact staleness the fixed address exists to prevent.
-
-    Until 2026-08-23 only the *success* path said so in a header, and the 404 and 503 below said
-    nothing at all — which got it backwards, because those two are the responses whose staleness
-    actually costs something. There is a CloudFront distribution in front of this API, and the
-    404 IS THE ENTIRE PRE-RELEASE STATE OF THIS ENDPOINT: it is what every visitor and every
-    release-pipeline poll receives for as long as nothing has been published, i.e. exactly the
-    window in which a caching intermediary has every opportunity to pick it up. Cache it and the
-    first real release is invisible to the world for the whole TTL, while
-    ``.github/workflows/publish-android.yml``'s GUARD 6 — which polls this address to prove the
-    release reached the public — sees 404 for two minutes and then announces that the download
-    button on the website is broken, over a release that is perfectly fine. A guard that cries wolf
-    on a correct publish is a guard somebody deletes.
-    The 503 is the same shape of problem one step further on: it means a release row exists whose
-    object cannot be located, which is a transient operational state that must not be pinned either.
-    """
-    # Both refusals below carry the same no-store the redirect does. See the docstring: the 404 is
-    # the pre-release state of this endpoint, so it is the one response an intermediary has hours to
-    # cache, and pinning it hides the first release from everybody who asks.
     _NO_STORE = {"Cache-Control": "no-store, max-age=0"}
 
     release = await _latest_release()
@@ -194,14 +86,10 @@ async def download_latest_apk() -> RedirectResponse:
     target: str | None = None
     if key:
         try:
-            # Signed, so S3 will honour the filename and content type we ask for; an anonymous GET
-            # carrying those overrides is refused outright.
             target = presign_get_url(
                 key, filename=_download_filename(release), mime_type=APK_MEDIA_TYPE
             )
         except Exception:
-            # Misconfigured storage credentials must cost the visitor a tidy filename, not the
-            # download itself — the unsigned URL still serves the same bytes.
             logger.exception(
                 "Could not sign a download URL for release %s", getattr(release, "id", "?")
             )

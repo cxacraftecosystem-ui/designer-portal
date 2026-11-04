@@ -55,13 +55,6 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-/*
- * The handset's half of the 2026-10-17 capture work, drawn by [StageScreen]: suggestions, attendance,
- * "Log today", the market-survey sittings, one row per photo, the computed counts, the carry from a
- * chosen sketch or prototype, and a photo's location. Words match the web character for character.
- */
-
-/** Widgets this build draws itself; a field declaring one is left out of the generic form. */
 internal val DW_KNOWN_WIDGETS = setOf("ATTENDANCE")
 
 internal const val DW_ROSTER_STAGE = "WORKSHOP_PLAN_PARTICIPANTS_OPENING"
@@ -70,7 +63,6 @@ internal const val DW_CLOSING_STAGE = "INSPECTION_CLOSING"
 internal const val DW_SETUP_STAGE = "WORKSHOP_SETUP"
 internal const val DW_PROTOTYPE_STAGE = "PROTOTYPE_DEVELOPMENT"
 
-/** B11: the collections that take one row per selected photo, and the box each file fills. */
 internal val DW_ROWS_FROM_PHOTOS = mapOf(
     "SKETCH_DEVELOPMENT" to Triple("sketch", "image", "sketch"),
     "MARKET_SURVEY_CAPTURE" to Triple("competitorProduct", "photo", "product"),
@@ -107,7 +99,6 @@ private fun CaptureLine(title: String, detail: String, actions: @Composable () -
     }
 }
 
-/** The server's one-tap suggestions for this stage. Hidden when there is nothing to offer. */
 @Composable
 internal fun DwStageAssistCard(
     suggestions: List<DwAssistSuggestionDto>,
@@ -135,7 +126,6 @@ private fun shortDay(iso: String?): String = runCatching {
     LocalDate.parse(iso).format(DateTimeFormatter.ofPattern("d MMM", Locale.forLanguageTag("en-IN")))
 }.getOrDefault("")
 
-/** C7: one tick-list per workshop day, starting "All present". Writes `absentDays` only. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun DwAttendanceCard(
@@ -156,7 +146,6 @@ internal fun DwAttendanceCard(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.field.muted,
         )
-        // A choice between named days, not an action row.
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -209,7 +198,6 @@ internal fun DwAttendanceCard(
     }
 }
 
-/** A15: "Log today" on each prototype, and the last stage name again in one tap. */
 @Composable
 internal fun DwLogTodayCard(
     prototypes: List<Pair<String, Map<String, JsonElement>>>,
@@ -254,7 +242,6 @@ internal fun DwLogTodayCard(
     }
 }
 
-/** C8: the linked questionnaire sittings, counted and summarised — never copied in as rows. */
 @Composable
 internal fun DwSittingsCard(sittings: List<DwAssistSittingDto>) {
     if (sittings.isEmpty()) return
@@ -270,7 +257,6 @@ internal fun DwSittingsCard(sittings: List<DwAssistSittingDto>) {
     }
 }
 
-/** B11: one row per selected photo; each is numbered (C6) and left unnamed until named. */
 @Composable
 internal fun DwRowsFromPhotosCard(
     title: String,
@@ -293,7 +279,6 @@ internal fun DwRowsFromPhotosCard(
     }
 }
 
-/** C7/C8: a count the stage works out for itself, where the typed box used to be. */
 @Composable
 internal fun DwComputedCount(field: FieldDto, value: JsonElement?) {
     val shown = dwDisplayText(value).ifBlank { "—" }
@@ -319,7 +304,6 @@ internal fun DwComputedCount(field: FieldDto, value: JsonElement?) {
     }
 }
 
-/** C10: "Use from the sketch" while a mapped box is blank; the intended size is shown, never copied. */
 @Composable
 internal fun DwRefSuggestion(
     entity: EntityDto,
@@ -381,10 +365,6 @@ internal fun DwRefSuggestion(
     }
 }
 
-/**
- * C12: the venue location was left empty on a stage 1 save. A photo taken at the venue fills it in
- * one tap; the box itself is in the form below.
- */
 @Composable
 internal fun DwVenuePrompt(onUse: (LocationRequest) -> Unit) {
     CaptureCard("Add the venue location") {
@@ -393,7 +373,6 @@ internal fun DwVenuePrompt(onUse: (LocationRequest) -> Unit) {
     }
 }
 
-/** A21: the position and time a photo carries, read from its EXIF; null when it has none. */
 internal data class DwPhotoPosition(val latitude: Double, val longitude: Double, val takenAt: String?)
 
 internal fun dwPhotoPosition(context: android.content.Context, uri: Uri): DwPhotoPosition? = runCatching {
@@ -408,7 +387,6 @@ internal fun dwPhotoPosition(context: android.content.Context, uri: Uri): DwPhot
     }
 }.getOrNull()
 
-/** "2026:10:12 10:42:05" as "12 Oct 2026, 10:42", or null. Same wording as the web's. */
 internal fun dwExifTime(raw: String?): String? {
     val match = Regex("^(\\d{4})[:-](\\d{2})[:-](\\d{2})[ T](\\d{2}):(\\d{2})").find(raw.orEmpty()) ?: return null
     val (y, m, d, hh, mm) = match.destructured
@@ -418,7 +396,6 @@ internal fun dwExifTime(raw: String?): String? {
     return "${d.toInt()} $month $y, $hh:$mm"
 }
 
-/** A21 on the handset: pick a photo, read where it was taken, apply it on a tap. */
 @Composable
 internal fun DwLocationFromPhoto(enabled: Boolean, onUse: (LocationRequest) -> Unit) {
     val context = LocalContext.current
@@ -458,7 +435,6 @@ internal fun DwLocationFromPhoto(enabled: Boolean, onUse: (LocationRequest) -> U
     }
 }
 
-/** Apply one suggestion to the screen's state: a FILL into blank boxes, or ADD_ROWS appended. */
 internal fun dwApplySuggestion(
     suggestion: DwAssistSuggestionDto,
     singleton: Map<String, JsonElement>,

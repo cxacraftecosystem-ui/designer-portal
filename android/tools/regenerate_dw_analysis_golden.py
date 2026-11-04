@@ -75,9 +75,6 @@ def compute(table: dict) -> dict:
             )
         )
 
-    # `position_competitors` is exercised on its own as well as through `analyse`, because the
-    # category-matched / pooled fallback is chosen by a sample the whole-workshop path cannot be made
-    # to hold on demand.
     for case in table["competitorPositions"]:
         observations = [
             market_analysis.PriceObservation(
@@ -119,10 +116,6 @@ def compute(table: dict) -> dict:
 
 
 def serialise(payload: dict) -> str:
-    # `sort_keys` so a re-run reorders nothing and a diff shows only what actually moved, and a
-    # trailing newline so the file ends like a text file. The one-space indent is not a preference:
-    # it is what the committed golden already uses, and a regeneration that reformatted all 4,109
-    # lines would bury the two that actually changed under a whole-file diff nobody can review.
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=1) + "\n"
 
 
@@ -146,7 +139,6 @@ def main() -> int:
         if existing == computed:
             print(f"golden is current: {len(computed)} cases match today's Python")
             return 0
-        # Named case by case. "The golden has drifted" is not something anybody can act on.
         drifted = sorted(
             key for key in set(existing) | set(computed)
             if existing.get(key) != computed.get(key)

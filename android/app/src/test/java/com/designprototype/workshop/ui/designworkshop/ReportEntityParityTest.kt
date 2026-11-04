@@ -30,37 +30,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * HOW ONE RECORD IS LAID OUT ON THE HANDSET, AGAINST `ReportBuilder._render_narrative`.
- *
- * [ReportDocumentTest] asserts that the words a designer typed are IN the file, deliberately and
- * correctly saying nothing about order or structure. That is why it passed through five divergences
- * at once, every one of them in `renderEntity`/`renderCollection`, and every one of them producing
- * a document that is legible, complete-looking and NOT the document the office generates from the
- * same workshop:
- *
- *   1. all 98 RICH_TEXT fields printed with no label, so eight consecutive answers on stage 2 ran
- *      together as anonymous prose where the server prints eight numbered sub-headings;
- *   2. an unfilled REQUIRED field printed nothing, where `_printable` substitutes "Not recorded." —
- *      in the body AND in a table cell, so the phone's copy understated incompleteness while the
- *      completeness annexure in the same file stated it;
- *   3. the blocks came out in this file's own order (prose, metrics, grid, photographs) rather than
- *      the server's (grid, prose, bullets, metrics, photographs), with a card's photographs last
- *      where `_render_cards` puts them first;
- *   4. a table drew EVERY TABLE_COLUMN, ignoring `_table_columns`' `[:6]`, and its per-row leftover
- *      block keyed on the ROLE rather than on membership so the overflow could not land there
- *      either;
- *   5. `imagesOf` had only the first of `_images`' two passes, so a record whose photograph belongs
- *      to the row a REF points at printed no picture at all.
- *
- * These assertions therefore ARE about structure and order, which is the opposite of
- * [ReportDocumentTest]'s stated rule — and on purpose. The thing that must never regress here is not
- * "the words are present" but "the two copies of one workshop are the same document": same heading
- * tree, same contents page, same section numbering, same number of plates.
- */
 class ReportEntityParityTest {
-
-    // ── The registry, cut to the shapes that diverged ────────────────────────────────────────────
 
     private fun richField(key: String, label: String, role: String, required: Boolean = false) =
         FieldDto(key = key, label = label, type = "RICH_TEXT", reportRole = role, required = required)
@@ -68,16 +38,6 @@ class ReportEntityParityTest {
     private fun textField(key: String, label: String, role: String = "KEY_VALUE", required: Boolean = false) =
         FieldDto(key = key, label = label, type = "TEXT", reportRole = role, required = required)
 
-    /**
-     * A photograph field, in the role the registry actually gives one.
-     *
-     * IT USED TO SAY `reportRole = "MEDIA"`, AND THAT IS HOW THE REGRESSION GOT PAST THIS FILE.
-     * `ReportRole` declares no MEDIA; every photograph field in `stage_definitions` is GALLERY (the
-     * `photos(...)` helper emits it, and the sketch entity writes it by hand). MEDIA is an unknown
-     * role, so it exercised the deliberate unknown-role degrade instead of the branch the registry
-     * takes — and the one REQUIRED GALLERY field in the registry, `sketch.image`, had no fixture in
-     * this file at all. A fixture naming a role the server cannot emit tests the port against nothing.
-     */
     private fun imageField(key: String, label: String, required: Boolean = false) =
         FieldDto(
             key = key, label = label, type = "IMAGE",
@@ -89,21 +49,18 @@ class ReportEntityParityTest {
         label: String,
         model: String,
         role: String = "KEY_VALUE",
-        /** The server's own `REFERENCE_HYDRATION` for this field, as `field_to_dict` publishes it. */
         hydration: Map<String, String> = emptyMap(),
     ) = FieldDto(
         key = key, label = label, type = "REF", refModel = model, reportRole = role,
         refHydration = hydration,
     )
 
-    /** A FILE / AUDIO / VIDEO field - the three media types with no picture path. */
     private fun attachmentField(key: String, label: String, type: String, required: Boolean = false) =
         FieldDto(key = key, label = label, type = type, reportRole = "KEY_VALUE", required = required)
 
     private fun metricField(key: String, label: String, unit: String = "") =
         FieldDto(key = key, label = label, type = "INT", reportRole = "METRIC", unit = unit)
 
-    /** `{"blocks":[{"kind":…,"spans":[{"text":…}]}]}` — the shape `rich_text.to_json` writes. */
     private fun rich(vararg blocks: Pair<String, String>): JsonElement = buildJsonObject {
         putJsonArray("blocks") {
             blocks.forEach { (kind, text) ->
@@ -131,12 +88,6 @@ class ReportEntityParityTest {
         stages = mapOf(stageKey to StageDraft(stageId = stageKey, values = values, rows = rows)) + extra,
     )
 
-    /**
-     * Every media id resolves, so the ordering assertions can see the photographs.
-     *
-     * A fixed 800×600 ref rather than a real file: nothing here touches the filesystem, and the
-     * writers are not under test — where the blocks SIT is.
-     */
     private val everyImageResolves: (String) -> ImageRef? =
         { id -> ImageRef(source = "/dev/null/$id", widthPx = 800, heightPx = 600) }
 
@@ -156,8 +107,6 @@ class ReportEntityParityTest {
         generatedAt = "2026-02-10T09:00:00Z",
     )
 
-    // ── Reading the built document ───────────────────────────────────────────────────────────────
-
     private fun runText(runs: List<Run>) = runs.joinToString("") { it.text }
 
     private fun textOf(block: Block): String = when (block) {
@@ -166,8 +115,6 @@ class ReportEntityParityTest {
         is BulletListBlock -> block.items.joinToString("\n") { runText(it) }
         is KeyValueBlock -> block.pairs.joinToString("\n") { (label, runs) -> "$label: ${runText(runs)}" }
         is TableBlock -> block.rows.joinToString("\n") { row -> row.joinToString(" | ") { runText(it) } }
-        // Included where [ReportDocumentTest]'s reader leaves it out, because a METRIC field is one
-        // of the four passes under test and a reader that cannot see it cannot prove it survived.
         is MetricRowBlock -> block.metrics.joinToString("\n") { (label, value, unit) -> "$label: $value $unit".trim() }
         else -> ""
     }
@@ -175,25 +122,15 @@ class ReportEntityParityTest {
     private fun printedText(document: ReportDocument): String =
         document.blocks.joinToString("\n") { textOf(it) }
 
-    /** Every heading in the file, at any level, without its section number. */
     private fun headings(document: ReportDocument): List<String> =
         document.blocks.filterIsInstance<HeadingBlock>().map { runText(it.runs).trim() }
 
-    /**
-     * The block kinds a document is made of, in order, as a compact string.
-     *
-     * An ordering assertion has to name the ORDER, and a list of class names is the honest way to
-     * write it down: a diff on failure shows exactly which block moved.
-     */
     private fun shape(document: ReportDocument): List<String> =
         document.blocks.map { it::class.simpleName.orEmpty() }
 
     private fun indexOfFirst(document: ReportDocument, kind: String): Int =
         shape(document).indexOfFirst { it == kind }
 
-    // ── 1. Every printed field carries its label ─────────────────────────────────────────────────
-
-    /** Stage 2's real shape, cut down: several NARRATIVE answers and one BULLETS, all RICH_TEXT. */
     private fun stageTwoSchema() = schemaOf(
         StageDto(
             number = 2, key = "INTRODUCTORY_ADMIN_DOCUMENTATION",
@@ -213,9 +150,6 @@ class ReportEntityParityTest {
 
     @Test
     fun `every narrative answer prints under its own field label`() {
-        // Short answers, so both take the `"Label:"` lead-in rather than the heading — the branch
-        // `_render_narrative` picks when the flattened text is 160 characters or fewer and the field
-        // produced one block.
         val document = build(
             stageTwoSchema(),
             draftOf(
@@ -228,8 +162,6 @@ class ReportEntityParityTest {
         )
         val printed = printedText(document)
 
-        // BEFORE: the two paragraphs printed one after the other with nothing between them, so an
-        // officer could not tell which pro-forma question either answered.
         assertTrue("the acknowledgement is unlabelled:\n$printed", printed.contains("Acknowledgement:"))
         assertTrue("the purpose is unlabelled:\n$printed", printed.contains("Purpose:"))
         assertTrue(printed.contains("The weavers gave a fortnight."))
@@ -238,8 +170,6 @@ class ReportEntityParityTest {
 
     @Test
     fun `a long narrative answer takes a sub-heading instead of a lead-in`() {
-        // `len(text) > 160 or len(blocks) > 1` — the exact rule, so the heading tree and therefore
-        // the contents page match the office's copy.
         val long = "The cluster's weavers gave a fortnight of their time to this workshop, and the " +
             "opening session ran over by two hours because every household wanted to show the " +
             "sarees they had woven for the last co-operative order."
@@ -278,8 +208,6 @@ class ReportEntityParityTest {
             ),
         )
 
-        // `_render_narrative` emits the heading for a BULLETS field unconditionally — a list with no
-        // title above it reads as a continuation of the paragraph before it.
         assertTrue(
             "the bulleted answer is unheaded: ${headings(document)}",
             headings(document).contains("Programme objectives"),
@@ -289,8 +217,6 @@ class ReportEntityParityTest {
             document.blocks.filterIsInstance<BulletListBlock>().single().items.map(::runText),
         )
     }
-
-    // ── 2. An unfilled REQUIRED field says so ────────────────────────────────────────────────────
 
     @Test
     fun `an unfilled required field prints Not recorded and an unfilled optional one prints nothing`() {
@@ -316,9 +242,6 @@ class ReportEntityParityTest {
             )
         )
 
-        // A missing REQUIRED field is information — it says the record is incomplete. A missing
-        // optional one is not, and printing the note for every unfilled Advanced field would bury
-        // the report in negatives.
         assertTrue("the required gap is invisible:\n$printed", printed.contains("Materials: Not recorded."))
         assertFalse("an optional gap must stay silent:\n$printed", printed.contains("Remarks"))
         assertTrue(printed.contains("Supervisor: B. Meher"))
@@ -326,9 +249,6 @@ class ReportEntityParityTest {
 
     @Test
     fun `an unfilled required TABLE_COLUMN prints the note in its cell, not a blank`() {
-        // FOLLOW_UP and not PROTOTYPE_DEVELOPMENT: DCH_STANDARD overrides stage 13's presentation to
-        // CARDS, so a table never forms there and the assertion would test nothing. Stage 22 is left
-        // on AUTO, which resolves to TABLE the moment the registry names a column.
         val schema = schemaOf(
             StageDto(
                 number = 22, key = "FOLLOW_UP", title = "Follow up",
@@ -354,9 +274,6 @@ class ReportEntityParityTest {
             ),
         )
 
-        // `_cell_runs`'s docstring has always warned that routing an empty rich value through
-        // `plain_runs` "would replace the note with a blank cell — turning a visible gap into an
-        // invisible one". It was a true statement about a note this path never produced.
         val table = document.blocks.filterIsInstance<TableBlock>().single()
         assertEquals(
             listOf("PT-01", "Not recorded."),
@@ -366,9 +283,6 @@ class ReportEntityParityTest {
 
     @Test
     fun `an unfilled required rich-text field is not swallowed by the empty-document check`() {
-        // The narrow trap: a RICH_TEXT value that exists but is textually empty must fall through to
-        // the note rather than to `toReportBlocks`, or the substitution vanishes in the one type
-        // that carries 98 of the registry's printed fields.
         val schema = schemaOf(
             StageDto(
                 number = 2, key = "INTRODUCTORY_ADMIN_DOCUMENTATION", title = "Introduction",
@@ -399,8 +313,6 @@ class ReportEntityParityTest {
         assertTrue("the required narrative gap is invisible:\n$printed", printed.contains("Purpose: Not recorded."))
     }
 
-    // ── 3. The server's block order ──────────────────────────────────────────────────────────────
-
     @Test
     fun `a stage singleton prints grid, then prose, then bullets, then metrics, then photographs`() {
         val schema = schemaOf(
@@ -410,8 +322,6 @@ class ReportEntityParityTest {
                     EntityDto(
                         key = "baseline", cardinality = "SINGLETON", title = "Baseline",
                         fields = listOf(
-                            // Declared prose-first, so a single walk of the field list CANNOT
-                            // produce the server's order by accident.
                             richField("background", "Cluster background", "NARRATIVE"),
                             richField("gaps", "Gaps observed", "BULLETS"),
                             metricField("looms", "Looms in use"),
@@ -452,8 +362,6 @@ class ReportEntityParityTest {
 
     @Test
     fun `a card puts its photographs under the heading and before its fields`() {
-        // `_render_cards` places the pictures immediately under the row heading and BEFORE any
-        // field, which is the opposite way round from a stage singleton. A card IS its photograph.
         val schema = schemaOf(
             StageDto(
                 number = 13, key = "PROTOTYPE_DEVELOPMENT", title = "Prototype development",
@@ -462,7 +370,6 @@ class ReportEntityParityTest {
                         key = "prototype", cardinality = "COLLECTION", title = "Prototype",
                         labelField = "code",
                         fields = listOf(
-                            // No TABLE_COLUMN anywhere, so AUTO falls through to CARDS.
                             textField("code", "Code"),
                             richField("processSummary", "Process summary", "NARRATIVE"),
                             imageField("photo", "Prototype photograph"),
@@ -495,9 +402,6 @@ class ReportEntityParityTest {
         assertTrue("a card's photograph goes first: ${shape(document)}", photo < grid)
     }
 
-    // ── 4. Six columns, and the overflow underneath ──────────────────────────────────────────────
-
-    /** Stage 22's real shape: seven TABLE_COLUMN fields on one collection. */
     private fun sevenColumnSchema() = schemaOf(
         StageDto(
             number = 22, key = "FOLLOW_UP", title = "Follow up",
@@ -523,9 +427,6 @@ class ReportEntityParityTest {
         val document = build(sevenColumnSchema(), draftOf("FOLLOW_UP", rows = listOf(sevenColumnRow())))
         val table = document.blocks.filterIsInstance<TableBlock>().single()
 
-        // Six on A4 is about the limit before a cell is too narrow to hold a craft name. Three live
-        // collections in the bundled registry declare seven, all at BASIC or STANDARD tier, so no
-        // template's cap trims them under seven either.
         assertEquals("`_table_columns` returns columns[:6]", 6, table.columns.size)
         assertEquals(
             (1..6).map { "Column $it" },
@@ -539,29 +440,12 @@ class ReportEntityParityTest {
             build(sevenColumnSchema(), draftOf("FOLLOW_UP", rows = listOf(sevenColumnRow())))
         )
 
-        // `_render_table` prints the overflow under each row via `_render_narrative(skip=column_keys)`.
-        // Android's leftover set used to key on the ROLE, so the overflow could not reach the per-row
-        // block even once the cap existed — capping alone would have been a silent drop.
         assertTrue("the overflow column is missing from the file:\n$printed", printed.contains("Column 7: value 7"))
-        // And the six that WERE drawn must not be repeated underneath.
         assertFalse("a drawn column must not print twice:\n$printed", printed.contains("Column 1: value 1"))
     }
 
     @Test
     fun `a media TABLE_COLUMN prints as a photograph instead of vanishing`() {
-        /*
-          LATENT TODAY AND FIXED ANYWAY — zero fields in the bundled registry are both TABLE_COLUMN
-          and media-typed. Such a field was excluded from `columns` by `!isMedia` AND from the
-          leftovers by the role test, so it was dropped from the document entirely: not a layout
-          difference, a silent loss of a field somebody filled in.
-
-          AND THE SERVER NOW AGREES ABOUT THE COLUMN. This comment used to record a live divergence
-          — "`_table_columns` applies no media filter, so the server would make this a table column"
-          — and say the agreement had to be made server-side first. It has been: `_table_columns`
-          filters `not f.type.is_media`, so both surfaces draw ONE column here and the assertion
-          below is a parity assertion rather than a pinned difference. What is still divergent is the
-          column WIDTHS on five entities, which is a separate and deliberate thing.
-        */
         val schema = schemaOf(
             StageDto(
                 number = 22, key = "FOLLOW_UP", title = "Follow up",
@@ -604,16 +488,8 @@ class ReportEntityParityTest {
         )
     }
 
-    // ── 5. The photograph of the record a REF points at ──────────────────────────────────────────
-
     @Test
     fun `a record with no photograph of its own borrows the one on the record it references`() {
-        /*
-          `_images` PASS TWO, which Android had no counterpart for. `prototype.sketchRef` points at a
-          sketch row whose own photographs are in stage 11 of the same draft, so this is reachable
-          with no network at all — and the office's copy prints that sketch under each prototype
-          while the phone's printed nothing.
-        */
         val schema = schemaOf(
             StageDto(
                 number = 11, key = "SKETCH_DEVELOPMENT", title = "Sketch development",
@@ -676,15 +552,11 @@ class ReportEntityParityTest {
         val borrowed = document.blocks.filterIsInstance<ImageBlock>()
             .filter { it.image.source.endsWith("media-sketch-4") }
 
-        // Twice: once under the sketch's own card in stage 11, once under the prototype that cites
-        // it in stage 13. The second one is the whole finding.
         assertEquals(
             "the prototype printed no picture at all: ${shape(document)}",
             2,
             borrowed.size,
         )
-        // THE REFERENCE'S OWN LABEL, because the field's label is the relationship and not the
-        // subject: "Sketch" under a photograph is a category, "SK-04" is a caption.
         assertTrue(
             "the borrowed plate must be captioned with the referenced record: ${borrowed.map { it.caption }}",
             borrowed.any { it.caption == "SK-04" },
@@ -693,9 +565,6 @@ class ReportEntityParityTest {
 
     @Test
     fun `a photograph already on the row is not printed twice by the reference pass`() {
-        // Hydration copies an artisan's picture onto `participant.photo` at save time, so the
-        // `artisanRef` beside it can resolve to the very same media row. Without the dedup map that
-        // participant's photograph prints twice on one card.
         val schema = schemaOf(
             StageDto(
                 number = 3, key = "WORKSHOP_PLAN_PARTICIPANTS_OPENING", title = "Participants",
@@ -737,7 +606,6 @@ class ReportEntityParityTest {
                             id = "participant#row-1",
                             values = mapOf(
                                 "name" to JsonPrimitive("Bhikari Meher"),
-                                // Hydration already copied the artisan's picture onto the row.
                                 "photo" to JsonPrimitive("media-artisan-1"),
                                 "artisanRef" to JsonPrimitive("kzzq1p8n4m2wd7xr"),
                             ),
@@ -752,7 +620,6 @@ class ReportEntityParityTest {
             .filterIsInstance<ImageBlock>()
             .count { it.image.source.endsWith("media-artisan-1") }
 
-        // One per record that holds it — the roster row and the participant row — and NOT three.
         assertEquals(
             "the reference pass duplicated a picture the row already carried: ${shape(document)}",
             2,
@@ -761,22 +628,6 @@ class ReportEntityParityTest {
     }
 
 
-    // -- 6. The media split: three types that print a sentence, two that print a plate -----------
-
-    /**
-     * `format_value`'s MEDIA BRANCH, which this file compensated for by dropping media entirely.
-     *
-     * `_images` places IMAGE and IMAGE_LIST and nothing else, so the registry's eight FILE, five
-     * AUDIO and four VIDEO fields had NO path to paper at all until the server grew a count and a
-     * noun for them. A designer attached the ministry's sanction order at stage 1 and the .docx the
-     * officer received did not mention that a sanction order existed - while the tier warning named
-     * the field as one to "generate the report with a template that captures every tier to include",
-     * which no template could do. `renderEntity`'s `printable` walk skipped every media-typed field
-     * under a comment asserting the server did the same; it never did.
-     *
-     * The nouns are asserted by value because they are `format_value`'s exact words. A different
-     * word here is a different sentence in one of the two copies of one workshop's report.
-     */
     @Test
     fun `a document, a recording and a video print a count and a noun where a photograph prints neither`() {
         val schema = schemaOf(
@@ -817,28 +668,18 @@ class ReportEntityParityTest {
         assertTrue("the plural noun:\n" + printed, printed.contains("Interview recordings: 2 recordings attached"))
         assertTrue("VIDEO has its own noun:\n" + printed, printed.contains("Process video: 1 video attached"))
 
-        // NOT A FILENAME AND NEVER AN ID. The stored value is a media id and neither builder may
-        // query for the name the designer uploaded - this one has no network when it matters.
         assertFalse("a media id must not reach paper:\n" + printed, printed.contains("media-file-1"))
         assertFalse(printed.contains("media-audio-1"))
 
-        // A PICTURE STILL SAYS NOTHING IN THE GRID; it is placed as a plate by `imagesOf`, and it
-        // must still BE placed - the split must not have made a photograph silent everywhere.
         assertFalse("a photograph must not print as text:\n" + printed, printed.contains("Venue photograph:"))
         assertTrue(
             "the photograph must still be placed: " + shape(document),
             document.blocks.any { it is ImageBlock || it is ImageGridBlock },
         )
 
-        // AND A REQUIRED ATTACHMENT THAT WAS NEVER MADE IS SAID, exactly as `_printable` says it for
-        // every other role. This is the substitution the old `isMedia` skip put out of reach.
         assertTrue("an unattached required document must be reported:\n" + printed, printed.contains("Consent form: Not recorded."))
     }
 
-    /**
-     * A 3D MODEL IS NAMED AS ONE, AND POINTS AT ITS PHOTOGRAPHS — `report_builder.format_value` and
-     * `model_preview_note`, which `tests/test_report_attachments.py` pins with the same strings.
-     */
     @Test
     fun `a 3D model prints as a model and names the photographs of it on the same row`() {
         val schema = schemaOf(
@@ -874,28 +715,6 @@ class ReportEntityParityTest {
         assertFalse(printed, printed.contains("3D model: 1 document attached"))
     }
 
-    /**
-     * A REQUIRED PHOTOGRAPH THAT WAS TAKEN MUST NOT BE CALLED MISSING BESIDE ITSELF.
-     *
-     * THE REGRESSION THIS PINS, IN THE ORDER IT HAPPENED. `printable` used to skip every media-typed
-     * field; removing that skip was right, because it was withholding "1 document attached" for the
-     * registry's seventeen FILE/AUDIO/VIDEO fields. But this port's `pairs` is a NEGATIVE role test
-     * and it named only three roles, where `_render_narrative` asks POSITIVELY for exactly three —
-     * KEY_VALUE, COVER_FIELD, TABLE_COLUMN. GALLERY therefore fell into the grid on the handset and
-     * reaches `_printable` on no path at all at the office. [displayValue] answers "" for an IMAGE,
-     * as it must, so the `required && showEmptyNote` arm fired: every sketch whose photograph the
-     * designer HAD taken printed "Sketch image: Not recorded." in the grid, one line under the plate
-     * `imagesOf` had just placed. `stage_definitions` writes that field
-     * `f("image", "Sketch image", IMG, B, required=True, report_role=GALLERY)`, so this is the
-     * bundled registry's own shape and not a hypothetical, and the office's copy printed neither
-     * line.
-     *
-     * THE SECOND HALF IS THE HEADING, AND IT IS WHY THIS TEST BUILDS TWO DRAFTS. A required GALLERY
-     * field with no photograph now prints nothing on either surface — so a collection row with
-     * nothing else left to say must not be given a numbered sub-heading over the silence.
-     * `_render_table`'s `has_extra` leaves GALLERY out of its role set for exactly that reason.
-     * Asserting only the first half would trade a wrong sentence for a bare heading.
-     */
     @Test
     fun `a required photograph that was taken prints its plate and no note`() {
         val schema = schemaOf(
@@ -938,21 +757,11 @@ class ReportEntityParityTest {
             "an attached photograph is called missing beside itself:\n" + printedTaken,
             printedTaken.contains("Sketch image: Not recorded."),
         )
-        // And not under any other wording either: the whole ROLE is out of the grid, not just the
-        // note. A GALLERY field reaches `_printable` on no server path, filled or empty.
         assertFalse(
             "a GALLERY field reached the key-value grid:\n" + printedTaken,
             printedTaken.contains("Sketch image:"),
         )
 
-        // NO PHOTOGRAPH: still no sentence, and — on the TABLE path, where the heading is
-        // conditional — no sub-heading over the silence either.
-        //
-        // A SECOND STAGE FOR THE SECOND HALF, AND NOT AN OVERSIGHT. DCH_STANDARD draws
-        // SKETCH_DEVELOPMENT as CARDS, and `_render_cards` heads EVERY row unconditionally on both
-        // surfaces — so a card's heading proves nothing either way. It is `_render_table`'s per-row
-        // block that asks `has_extra` first, and FOLLOW_UP is the stage this file already uses to
-        // exercise it.
         val notTaken = build(
             schemaOf(
                 StageDto(
@@ -995,14 +804,6 @@ class ReportEntityParityTest {
         )
     }
 
-    /**
-     * A DOCUMENT IS NOT OFFERED TO THE IMAGE RESOLVER AS THOUGH IT WERE A PHOTOGRAPH.
-     *
-     * `_images` filters on IMAGE and IMAGE_LIST; `imagesOf` asked `isMedia`, so a FILE's media id was
-     * handed to `imageFor` and - in the app, where that resolver reads the downloaded media cache
-     * rather than returning null - a PDF would have been drawn as a plate with the field's label
-     * under it. Nothing in the file would have said the plate was a sanction order.
-     */
     @Test
     fun `an attached document is never placed as a plate`() {
         val schema = schemaOf(
@@ -1028,21 +829,6 @@ class ReportEntityParityTest {
         assertTrue(printedText(document).contains("Sanction order: 1 document attached"))
     }
 
-    // -- 7. A borrowed photograph is captioned from the frozen copy ------------------------------
-
-    /**
-     * `ReportBuilder._reference_caption` - THE ONE PLACE A SUBMITTED REPORT RE-RESOLVED A LIVE NAME.
-     *
-     * `imagesOf`'s reference pass captioned the borrowed plate with `DwRefLabels.label(refId)`, which
-     * resolves the referenced record AS IT STANDS TODAY. Hydration copied that record's name onto
-     * THIS row at save time and every other line on the page prints the frozen copy, so a record
-     * renamed after the workshop closed put both answers on one page: the sub-section reading
-     * "Sketch: SK-04" out of the frozen box, and directly beneath it the borrowed plate captioned
-     * "SK-04 - revised 2027".
-     *
-     * The mapping is asked and not guessed: `field_to_dict` publishes `REFERENCE_HYDRATION` per field
-     * as `refHydration`, which already says which box the name landed in.
-     */
     @Test
     fun `a borrowed photograph is captioned with the row's frozen name, not the live record`() {
         val schema = schemaOf(
@@ -1064,7 +850,6 @@ class ReportEntityParityTest {
                         labelField = "code",
                         fields = listOf(
                             textField("code", "Code"),
-                            // The box hydration copied the sketch's name into, at save time.
                             textField("sketchName", "Sketch"),
                             refField("sketchRef", "Sketch", "DwSketch", hydration = mapOf("name" to "sketchName")),
                         ),
@@ -1081,7 +866,6 @@ class ReportEntityParityTest {
                         DraftRow(
                             id = "sketch#kzzq1p8n4m2wd7xr",
                             values = mapOf(
-                                // RENAMED AFTER THE WORKSHOP CLOSED, which is the whole case.
                                 "code" to JsonPrimitive("SK-04 revised 2027"),
                                 "sketchImage" to JsonPrimitive("media-sketch-4"),
                             ),
@@ -1118,19 +902,6 @@ class ReportEntityParityTest {
         )
     }
 
-    // -- 8. Only a stage singleton gets a metric row ---------------------------------------------
-
-    /**
-     * `_render_stage` IS THE ONLY RENDERER ON THE SERVER THAT BUILDS A `MetricRowBlock`.
-     *
-     * Neither `_render_cards` nor `_render_narrative` nor `_render_table`'s per-row block emits one,
-     * and `_render_narrative`'s pair roles are KEY_VALUE, COVER_FIELD and TABLE_COLUMN - METRIC is in
-     * none of them. So a METRIC field on a COLLECTION prints nowhere at the office, while
-     * `renderEntity` drew a band of big numbers for every row. Latent today (all four METRIC fields
-     * in the shipped registry are on singletons) and a structural divergence that would appear with
-     * no code change the day one is declared on a collection: different block heights, different page
-     * boundaries, one workshop, two files.
-     */
     @Test
     fun `a collection row gets no metric row, and a stage singleton still does`() {
         val schema = schemaOf(
@@ -1176,12 +947,8 @@ class ReportEntityParityTest {
         )
     }
 
-    // -- The whole point, said once --------------------------------------------------------------
-
     @Test
     fun `no answer is lost by any of the five changes`() {
-        // The five fixes above all MOVE or ADD content; none may remove any. This is the backstop:
-        // one record carrying one field of every role, and every value must reach the file.
         val schema = schemaOf(
             StageDto(
                 number = 6, key = "EXISTING_PRODUCTS_BASELINE", title = "Baseline",
@@ -1223,10 +990,6 @@ class ReportEntityParityTest {
 
         listOf(
             "Fourteen households.", "No dye vat", "Barpali", "Bargarh", "Bargarh district", "Looms: 14",
-            // AN UNKNOWN ROLE STILL PRINTS. The `when` this rewrite replaced had an `else ->` arm
-            // that caught a blank or unrecognised role and put it in the grid; naming the four
-            // pair-roles positively would have turned that into a silent drop the day the server
-            // added a fifth — the same shape as the RICH_TEXT drop this file was rewritten over.
             "a role this build has never heard of",
         ).forEach { expected ->
             assertTrue("'$expected' did not reach the file:\n$printed", printed.contains(expected))

@@ -1,30 +1,3 @@
-"""Custom questionnaires: the .xlsx round trip, and what an edit does to answers already recorded.
-
-Two things are pinned here, and both of them are ways a designer silently loses work.
-
-**THE ROUND TRIP MUST BE LOSSLESS.** Generate a pro-forma, fill it in, parse it, write it back out,
-parse it again — the same sections, the same questions, in the same order, with the same answers. It
-is the only property that makes edit-in-Excel safe to offer: a designer who downloads their
-questionnaire, changes one word and re-uploads is trusting that the other thirty-nine questions come
-back exactly as they went in. If a question can be lost in either direction, this feature quietly
-deletes fieldwork every time somebody uses it as intended.
-
-**AN ANSWER MUST NEVER CHANGE MEANING.** A question answered "12" under "How many looms do you own?"
-must not end up sitting under "How many weavers work with you?" because the designer reworded it a
-week later. Nobody edits an answer, nothing in any log says anything happened, and the number goes
-into a report submitted to a ministry. The rule (see services/questionnaire_forms.py) is that
-rewording an ANSWERED question supersedes it rather than overwriting it, and deleting one retires it
-rather than orphaning its answers — and the last test in this file is the one that would catch a
-future refactor that "simplified" that away.
-
-The parser tests need nothing but openpyxl. The rule tests need Postgres, because the rule is a
-statement about rows and the ``ON DELETE RESTRICT`` under it is a statement about the database, so
-that half skips itself when ``DATABASE_URL`` is not local — exactly as test_designer_roster does.
-
-    docker compose up -d postgres
-    cd backend && .venv/Scripts/python.exe -m prisma migrate deploy --schema prisma/schema.prisma
-"""
-
 import os
 import uuid
 import zipfile
@@ -49,8 +22,6 @@ _LOCAL = any(host in _URL for host in ("localhost", "127.0.0.1"))
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-# The form used everywhere below. Two sections, one of them with an answer already recorded against
-# it, because "a questionnaire that has been answered" is the state every interesting rule is about.
 FORM = [
     {
         "code": "CRAFT",
@@ -83,7 +54,6 @@ FORM = [
 
 
 def _flatten(parsed: Any) -> list[tuple[str, str, str]]:
-    """(section title, prompt, first answer) for every question, in order."""
     return [
         (section.title, question.prompt, next(iter(question.answers.values()), ""))
         for section in parsed.sections
@@ -102,15 +72,8 @@ def _sheet(rows: list[list[Any]], *, title: str = "Questionnaire") -> bytes:
     return buffer.getvalue()
 
 
-# --------------------------------------------------------------------------------------
-# 1. The workbook itself
-# --------------------------------------------------------------------------------------
-
 
 def test_the_pro_forma_is_a_workbook_excel_will_open_without_offering_to_repair_it():
-    """An .xlsx is a zip of XML parts and Excel offers to recover the file the moment one of them is
-    not well-formed. Eyeballing the download cannot catch that — the workbook still opens, it just
-    opens *repaired*. So the archive is unpacked and every part is parsed."""
     import xml.etree.ElementTree as ET
 
     payload = build_pro_forma()
@@ -120,35 +83,23 @@ def test_the_pro_forma_is_a_workbook_excel_will_open_without_offering_to_repair_
         assert "xl/workbook.xml" in names
         for name in names:
             if name.endswith((".xml", ".rels")):
-                ET.fromstring(archive.read(name))  # raises if the part is not well-formed
+                ET.fromstring(archive.read(name))
 
 
 def test_the_pro_forma_carries_no_example_questions_to_import_by_accident():
-    """The worked example lives on the instructions sheet, which is never parsed.
-
-    An earlier shape seeded three examples on the WORKING sheet, which reads well and imports badly:
-    the designer who types their questions underneath uploads a questionnaire whose first three
-    questions are somebody else's, with nothing on screen to say where they came from.
-    """
     with pytest.raises(QuestionnaireXlsxError) as excinfo:
         parse_questionnaire_workbook(build_pro_forma(), filename="questionnaire-pro-forma.xlsx")
     assert "no questions under it" in str(excinfo.value)
 
     book = load_workbook(BytesIO(build_pro_forma()))
-    assert book["Questionnaire"].max_row == 1  # the header, and nothing else
+    assert book["Questionnaire"].max_row == 1
 
 
 def test_a_file_that_is_not_a_workbook_is_refused_with_a_sentence_a_designer_can_act_on():
-    """Not a stack trace, and not "invalid file": the message has to name the remedy, because the
-    overwhelmingly likely cause is a .xls or a Numbers export and the fix is one Save As away."""
     with pytest.raises(QuestionnaireXlsxError) as excinfo:
         parse_questionnaire_workbook(b"this is a .csv, not a workbook", filename="answers.xls")
     assert "Save As" in str(excinfo.value)
 
-
-# --------------------------------------------------------------------------------------
-# 2. The round trip — generate -> parse -> the same questions
-# --------------------------------------------------------------------------------------
 
 
 def test_generate_then_parse_returns_exactly_the_same_questions():
@@ -171,7 +122,6 @@ def test_generate_then_parse_returns_exactly_the_same_questions():
         ("About the craft", "Who taught you?", ""),
         ("Materials", "Where do you buy your yarn?", "Panipat mandi"),
     ]
-    # The identity column is what makes a re-upload an EDIT rather than a second copy.
     assert [q.questionId for s in parsed.sections for q in s.questions] == [
         "q-looms",
         "q-taught",
@@ -184,8 +134,6 @@ def test_generate_then_parse_returns_exactly_the_same_questions():
 
 
 def test_the_round_trip_survives_being_run_twice():
-    """Parse -> write -> parse again. A round trip that is only lossless once is not lossless: the
-    designer who downloads, edits and re-uploads on Monday does it again on Thursday."""
     once = parse_questionnaire_workbook(
         build_questionnaire_workbook(
             title="Loom study",
@@ -230,8 +178,6 @@ def test_the_round_trip_survives_being_run_twice():
 
 
 def test_several_sittings_round_trip_as_several_sittings():
-    """Two answer columns are two people, not one merged column. The heading after the dash is what
-    pairs "Answer — Sita" back to "Notes — Sita", so losing it merges two interviews into one."""
     sections = [
         {
             "code": "A",
@@ -263,14 +209,8 @@ def test_several_sittings_round_trip_as_several_sittings():
     assert parsed.entryLabels == ["Ramesh", "Sita"]
 
 
-# --------------------------------------------------------------------------------------
-# 3. Forgiveness — and reporting rather than dropping
-# --------------------------------------------------------------------------------------
-
 
 def test_columns_may_be_renamed_reordered_and_pushed_down_the_sheet():
-    """The three things a real designer's file does that a positional parser cannot survive: a title
-    across the top, columns in their own order, and headings spelled their own way."""
     payload = _sheet(
         [
             ["Kullu shawl questionnaire — draft 3"],
@@ -293,8 +233,6 @@ def test_columns_may_be_renamed_reordered_and_pushed_down_the_sheet():
 
 
 def test_a_section_named_once_carries_down_the_rows_beneath_it():
-    """How a person lays a table out. Repeating the section on every row must work too, and must not
-    produce four sections all called "Materials"."""
     parsed = parse_questionnaire_workbook(
         _sheet(
             [
@@ -311,8 +249,6 @@ def test_a_section_named_once_carries_down_the_rows_beneath_it():
 
 
 def test_a_question_before_any_section_is_kept_and_reported_never_dropped():
-    """The commonest malformed file there is: somebody started typing questions and never added a
-    heading. Filing them under a default section is right; losing them is not."""
     parsed = parse_questionnaire_workbook(
         _sheet([["Question"], ["How many looms do you own?"], ["Who taught you?"]]),
         filename="x.xlsx",
@@ -325,8 +261,6 @@ def test_a_question_before_any_section_is_kept_and_reported_never_dropped():
 
 
 def test_an_unreadable_required_value_is_reported_with_its_excel_row_number():
-    """"maybe" is not yes or no. The question is still imported — losing it over one cell would be
-    absurd — and the designer is told which row to look at, by the number Excel's gutter shows."""
     parsed = parse_questionnaire_workbook(
         _sheet(
             [
@@ -344,10 +278,6 @@ def test_an_unreadable_required_value_is_reported_with_its_excel_row_number():
 
 
 def test_a_formula_with_no_cached_result_is_reported_as_a_formula_not_as_a_blank_row():
-    """THE ONE CASE openpyxl cannot help with. A workbook written by anything other than Excel has
-    formulas but no cached results, so the cell reads as empty. Telling a designer "row 3 is blank"
-    about a row that visibly says ``=B1&" 2024"`` on their screen is the most confusing thing this
-    parser could say."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Questionnaire"
@@ -375,17 +305,11 @@ def test_a_workbook_with_no_question_column_is_refused_rather_than_imported_empt
 
 
 def test_a_section_code_is_derived_from_the_title_so_inserting_a_section_does_not_renumber():
-    """Positional codes look tidier and are wrong: inserting a section at the top would renumber
-    every section below it, so a re-upload matches nothing and the whole form churns."""
     taken: set[str] = set()
     assert derive_section_code("About the craft", taken) == "ABOUT_THE_CRAFT"
     assert derive_section_code("About the craft", taken) == "ABOUT_THE_CRAFT_2"
     assert derive_section_code("", taken) == "SECTION"
 
-
-# --------------------------------------------------------------------------------------
-# 4. The edit-after-answers rule. Needs Postgres.
-# --------------------------------------------------------------------------------------
 
 pytestmark_db = [
     pytest.mark.skipif(
@@ -402,13 +326,6 @@ def anyio_backend():
 
 @pytest.fixture(scope="module")
 async def world():
-    """A designer, an admin, and a live TestClient.
-
-    Rows are created here rather than inside a test because the Prisma client is shared with the
-    running app and bound to the TestClient's event loop; touching it from a test's own loop is the
-    kind of cross-loop use that fails intermittently rather than honestly. Addresses carry a per-run
-    stamp because ``User.email`` is unique and a fixed address passes once and fails for ever after.
-    """
     if not _LOCAL:
         pytest.skip("needs a local database")
     from fastapi.testclient import TestClient
@@ -422,9 +339,6 @@ async def world():
         for slug, role, name in (
             ("designer", "DESIGNER", "Custom Questionnaire Designer"),
             ("colleague", "DESIGNER", "Another Designer"),
-            # A THIRD designer, who owns nothing and recorded nothing. The authorship tests need
-            # somebody who is neither the form's owner nor the sitting's author; with only two
-            # designers every refusal could be explained by ownership of the form alone.
             ("stranger", "DESIGNER", "Unrelated Designer"),
             ("admin", "ADMIN", "Questionnaire Admin"),
         ):
@@ -435,12 +349,6 @@ async def world():
                     "role": role,
                 }
             )
-        # ROSTER ROWS FOR THE DESIGNERS, because a viewer GRANT refuses an account the ACTIVE
-        # designer roster does not admit — with a 422 saying so, rather than writing a viewer row
-        # for somebody who cannot sign in. The cross-workshop attachment test needs a real grant to
-        # prove its gate is the grant and not a blanket refusal, so it needs these rows; every other
-        # test in this file is indifferent to them, and tokens are minted directly rather than by
-        # signing in, so the roster is invisible everywhere else here.
         for slug in ("designer", "colleague", "stranger"):
             await db.designerroster.create(
                 data={
@@ -467,25 +375,6 @@ def _headers(world: dict[str, Any], slug: str = "designer") -> dict[str, str]:
 
 
 def _open_workshop(client: Any, world: dict[str, Any], body: dict[str, Any], owner: str = "designer") -> str:
-    """A design workshop the account named by ``owner`` may work in, and its id.
-
-    THE ADMIN OPENS IT AND GRANTS THE DESIGNER. Every workshop in this module used to be created by
-    the designer directly; only admins and the master admin may START one now
-    (``can_create_design_workshops``), because a workshop is the container a fortnight of records
-    lives in and the unit the ministry indexes and funds, not a record. Seven tests here opened one
-    inline and each of them would now die on that line with a 403 about the create rule, which is
-    about as far from what they assert as it is possible to get.
-
-    The grant is not scaffolding to get past a gate; it is the flow. A designer only ever works in a
-    workshop somebody else opened for them, so the workshops these tests attach questionnaires to
-    are exactly that. The roster rows in ``world`` are what let it succeed — ``replace_viewers``
-    refuses an account the ACTIVE designer roster does not admit.
-
-    NOTE FOR THE ONE TEST THAT REPLACES THE VIEWER SET LATER: the PUT is a whole-set replace, so
-    granting somebody else afterwards revokes the grant made here. That is fine where it happens
-    today (the designer's own reads all precede it) and it is the first thing to check if a test in
-    this module starts 404ing halfway through.
-    """
     response = client.post("/api/design-workshops", json=body, headers=_headers(world, "admin"))
     assert response.status_code == 201, response.text
     workshop_id = response.json()["id"]
@@ -507,7 +396,6 @@ def _upload(client: Any, world: dict[str, Any], payload: bytes, name: str = "for
 
 
 def _questions(form: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Every question in the form, keyed by prompt."""
     return {q["prompt"]: q for section in form["sections"] for q in section["questions"]}
 
 
@@ -516,8 +404,6 @@ def _questions(form: dict[str, Any]) -> dict[str, dict[str, Any]]:
 async def test_uploading_a_filled_in_pro_forma_creates_a_questionnaire_with_its_answers(
     client, world
 ):
-    """A spreadsheet that ARRIVES with answers in it must produce the same rows as answers typed
-    into the app, or every downstream reader needs a special case for each kind."""
     payload = build_questionnaire_workbook(
         title=f"Loom study {world['stamp']}",
         description=None,
@@ -543,7 +429,6 @@ async def test_uploading_a_filled_in_pro_forma_creates_a_questionnaire_with_its_
     assert form["questionCount"] == 2
     assert body["report"]["created"] == 2
     assert body["report"]["problems"] == []
-    # The uploaded answers are an ordinary sitting, marked as having come off the spreadsheet.
     assert len(form["entries"]) == 1
     assert form["entries"][0]["source"] == "UPLOAD"
     assert form["entries"][0]["respondentName"] == "Ramesh"
@@ -559,16 +444,6 @@ async def test_uploading_a_filled_in_pro_forma_creates_a_questionnaire_with_its_
 async def test_rewording_an_answered_question_supersedes_it_and_the_answer_keeps_its_words(
     client, world
 ):
-    """THE TEST THIS FILE EXISTS FOR.
-
-    "How many looms do you own?" is answered "12". The designer reworks the form and the question
-    becomes "How many weavers work with you?". If the prompt were simply overwritten, the repository
-    would now assert that this artisan works with twelve weavers — nobody edited an answer, nothing
-    says anything happened, and the number goes into a ministry report.
-
-    What must happen instead: the original question is retired WITH ITS ORIGINAL WORDING and keeps
-    its answer, the new wording is stored as a NEW question, and the two are linked.
-    """
     created = _upload(
         client,
         world,
@@ -606,16 +481,13 @@ async def test_rewording_an_answered_question_supersedes_it_and_the_answer_keeps
 
     form = body["questionnaire"]
     by_id = {q["id"]: q for section in form["sections"] for q in section["questions"]}
-    # The answered question keeps the words it was answered under, and stops being asked.
     assert by_id[original["id"]]["prompt"] == "How many looms do you own?"
     assert by_id[original["id"]]["isActive"] is False
     assert by_id[original["id"]]["retiredAt"] is not None
     assert by_id[original["id"]]["supersededById"] == replacement_id
-    # The correction the designer asked for exists, and has no answers of its own.
     assert by_id[replacement_id]["prompt"] == "How many weavers work with you?"
     assert by_id[replacement_id]["isActive"] is True
     assert by_id[replacement_id]["hasAnswers"] is False
-    # And the "12" is still attached to the question about looms.
     answers = {a["questionId"]: a["answerText"] for a in form["entries"][0]["answers"]}
     assert answers[original["id"]] == "12"
     assert replacement_id not in answers
@@ -625,8 +497,6 @@ async def test_rewording_an_answered_question_supersedes_it_and_the_answer_keeps
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_an_unanswered_question_is_reworded_in_place_with_no_ceremony(client, world):
-    """The ordinary case — a designer drafting their form — must stay frictionless. Superseding an
-    unanswered question would litter every draft with retired rows nobody ever answered."""
     created = _upload(
         client,
         world,
@@ -655,9 +525,6 @@ async def test_an_unanswered_question_is_reworded_in_place_with_no_ceremony(clie
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_deleting_an_answered_question_retires_it_and_keeps_the_answer(client, world):
-    """Deleting a question orphans its answers, so an answered one is never deleted. An unanswered
-    one is, because there is nothing to orphan and a form littered with every question its author
-    thought better of is not a form."""
     created = _upload(
         client,
         world,
@@ -685,17 +552,17 @@ async def test_deleting_an_answered_question_retires_it_and_keeps_the_answer(cli
 
     body = client.delete(
         f"/api/questionnaires/{questionnaire_id}/questions/{answered['id']}",
-        headers=_headers(world, "admin"),  # deleting is a content admin's act (2026-10-20)
+        headers=_headers(world, "admin"),
     ).json()
     assert body["action"] == "retired"
     retired = {q["id"]: q for s in body["questionnaire"]["sections"] for q in s["questions"]}
     assert retired[answered["id"]]["isActive"] is False
     answers = {a["questionId"] for a in body["questionnaire"]["entries"][0]["answers"]}
-    assert answered["id"] in answers  # the answer survived the delete
+    assert answered["id"] in answers
 
     body = client.delete(
         f"/api/questionnaires/{questionnaire_id}/questions/{unanswered['id']}",
-        headers=_headers(world, "admin"),  # deleting is a content admin's act (2026-10-20)
+        headers=_headers(world, "admin"),
     ).json()
     assert body["action"] == "deleted"
     remaining = {q["id"] for s in body["questionnaire"]["sections"] for q in s["questions"]}
@@ -705,7 +572,6 @@ async def test_deleting_an_answered_question_retires_it_and_keeps_the_answer(cli
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_a_retired_question_cannot_collect_new_answers(client, world):
-    """A wording the designer deliberately replaced must not quietly carry on gathering evidence."""
     created = _upload(
         client,
         world,
@@ -741,8 +607,6 @@ async def test_a_retired_question_cannot_collect_new_answers(client, world):
         json={"answers": [{"questionId": original["id"], "answerText": "4"}]},
         headers=_headers(world),
     )
-    # PER ITEM since audit M5 (21 Oct 2026): the answer comes back rejected, named and coded, and
-    # nothing is written for it.
     assert response.status_code == 200, response.text
     saved = response.json()["saved"]
     assert saved["created"] == 0
@@ -758,13 +622,6 @@ async def test_a_retired_question_cannot_collect_new_answers(client, world):
 async def test_re_uploading_an_edited_workbook_supersedes_answered_and_retires_removed(
     client, world
 ):
-    """The same rule, applied by the spreadsheet path rather than the editor.
-
-    The two paths must not drift into two different answers to the same question, so this asserts
-    the whole shape at once: an untouched question stays put, a reworded ANSWERED one is superseded,
-    a reworded UNANSWERED one is edited in place, one deleted from the sheet is retired because it
-    has answers, and a brand new row is created.
-    """
     created = _upload(
         client,
         world,
@@ -791,7 +648,6 @@ async def test_re_uploading_an_edited_workbook_supersedes_answered_and_retires_r
     questionnaire_id = created["questionnaire"]["id"]
     before = _questions(created["questionnaire"])
 
-    # Download it back — the ids in that file are what make this an edit rather than a second copy.
     download = client.get(
         f"/api/questionnaires/{questionnaire_id}/xlsx", headers=_headers(world)
     )
@@ -805,7 +661,7 @@ async def test_re_uploading_an_edited_workbook_supersedes_answered_and_retires_r
         questions = []
         for question in section.questions:
             if question.prompt == "Removed but answered":
-                continue  # the designer deleted this row
+                continue
             prompt = question.prompt
             if prompt in ("Answered and reworded", "Unanswered and reworded"):
                 prompt = prompt + " (v2)"
@@ -838,8 +694,6 @@ async def test_re_uploading_an_edited_workbook_supersedes_answered_and_retires_r
                 XLSX_MIME,
             )
         },
-        # AN ADMIN, because a re-upload removes a question only for a content admin (owner,
-        # 21 Oct 2026; audit M2). A designer's re-upload keeps it: ``test_questionnaire_live_fixes``.
         headers=_headers(world, "admin"),
     )
     assert response.status_code == 200, response.text
@@ -851,22 +705,17 @@ async def test_re_uploading_an_edited_workbook_supersedes_answered_and_retires_r
     assert report["retired"] == 1
     assert report["created"] == 1
 
-    # Untouched: still there, still active, still holding its answer.
     assert by_id[before["Untouched question"]["id"]]["isActive"] is True
-    # Answered + reworded: the original survives with its original words.
     old = by_id[before["Answered and reworded"]["id"]]
     assert old["prompt"] == "Answered and reworded"
     assert old["isActive"] is False
     assert by_id[old["supersededById"]]["prompt"] == "Answered and reworded (v2)"
-    # Unanswered + reworded: edited in place, no retired twin left behind.
     assert by_id[before["Unanswered and reworded"]["id"]]["prompt"] == "Unanswered and reworded (v2)"
     assert by_id[before["Unanswered and reworded"]["id"]]["isActive"] is True
-    # Removed from the sheet but answered: retired, not deleted, and its answer is still there.
     removed = by_id[before["Removed but answered"]["id"]]
     assert removed["isActive"] is False
     kept_answers = {a["questionId"] for a in form["entries"][0]["answers"]}
     assert before["Removed but answered"]["id"] in kept_answers
-    # And the form gained the new question.
     assert "Brand new question" in {q["prompt"] for q in by_id.values()}
 
 
@@ -875,15 +724,6 @@ async def test_re_uploading_an_edited_workbook_supersedes_answered_and_retires_r
 async def test_downloading_and_re_uploading_unchanged_does_not_resurrect_retired_questions(
     client, world
 ):
-    """A REGRESSION, found by reading the export and the importer next to each other.
-
-    The export deliberately writes retired questions out, because dropping them would lose the
-    answers recorded against them. So every download carries those rows, ids and all, and every
-    re-upload matches them. An importer that treats "present in the file" as "the designer wants
-    this back" therefore resurrects every question anybody has ever replaced — each one sitting next
-    to the replacement that superseded it — on a round trip that changed NOTHING. Downloading a
-    questionnaire and uploading it straight back must be a no-op.
-    """
     created = _upload(
         client,
         world,
@@ -911,7 +751,6 @@ async def test_downloading_and_re_uploading_unchanged_does_not_resurrect_retired
     replacement_id = superseded["replacementId"]
     version_after_supersede = superseded["questionnaire"]["version"]
 
-    # Download and upload back, byte for byte.
     same_file = client.get(
         f"/api/questionnaires/{created['id']}/xlsx", headers=_headers(world)
     ).content
@@ -929,11 +768,9 @@ async def test_downloading_and_re_uploading_unchanged_does_not_resurrect_retired
     assert report["superseded"] == 0
     assert report["retired"] == 0
     assert report["removed"] == 0
-    # The retired question is still retired, still superseded by the same replacement.
     assert by_id[original["id"]]["isActive"] is False
     assert by_id[original["id"]]["supersededById"] == replacement_id
     assert by_id[replacement_id]["isActive"] is True
-    # Exactly two questions — no third one conjured out of the round trip.
     assert len(by_id) == 2
     assert form["version"] == version_after_supersede
 
@@ -943,8 +780,6 @@ async def test_downloading_and_re_uploading_unchanged_does_not_resurrect_retired
 async def test_uploading_a_workbook_downloaded_from_a_different_questionnaire_is_refused(
     client, world
 ):
-    """A designer picking the wrong file out of their downloads folder would otherwise retire this
-    questionnaire's ENTIRE question set in one press, as "absent from the upload"."""
     first = _upload(
         client,
         world,
@@ -978,7 +813,6 @@ async def test_uploading_a_workbook_downloaded_from_a_different_questionnaire_is
     )
     assert response.status_code == 409, response.text
     assert second["id"] in response.json()["detail"]
-    # And the first questionnaire is untouched.
     still = client.get(f"/api/questionnaires/{first['id']}", headers=_headers(world)).json()
     assert [q["prompt"] for s in still["sections"] for q in s["questions"]] == ["Q one"]
 
@@ -986,8 +820,6 @@ async def test_uploading_a_workbook_downloaded_from_a_different_questionnaire_is
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_answers_are_recorded_in_the_app_and_saving_twice_changes_nothing(client, world):
-    """The other half of the requirement: a questionnaire uploaded EMPTY must still be answerable in
-    the platform. Idempotence is what makes a client safe to retry on a flaky connection."""
     created = _upload(
         client,
         world,
@@ -1039,8 +871,6 @@ async def test_answers_are_recorded_in_the_app_and_saving_twice_changes_nothing(
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_a_questionnaire_attaches_to_a_workshop_and_shows_up_in_the_dropdown(client, world):
-    """The dropdown the owner asked for. ``/options`` is its own endpoint because a dropdown that
-    silently stops at page one is a designer who cannot find what they uploaded this morning."""
     workshop_id = _open_workshop(client, world, {"title": f"Attach test {world['stamp']}"})
 
     created = _upload(
@@ -1073,7 +903,6 @@ async def test_a_questionnaire_attaches_to_a_workshop_and_shows_up_in_the_dropdo
     options = client.get("/api/questionnaires/options", headers=_headers(world)).json()
     assert created["id"] in {row["id"] for row in options}
 
-    # Detaching is sending null, not omitting the field.
     detached = client.patch(
         f"/api/questionnaires/{created['id']}",
         json={"designWorkshopId": None},
@@ -1087,28 +916,8 @@ async def test_a_questionnaire_attaches_to_a_workshop_and_shows_up_in_the_dropdo
 async def test_a_questionnaire_cannot_be_attached_to_a_workshop_the_designer_cannot_open(
     client, world
 ):
-    """ALL THREE ATTACHMENT DOORS, WALKED BY A DESIGNER WHO IS 404'D FROM THE WORKSHOP.
-
-    Attaching used to ask only whether the workshop ROW EXISTED — ``require_record`` is a bare
-    ``find_unique`` — while the caller was gated as "is a designer at all". So any designer could
-    point their own questionnaire at any other designer's workshop by id, through the upload form
-    field, the JSON create, or the PATCH. That is not a read leak that stops at the API: the
-    annexure is in ALL SIX report templates and ``report_items`` selects purely on
-    ``designWorkshopId``, so the stranger's respondents, notes and answers printed inside the
-    .docx that the other designer submits to a ministry under their own name — and symmetrically,
-    everyone on that workshop could then read the stranger's sittings.
-
-    THE THREE DOORS ARE ASSERTED SEPARATELY ON PURPOSE. They are three different call sites and the
-    fix is three call sites; a test that only exercised PATCH would have passed against a tree where
-    upload and create were still open, which is exactly the shape the defect had.
-
-    The last two blocks are the controls that stop this from being satisfied by "refuse everybody":
-    a viewer grant makes the very same PATCH succeed, and the workshop's creator attaching their own
-    form is pinned by the test above.
-    """
     workshop_id = _open_workshop(client, world, {"title": f"Not yours {world['stamp']}"})
 
-    # The premise: to this designer the workshop does not exist.
     assert (
         client.get(
             f"/api/design-workshops/{workshop_id}", headers=_headers(world, "stranger")
@@ -1116,7 +925,6 @@ async def test_a_questionnaire_cannot_be_attached_to_a_workshop_the_designer_can
         == 404
     )
 
-    # Door 1 — JSON create, attached at birth.
     made = client.post(
         "/api/questionnaires",
         json={"title": f"Injected {world['stamp']}", "designWorkshopId": workshop_id},
@@ -1124,12 +932,9 @@ async def test_a_questionnaire_cannot_be_attached_to_a_workshop_the_designer_can
     )
     assert made.status_code == 404, made.text
 
-    # ...and it left nothing behind. A 404 that still wrote the questionnaire would read to the
-    # designer as a failure and be a half-success in the database.
     mine = client.get("/api/questionnaires", headers=_headers(world, "stranger")).json()
     assert f"Injected {world['stamp']}" not in {row["title"] for row in mine["items"]}
 
-    # Door 2 — the multipart upload, where designWorkshopId is a FORM field beside the file.
     marker = f"Which loom did you inherit {world['stamp']}?"
     workbook = build_questionnaire_workbook(
         title=f"Uploaded elsewhere {world['stamp']}",
@@ -1148,8 +953,6 @@ async def test_a_questionnaire_cannot_be_attached_to_a_workshop_the_designer_can
     )
     assert uploaded.status_code == 404, uploaded.text
 
-    # Door 3 — PATCH, which passes `_require_owner` because the stranger DOES own this form. Owning
-    # the questionnaire has never said anything about the workshop it is being pointed at.
     own = client.post(
         "/api/questionnaires/upload",
         files={"file": ("form.xlsx", workbook, XLSX_MIME)},
@@ -1167,8 +970,6 @@ async def test_a_questionnaire_cannot_be_attached_to_a_workshop_the_designer_can
     still = client.get(f"/api/questionnaires/{own_id}", headers=_headers(world, "stranger")).json()
     assert still["designWorkshopId"] is None
 
-    # THE CONSEQUENCE, not just the status codes: nothing of the stranger's is inside the other
-    # designer's workshop, and nothing of it reaches the report they would submit.
     scoped = client.get(
         "/api/questionnaires",
         params={"designWorkshopId": workshop_id},
@@ -1181,8 +982,6 @@ async def test_a_questionnaire_cannot_be_attached_to_a_workshop_the_designer_can
     assert preview.status_code == 200, preview.text
     assert marker not in preview.text
 
-    # CONTROL — the gate is the grant, not a blanket refusal. An admin puts the stranger on the
-    # workshop as a co-designer and the identical PATCH goes through.
     grant = client.put(
         f"/api/design-workshops/{workshop_id}/viewers",
         json={"userIds": [world["people"]["stranger"].id]},
@@ -1201,13 +1000,6 @@ async def test_a_questionnaire_cannot_be_attached_to_a_workshop_the_designer_can
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_a_questionnaire_cannot_be_attached_to_a_deleted_workshop(client, world):
-    """The second thing ``require_record`` never asked: whether the workshop is still there.
-
-    It carried no ``deletedAt`` filter, so a soft-deleted workshop accepted attachments exactly like
-    a live one — filling the annexure of a record its own designer is 404'd from, which nobody can
-    then open to find out what is in it. ``for_edit=True`` is what makes this a 409 with a sentence
-    that names the way out ("Restore it before editing") rather than a silent 200.
-    """
     workshop_id = _open_workshop(client, world, {"title": f"Deleted target {world['stamp']}"})
     created = client.post(
         "/api/questionnaires",
@@ -1217,7 +1009,6 @@ async def test_a_questionnaire_cannot_be_attached_to_a_deleted_workshop(client, 
     assert created.status_code == 201, created.text
     questionnaire_id = created.json()["id"]
 
-    # A form is deleted by its author or a content admin (owner, 22 Oct 2026); the admin does it here.
     removed = client.delete(
         f"/api/design-workshops/{workshop_id}", headers=_headers(world, "admin")
     )
@@ -1228,8 +1019,6 @@ async def test_a_questionnaire_cannot_be_attached_to_a_deleted_workshop(client, 
         json={"designWorkshopId": workshop_id},
         headers=_headers(world),
     )
-    # 409 for the creator (the workshop is visible to them, just not editable); 404 is the answer
-    # anyone else gets. Either way the attachment does not happen, which is the assertion below.
     assert refused.status_code in (404, 409), refused.text
     still = client.get(
         f"/api/questionnaires/{questionnaire_id}", headers=_headers(world)
@@ -1238,7 +1027,6 @@ async def test_a_questionnaire_cannot_be_attached_to_a_deleted_workshop(client, 
 
 
 def _annexure_blocks(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Everything from the questionnaire annexure's heading to the end of the document."""
     for index, block in enumerate(blocks):
         if block["type"] == "HEADING" and "Questionnaire responses" in _runs_text(block["runs"]):
             return blocks[index:]
@@ -1252,26 +1040,6 @@ def _runs_text(runs: list[dict[str, Any]]) -> str:
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_the_report_annexure_prints_a_two_section_form_section_by_section(client, world):
-    """THE ANNEXURE, THROUGH THE ROUTE A DESIGNER ACTUALLY PRESSES, ON A FORM WITH TWO SECTIONS.
-
-    The annexure's own test file builds its ``QuestionnaireItem``s by hand, so nothing there ever
-    reached ``report_items`` — the half that turns five tables into the list the document prints.
-    That half had the bug this test exists for. ``QuestionnaireFormQuestion.sortOrder`` is scoped to
-    its SECTION (the upload numbers each section's questions from 1), so a flat query ordered by
-    sortOrder alone comes back INTERLEAVED — A1, B1, A2, B2 — and the annexure, which starts a fresh
-    table every time the section label changes, printed one single-row table per question with the
-    label repeated above each, A/B/A/B down the page. Every question of one section separated from
-    its neighbours, in an appendix of evidence handed to a ministry officer.
-
-    A ONE-SECTION FIXTURE CANNOT SEE IT, which is exactly why this one has two sections of two
-    questions each and asserts the shape of the tables rather than only the presence of the text.
-
-    THROUGH THE PREVIEW ROUTE, not by calling ``report_items``: the Prisma singleton is bound to the
-    TestClient's event loop (see the ``world`` fixture), and going in by HTTP walks the whole chain a
-    designer's press does — ``load_workshop_or_404`` -> ``_report_inputs`` -> the template's
-    ``ANNEXURE_QUESTIONNAIRES`` -> ``attach_report_questionnaires`` -> ``report_items`` -> the
-    builder's one branch — rather than the last hop of it.
-    """
     workshop_id = _open_workshop(client, world, {"title": f"Annexure order {world['stamp']}"})
 
     created = _upload(
@@ -1324,7 +1092,6 @@ async def test_the_report_annexure_prints_a_two_section_form_section_by_section(
     annexure = _annexure_blocks(preview.json()["blocks"])
     assert annexure, "the questionnaire annexure never reached the preview at all"
 
-    # The respondent's own heading, and everything under it.
     for index, block in enumerate(annexure):
         if block["type"] == "HEADING" and _runs_text(block["runs"]) == "Ramesh":
             sitting = annexure[index:]
@@ -1332,7 +1099,6 @@ async def test_the_report_annexure_prints_a_two_section_form_section_by_section(
     else:
         raise AssertionError("the sitting's heading is missing from the annexure")
 
-    # The Question|Answer tables, in document order, with the labels that precede them.
     tables = [
         b for b in sitting
         if b["type"] == "TABLE" and [c["header"] for c in b["columns"]] == ["Question", "Answer"]
@@ -1350,7 +1116,6 @@ async def test_the_report_annexure_prints_a_two_section_form_section_by_section(
         ["Panipat mandi", "Rs 240"],
     ]
 
-    # Each table is labelled with its own section, once, in the form's order.
     labels = [
         _runs_text(b["runs"]) for b in sitting
         if b["type"] == "PARAGRAPH" and _runs_text(b["runs"]).startswith(("CRAFT", "MAT"))
@@ -1361,26 +1126,6 @@ async def test_the_report_annexure_prints_a_two_section_form_section_by_section(
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_a_recorded_answer_is_inside_the_generated_docx_file(client, world):
-    """THE ANSWER, IN THE BYTES OF THE FILE A DESIGNER DOWNLOADS. Not a 200, not a block list.
-
-    The test above stops at ``GET /report/preview``, which returns the document as JSON. That is one
-    hop short of the deliverable, and the gap is not theoretical: a blank-report defect on this
-    project produced a perfectly valid OOXML file — right cover page, openable in Word, nothing in
-    it — and only unzipping it revealed that. Every surface upstream of the writer had said fine.
-
-    So this walks the whole chain a designer's press walks — ``POST /design-workshops/{id}/report``
-    -> ``_report_inputs`` -> ``ANNEXURE_QUESTIONNAIRES`` in the resolved template ->
-    ``attach_report_questionnaires`` -> ``report_items`` -> the builder's one branch ->
-    ``report_docx`` — and then OPENS THE ZIP and reads ``word/document.xml``.
-
-    ON PRESENCE, NOT ON LAYOUT. The assertions are that the respondent's name, the question's
-    wording and the answer's text are somewhere in the document part. Where they sit, which table
-    they are in and how they are styled is the annexure's business and is pinned by the preview test
-    above; pinning it again against XML would make every legitimate typographic change fail here.
-
-    The answer strings are nonsense words on purpose: "12" or "Ramesh" could plausibly appear in a
-    report for some unrelated reason, and an assertion that can pass by accident proves nothing.
-    """
     workshop_id = _open_workshop(client, world, {"title": f"Docx annexure {world['stamp']}"})
 
     created = _upload(
@@ -1420,8 +1165,6 @@ async def test_a_recorded_answer_is_inside_the_generated_docx_file(client, world
     )
     assert generated.status_code == 200, generated.text
 
-    # A .docx is a zip. `word/document.xml` is the body; a file whose cover page is perfect and
-    # whose body is empty is exactly the shape of the defect this test exists for.
     with zipfile.ZipFile(BytesIO(generated.content)) as archive:
         document = archive.read("word/document.xml").decode("utf-8")
 
@@ -1441,27 +1184,6 @@ async def test_a_recorded_answer_is_inside_the_generated_docx_file(client, world
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_an_unanswered_questionnaire_is_never_silently_absent_from_the_report(client, world):
-    """AN ATTACHED QUESTIONNAIRE WITH NO ANSWERS MUST SAY SO — ON THE DEFAULT TEMPLATE.
-
-    THE DEFECT, MEASURED. ``x-report-warnings`` was ``"; ".join(warnings)[:900]``. A DCH_STANDARD
-    workshop — the default — raises a dozen "required field(s) not recorded" warnings, and the load
-    warnings are appended AFTER them, so on this exact fixture the header carried 8 of 12, cut
-    mid-word at ``"… 2 required "``, and the questionnaire's own "attached but nothing recorded"
-    fell off the end with nothing saying it had. The designer got a report with no questionnaire
-    annexure and no sentence anywhere explaining it: the silent omission this whole feature exists
-    to end, re-created in the transport that reports on it.
-
-    DCH_STANDARD SPECIFICALLY, and that is the point of the fixture rather than a coin toss. The same
-    warning survived on PHOTO_CATALOGUE and COMPACT_SUMMARY throughout, so a test written against a
-    short template passes against the broken header.
-
-    WHAT IS PINNED IS THAT THE DESIGNER IS NEVER LEFT WITH NOTHING — the warning itself if it fits,
-    and otherwise an explicit count of what did not, pointing at the preview. WHICH warnings win the
-    budget when a workshop raises more than fits is an editorial question about every report this
-    deployment generates and is deliberately NOT decided here; what is decided is that the loss can
-    never again be invisible. The preview half of the assertion is what keeps that honest: the
-    warning must exist in full somewhere the designer can actually reach.
-    """
     workshop_id = _open_workshop(client, world, {"title": f"Unanswered {world['stamp']}", "templateId": "DCH_STANDARD"})
 
     created = client.post(
@@ -1479,8 +1201,6 @@ async def test_an_unanswered_questionnaire_is_never_silently_absent_from_the_rep
     )
     assert created.status_code == 201, created.text
 
-    # The full, uncapped list. Same load path as the download, so this is the warning existing at
-    # all rather than a second opinion about it.
     preview = client.get(
         f"/api/design-workshops/{workshop_id}/report/preview", headers=_headers(world)
     )
@@ -1503,30 +1223,12 @@ async def test_an_unanswered_questionnaire_is_never_silently_absent_from_the_rep
         "the questionnaire annexure's warning did not reach the header AND the header did not say "
         f"anything was dropped, so the designer is told nothing at all. Header was: {header!r}"
     )
-    # The count is the TRUE total, never reduced to what fitted — a client comparing the two can
-    # tell it is not holding the whole list.
     assert int(generated.headers["x-report-warning-count"]) >= len(pieces)
 
 
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_a_questionnaire_title_a_designer_typed_cannot_split_its_own_warning(client, world):
-    """THE TITLE IS DESIGNER-TYPED AND IT REACHES A HEADER WHOSE SEPARATOR IS ";".
-
-    ``questionnaire_warnings`` interpolates the questionnaire's title into the sentence that tells a
-    designer their annexure is missing, and ``frontend/lib/designWorkshops.ts`` splits
-    ``x-report-warnings`` on ``";"`` and prints each piece as its own warning. So a form called
-    "Loom survey; round two" — an ordinary thing to call a second round of fieldwork — delivered
-    that one sentence as two, the second of them ``"round two)."``, which says nothing at all on its
-    own. Measured against the running server before this was fixed: count 2, three pieces on screen.
-
-    PHOTO_CATALOGUE rather than the default, deliberately: it raises two warnings, so nothing is
-    near the header's budget and this pins the SEPARATOR question alone rather than re-testing the
-    truncation the test above owns.
-
-    The split asserted here is the frontend's — ``";"``, not ``"; "`` — because what is pinned is
-    what the designer reads.
-    """
     workshop_id = _open_workshop(client, world, {"title": f"Split title {world['stamp']}", "templateId": "PHOTO_CATALOGUE"})
 
     title = f"Loom survey; round two {world['stamp']}"
@@ -1572,8 +1274,6 @@ async def test_a_questionnaire_title_a_designer_typed_cannot_split_its_own_warni
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_a_colleague_may_answer_a_questionnaire_but_may_not_reword_it(client, world):
-    """The split the access model turns on: handing somebody a form to fill in must not hand them
-    the ability to reword it halfway through the fieldwork."""
     created = _upload(
         client,
         world,
@@ -1614,18 +1314,6 @@ async def test_a_colleague_may_answer_a_questionnaire_but_may_not_reword_it(clie
 async def test_a_designer_cannot_rewrite_whose_sitting_a_colleagues_answers_belong_to(
     client, world
 ):
-    """THE UNGUARDED WRITE.
-
-    ``update_entry`` checked that the caller was A designer and that the sitting belonged to the
-    named questionnaire, and nothing else — so any designer could PATCH any sitting and overwrite
-    ``respondentName``, which is the NAME OF THE PERSON INTERVIEWED. That is one designer
-    relabelling whose testimony a recorded answer belongs to, on a research instrument whose
-    report goes to a ministry, with nothing in the document to show it happened. The route needs
-    only the entry id, and ids travel in URLs.
-
-    The sitting is recorded by the colleague here, so the person refused is the questionnaire's
-    OWNER's peer rather than a stranger: neither the form nor the sitting is theirs.
-    """
     created = _upload(
         client,
         world,
@@ -1645,7 +1333,6 @@ async def test_a_designer_cannot_rewrite_whose_sitting_a_colleagues_answers_belo
         headers=colleague,
     ).json()
 
-    # A third designer — neither the sitting's author nor the form's owner.
     stranger = _headers(world, "stranger")
     refused = client.patch(
         f"/api/questionnaires/{created['id']}/entries/{entry['id']}",
@@ -1654,7 +1341,6 @@ async def test_a_designer_cannot_rewrite_whose_sitting_a_colleagues_answers_belo
     )
     assert refused.status_code == 403, refused.text
 
-    # And the name is still the one the interviewer recorded.
     reread = client.get(
         f"/api/questionnaires/{created['id']}", headers=colleague
     ).json()["entries"]
@@ -1664,9 +1350,6 @@ async def test_a_designer_cannot_rewrite_whose_sitting_a_colleagues_answers_belo
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_the_interviewer_and_the_form_owner_may_both_correct_a_sitting(client, world):
-    """The other half, and the reason this is not simply ``_require_owner``: the person who ran
-    the sitting mistypes the respondent's name and has to be able to fix it, and the designer
-    whose instrument it is has to be able to correct their own fieldwork."""
     created = _upload(
         client,
         world,
@@ -1711,13 +1394,6 @@ async def test_the_interviewer_and_the_form_owner_may_both_correct_a_sitting(cli
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_another_designers_sittings_do_not_ride_along_on_the_form(client, world):
-    """Reading the FORM stays open — a colleague handed it has to be able to fill it in — and the
-    SITTINGS recorded against it are a different thing wearing the same payload.
-
-    Each one carries the respondent's name, the interviewer's notes and every recorded answer.
-    Any designer holding the id got all of it, while their own list view showed ``total: 0`` for
-    the same questionnaire: the app said it did not exist and the API handed it over.
-    """
     created = _upload(
         client,
         world,
@@ -1751,11 +1427,8 @@ async def test_another_designers_sittings_do_not_ride_along_on_the_form(client, 
     for secret in ("Sita Devi", "Her account of the dye pit.", "Twelve looms"):
         assert secret not in body, f"{secret!r} reached a designer who recorded none of it"
 
-    # The questions themselves are untouched, and so is the fact that one of them has answers —
-    # that is a property of the question, not of who is looking at it.
     assert _questions(payload)["Q?"]["hasAnswers"] is True
 
-    # The owner still sees their own fieldwork in full.
     mine = client.get(f"/api/questionnaires/{created['id']}", headers=_headers(world)).json()
     assert [e["respondentName"] for e in mine["entries"]] == ["Sita Devi"]
 
@@ -1763,9 +1436,6 @@ async def test_another_designers_sittings_do_not_ride_along_on_the_form(client, 
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_the_workbook_of_somebody_elses_answers_is_not_a_public_download(client, world):
-    """The second door onto the same data, and a wider one: ``export_payload`` is deliberately
-    lossless, so the .xlsx carries every sitting, every respondent's name and every answer in one
-    file. Narrowing the JSON while leaving this open would have moved the leak, not closed it."""
     created = _upload(
         client,
         world,
@@ -1790,18 +1460,6 @@ async def test_the_workbook_of_somebody_elses_answers_is_not_a_public_download(c
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_the_database_itself_refuses_to_orphan_an_answer(client, world):
-    """THE FLOOR UNDER THE WHOLE RULE.
-
-    Everything above is enforced in Python, and a rule that lives only in Python is one
-    ``delete_many`` away from orphaning a fortnight of somebody's fieldwork — written by a future
-    contributor who never read the service. So this reaches PAST the service layer and deletes an
-    answered question directly through Prisma. Postgres must refuse it.
-
-    Its OWN Prisma client, not the ``db`` singleton the app uses. That one is bound to the
-    TestClient's event loop, and awaiting it from this test's loop fails with "bound to a different
-    event loop" rather than with anything to do with the constraint under test — which is exactly
-    the cross-loop trap the ``world`` fixture's docstring warns about.
-    """
     from prisma.errors import ForeignKeyViolationError
 
     from prisma import Prisma
@@ -1831,7 +1489,6 @@ async def test_the_database_itself_refuses_to_orphan_an_answer(client, world):
     try:
         with pytest.raises(ForeignKeyViolationError):
             await own.questionnaireformquestion.delete(where={"id": question_id})
-        # Still there, still answered.
         survivor = await own.questionnaireformquestion.find_unique(where={"id": question_id})
         assert survivor is not None
     finally:
@@ -1841,19 +1498,6 @@ async def test_the_database_itself_refuses_to_orphan_an_answer(client, world):
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_a_question_someone_only_tabbed_past_can_still_be_deleted(client, world):
-    """THE BLANK-ANSWER FOREIGN KEY, which reached a designer as a bare 500.
-
-    `guard_question_edit` decides retire-vs-delete on whether an answer has actual TEXT, and a row
-    saved as "" or "   " deliberately does not count — it must not freeze a question nobody ever
-    answered. That judgement is right. But the ROW still exists and
-    `QuestionnaireFormAnswer.questionId` is `onDelete: Restrict`, so Postgres refused the delete and
-    the response was "Something went wrong on the server" with a ForeignKeyViolationError in the log
-    and nothing on screen a designer could act on.
-
-    It is the ordinary path, not an edge case. The app writes exactly these rows when somebody opens
-    a sitting, tabs through it and saves — which is what a designer does the first time they look at
-    their own form. Then they tidy up a question they mistyped, and it breaks.
-    """
     created = client.post(
         "/api/questionnaires",
         json={"title": f"Tabbed past {world['stamp']}"},
@@ -1887,7 +1531,6 @@ async def test_a_question_someone_only_tabbed_past_can_still_be_deleted(client, 
     assert entry.status_code == 201, entry.text
     entry_id = entry.json()["id"]
 
-    # Whitespace, not None: this is what the form sends for a box that was focused and left alone.
     saved = client.put(
         f"/api/questionnaires/{questionnaire_id}/entries/{entry_id}/answers",
         json={"answers": [{"questionId": question_id, "answerText": "   "}]},
@@ -1897,7 +1540,7 @@ async def test_a_question_someone_only_tabbed_past_can_still_be_deleted(client, 
 
     removed = client.delete(
         f"/api/questionnaires/{questionnaire_id}/questions/{question_id}",
-        headers=_headers(world, "admin"),  # deleting is a content admin's act (2026-10-20)
+        headers=_headers(world, "admin"),
     )
     assert removed.status_code == 200, removed.text
     assert removed.json()["action"] == "deleted", (
@@ -1910,7 +1553,6 @@ async def test_a_question_someone_only_tabbed_past_can_still_be_deleted(client, 
 @pytest.mark.skipif(not _LOCAL, reason="needs a LOCAL database")
 @pytest.mark.anyio
 async def test_a_question_with_a_real_answer_is_still_retired_rather_than_deleted(client, world):
-    """The other half of the same rule, pinned so the fix above cannot be widened into data loss."""
     created = client.post(
         "/api/questionnaires",
         json={"title": f"Really answered {world['stamp']}"},
@@ -1942,7 +1584,7 @@ async def test_a_question_with_a_real_answer_is_still_retired_rather_than_delete
 
     removed = client.delete(
         f"/api/questionnaires/{questionnaire_id}/questions/{question_id}",
-        headers=_headers(world, "admin"),  # deleting is a content admin's act (2026-10-20)
+        headers=_headers(world, "admin"),
     )
     assert removed.status_code == 200, removed.text
     assert removed.json()["action"] == "retired"

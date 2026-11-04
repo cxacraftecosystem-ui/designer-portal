@@ -13,49 +13,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/**
- * ONE PHOTOGRAPH FEEDS EVERY DERIVATION CARD, AND THE TWO CLIENTS AGREE ABOUT WHAT THAT IS CALLED —
- * requirements 5, 6, 18 and 20 on the handset.
- *
- * ── WHAT THIS PINS AND WHY EACH HALF NEEDS PINNING ────────────────────────────────────────────
- *
- * **The words**, because requirement 20 is not a feeling. This repository already holds the five
- * export-format strings identical across the two clients and treats that as the standard, and
- * `DwSketchTracePlateMathTest` already reads the portal's own source rather than a transcription of
- * it — *"a transcription of the portal's string is just a third copy that can go stale in its own
- * right"*. The shared-photograph card is the newest surface both clients have, so the same discipline
- * applies to it from the day it lands rather than after the first divergence.
- *
- * **The one sentence that deliberately DOES NOT match**, which is the more important half. The other
- * client tells a designer "Nothing has been filed yet", and that is true there — its pick is an
- * unfiled `File` in memory. It is false here: a photograph a panel can see on this client is one
- * `DwMediaBridge.attach` has already imported into `filesDir` and written into the row. Copying that
- * sentence across would send a designer looking for a save button that has already been pressed, so
- * the divergence is asserted rather than left to be "fixed" by somebody tidying the two clients into
- * agreement.
- *
- * **The collapsed summaries**, because a collapsed card that says only its own title is
- * indistinguishable from one nobody has touched — which is the substance of the report the accordions
- * answer, and it was true of the tracing card until this change.
- *
- * ── AND THE SOURCE GUARDS AT THE END ──────────────────────────────────────────────────────────
- *
- * There is no Robolectric and no `createComposeRule` on this module's test classpath — see the block
- * comment in `DwPhotoMeasureFieldTest` — so the composition-level properties are read off the source.
- * The point is not to make a regression impossible but to make it DELIBERATE, past a test that names
- * the failure it came from.
- */
 class DwSketchDerivationPhotoTest {
 
-    /* ────────────────────────────────────────────────────────────────────────────────────────────
-     * The bundled registry
-     *
-     * THE SHIPPED ASSET AND NOT THE LIVE SERVER, for `DwPhotoMeasureFieldTest`'s reason:
-     * `design-workshop-schema.json` is what a handset renders from before it has ever had a
-     * connection, so it is the copy that decides what a courtyard sees.
-     * ──────────────────────────────────────────────────────────────────────────────────────────── */
-
-    /** Matches the app's own decoder: the registry carries keys the DTOs here do not model. */
     private val json = Json { ignoreUnknownKeys = true }
 
     private val schema: SchemaResponse by lazy {
@@ -74,11 +33,6 @@ class DwSketchDerivationPhotoTest {
     private fun siblingsOf(stageKey: String, entityKey: String): Map<String, FieldDto> =
         entityOf(stageKey, entityKey).liveFields.associateBy { it.key }
 
-    /* ────────────────────────────────────────────────────────────────────────────────────────────
-     * The words, against the other client's own source
-     * ──────────────────────────────────────────────────────────────────────────────────────────── */
-
-    /** The unit tests run with `app/` as the working directory — see `DwSketchTracePlateMathTest`. */
     private fun portalSource(): String {
         val file = File("../../frontend/components/sketches/upload/SharedPhotoField.tsx")
         assertTrue(
@@ -91,12 +45,6 @@ class DwSketchDerivationPhotoTest {
         return file.readText(Charsets.UTF_8)
     }
 
-    /**
-     * **THE CARD IS CALLED THE SAME THING ON BOTH CLIENTS.**
-     *
-     * A card that does one job under two names is the same defect as a format list that does, and the
-     * format list is the precedent this repository already holds itself to.
-     */
     @Test
     fun `the shared photograph card carries the portal's label`() {
         assertTrue(
@@ -106,13 +54,6 @@ class DwSketchDerivationPhotoTest {
         )
     }
 
-    /**
-     * **THE IDLE SENTENCE IS THE PORTAL'S, WORD FOR WORD.**
-     *
-     * Every clause of it is true on this client too — both panels below do work from one photograph,
-     * and neither files anything until a button in it is pressed — so there is no reason for two
-     * versions of it to exist, and every reason for the two not to drift.
-     */
     @Test
     fun `the idle sentence is the portal's, character for character`() {
         assertTrue(
@@ -122,27 +63,11 @@ class DwSketchDerivationPhotoTest {
         )
     }
 
-    /**
-     * **AND THE ONE SENTENCE THAT MUST NOT BE COPIED.**
-     *
-     * The portal's chosen-state sentence says "Nothing has been filed yet". That is a promise about an
-     * unfiled browser `File`. On this client the photograph is already imported into `filesDir` and
-     * already written into the row — a panel cannot be handed a path to anything else — so the same
-     * words here would be the receipt-that-understates version of a failure this tab has already paid
-     * for once in the other direction.
-     */
     @Test
     fun `the chosen sentence tells this client's truth and not the portal's`() {
         val sentence = dwSharedPhotographSentence(imageLabel = "Sketch image", rowName = "Untitled 1")
 
         assertTrue(
-            // "EVERY" AND NOT THE PORTAL'S "BOTH", WHICH IS A COUNT AND NOT A PHRASING. The portal
-            // mounts two panels under this card; this client mounts three, because
-            // `dwOffersSketchRectify` gives it a straightening panel the browser's Upload tab has no
-            // equivalent of. A word that counted to two under three cards would leave a designer
-            // working out which two — on the one sentence whose whole job is to say that they all
-            // follow one photograph. Nothing is enumerated instead: see the function's own header for
-            // why a list written there would be a second description of the mount.
             "the shared clause must promise EVERY panel below, not a count of them",
             sentence.startsWith("Every panel below works from this photograph."),
         )
@@ -167,27 +92,6 @@ class DwSketchDerivationPhotoTest {
         )
     }
 
-    /**
-     * **EVERY DERIVATION CARD IS CALLED THE SAME THING ON BOTH CLIENTS — requirement 20.**
-     *
-     * ── THE TIE-BREAK THIS TEST IS THE ENFORCEMENT OF ─────────────────────────────────────────
-     *
-     * All three of these cards had TWO names each until the headers became accordion controls: one
-     * spelling while shut and another while open. Picking one of the two was necessary — a control
-     * whose label changes when you press it reads as a different control — but the tie-break used
-     * was internal to this client, and two of the three landed on the spelling the portal does not
-     * use. So a designer who traced a sheet in a browser and then picked up the phone was looking for
-     * "Trace a sketch into line art" under a card called something else.
-     *
-     * The measuring card was never wrong, and it is the precedent: `MeasureFromPhotoCard.tsx:164`
-     * carries this repository's own re-check instruction in its header —
-     * `grep -rn "Measure a dimension from a photograph" frontend/ android/` — which only means
-     * anything if the answer is meant to be both trees. This is that grep, run by CI.
-     *
-     * READ OFF THE PORTAL'S SOURCE, NOT A TRANSCRIPTION OF IT, for `DwSketchTracePlateMathTest`'s
-     * reason: a transcription is a third copy that can go stale in its own right. A rename on either
-     * client fails here, which is the point — it is meant to be a decision, not a drift.
-     */
     @Test
     fun `the three derivation cards carry the portal's own names`() {
         for ((constant, portal) in listOf(
@@ -211,7 +115,6 @@ class DwSketchDerivationPhotoTest {
         }
     }
 
-    /** A caller with no name for the row still gets a sentence, and it never prints an empty quote. */
     @Test
     fun `the chosen sentence survives a row with no name`() {
         val sentence = dwSharedPhotographSentence(imageLabel = "Sketch image", rowName = null)
@@ -219,26 +122,6 @@ class DwSketchDerivationPhotoTest {
         assertFalse("an empty pair of quotes is a row nobody can identify", sentence.contains("“”"))
     }
 
-    /* ────────────────────────────────────────────────────────────────────────────────────────────
-     * WHERE THE SHARED CARD IS DRAWN AND WHERE IT IS NOT — requirement 7's "where applicable"
-     *
-     * The rest of this class is about the words. This section is about the one place a word would be
-     * spent on a screen that should not have it at all: a card called "Photograph of the sketch",
-     * printing sentences that name a tracing panel, over a prototype that has neither. It was drawn
-     * there for one commit, because the section is mounted from a composable that runs twice — once
-     * per half of the Upload tab — and nothing had asked whether the halves wanted the same thing.
-     * ──────────────────────────────────────────────────────────────────────────────────────────── */
-
-    /**
-     * **A PLATE FIELD IS TWO CARDS, NOT ONE, AND THE ARITHMETIC HAS TO KNOW IT.**
-     *
-     * [DwSketchDerivationSection] draws `DwSketchRectifyPanel` AND `DwSketchTracePanel` off one FILE
-     * field — `dwOffersSketchTrace` is a one-line delegation to `dwOffersSketchRectify` so the two can
-     * never be offered in different places. Counting FIELDS instead of CARDS would make a record with
-     * a plate field and no dimensions come out at one, drop the shared card, and leave a straightening
-     * panel and a tracing panel working from two independent chip selections — which is the exact
-     * failure the shared card exists to prevent, arrived at by tidying.
-     */
     @Test
     fun `a plate field counts as the two cards it mounts`() {
         assertEquals(2, dwDerivationCardCount(offersPlate = true, offersMeasure = false))
@@ -247,15 +130,6 @@ class DwSketchDerivationPhotoTest {
         assertEquals(0, dwDerivationCardCount(offersPlate = false, offersMeasure = false))
     }
 
-    /**
-     * **A PHOTOGRAPH IS SHARED WHEN MORE THAN ONE CARD IS LOOKING AT IT, AND OTHERWISE IT IS JUST A
-     * PHOTOGRAPH.**
-     *
-     * The one-card case is the one that matters and it is a prototype: there the measuring card
-     * already owns a chooser over exactly the photographs a shared card would be choosing from, so
-     * the shared card adds a second control and no information — two pickers for one photograph,
-     * which is the literal duplication the whole change was reported to remove.
-     */
     @Test
     fun `one card is not a shared photograph`() {
         assertTrue(dwSharesOnePhotograph(offersPlate = true, offersMeasure = true))
@@ -271,22 +145,6 @@ class DwSketchDerivationPhotoTest {
         assertFalse(dwSharesOnePhotograph(offersPlate = false, offersMeasure = false))
     }
 
-    /**
-     * **AND AGAINST THE BUNDLED REGISTRY, WHICH IS WHAT A COURTYARD ACTUALLY RENDERS FROM.**
-     *
-     * The arithmetic above is only as good as the two predicates feeding it, and those are declaration
-     * lookups that fail silently — a renamed key or a retyped field takes a card away with no warning
-     * and no log. So the two entities the Upload tab actually has halves for are asserted by name.
-     *
-     * A SKETCH SHARES: `lineArtFile` is "Line art / vector file", which `DW_LINE_ART_KEY` matches, so
-     * a sketch gets the straightening panel, the tracing panel and the measuring card — three cards,
-     * one photograph, and the card above them is the only thing that says which.
-     *
-     * A PROTOTYPE DOES NOT: its two FILE fields are `measurementSheet` and `modelFile`, and neither
-     * "Measurement sheet" nor "3D model" is the home of a plate. One card, so no shared card — which
-     * is also what `UploadTabPanel.tsx:391-407` decided on the other client, and requirement 20 is
-     * about the two of them not disagreeing on a question a designer can see the answer to.
-     */
     @Test
     fun `the registry gives a sketch a shared photograph and a prototype none`() {
         for ((location, expected) in mapOf(
@@ -311,15 +169,6 @@ class DwSketchDerivationPhotoTest {
         }
     }
 
-    /**
-     * **THE CARD AND THE SUPPLY ARE ONE DECISION, READ ONCE.**
-     *
-     * The pairing is the load-bearing half and it can only be checked here. A shared card drawn
-     * WITHOUT a hosted supply is a chooser the panels below ignore; a hosted supply WITHOUT the card
-     * points three panels at a photograph nothing on the screen names, and `DwSketchTracePanel`'s "No
-     * photograph has been chosen above yet" would then be describing a control that does not exist.
-     * One `val`, read at four sites, is what makes those two states unrepresentable.
-     */
     @Test
     fun `the shared card and the hosted supply are decided together`() {
         val code = sourceOf("DwSketchDerivationPhoto.kt")
@@ -343,21 +192,6 @@ class DwSketchDerivationPhotoTest {
         )
     }
 
-    /**
-     * **A RECORD WITH NO PHOTOGRAPH SAYS SO. A SECTION THAT VANISHES IS A FEATURE NOBODY HAS.**
-     *
-     * Every card in the section returns early with no photographs, which is right on a stage form —
-     * the field they sit on is on screen with its own capture card and its emptiness is self-evident
-     * — and wrong on the Upload tab, where these cards are the only sign the capability exists. The
-     * other client fixed the same omission and named what it had cost: *"A control that vanishes is
-     * indistinguishable from a build that does not have the feature, which is precisely how this
-     * surface came to be reported as 'completely missing'."*
-     *
-     * The sentence must not point at a control that is not there, which is the second half of the
-     * lesson (`MeasureFromPhotoCard.tsx:604-611`): a prototype's `prototypePhotos` has no capture
-     * card on this tab, so "attach one above" alone would send a designer looking for a picker that
-     * is on the stage form. Both destinations are named and neither is claimed to be here.
-     */
     @Test
     fun `a record with no photograph is told so rather than shown nothing`() {
         assertTrue(
@@ -387,20 +221,6 @@ class DwSketchDerivationPhotoTest {
         )
     }
 
-    /**
-     * **A PROTOTYPE IS NOT TOLD ABOUT PANELS IT DOES NOT HAVE — requirement 7.**
-     *
-     * This is the assertion the constant this function replaced could not make. It read "…so there is
-     * nothing to trace, straighten or measure against" on every record that reached it, and it reaches
-     * prototypes: `dwOffersSketchRectify` refuses both FILE fields a prototype declares — "Measurement
-     * sheet" and "3D model" are not the home of a plate — so that half of the Upload tab mounts no
-     * tracing panel and no straightening panel at all.
-     *
-     * A designer on an empty prototype row was therefore reading, in the ONE sentence on that screen,
-     * the names of two capabilities the record does not have. A control that is missing can be looked
-     * for and not found; a capability that was never offered, named in the only sentence there is,
-     * reads as a build that is broken — and there is nowhere to scroll to find out otherwise.
-     */
     @Test
     fun `the empty sentence names only the acts this record offers`() {
         val sketch = dwNoPhotographSentence(
@@ -447,17 +267,6 @@ class DwSketchDerivationPhotoTest {
         assertTrue(plateOnly.contains("nothing to trace or straighten"))
     }
 
-    /**
-     * **AND IT NAMES THE FIELDS A PHOTOGRAPH WOULD GO IN, WHICH IS THE OTHER CLIENT'S OWN FIX.**
-     *
-     * `MeasureFromPhotoCard.tsx` corrected exactly this sentence for exactly this half and recorded
-     * why: a prototype's photographs live in `prototypePhotos` AND `turntablePhotos`, and only the
-     * second has a capture card on this tab, so an un-named sentence sends a designer hunting for a
-     * picker that is on the stage form. Both fields are named, and so are both places to attach one.
-     *
-     * THE EMPTY LIST IS A STATE AND NOT A BUG: a caller that does not know which fields these are must
-     * still get a sentence that points somewhere, and must never get one naming a field nobody read.
-     */
     @Test
     fun `the empty sentence names the image fields where it knows them`() {
         val named = dwNoPhotographSentence(
@@ -482,17 +291,6 @@ class DwSketchDerivationPhotoTest {
         )
     }
 
-    /* ────────────────────────────────────────────────────────────────────────────────────────────
-     * The size line
-     * ──────────────────────────────────────────────────────────────────────────────────────────── */
-
-    /**
-     * **"0×0" IS NOT A PHOTOGRAPH AND MUST NEVER BE PRINTED.**
-     *
-     * The header read is off the main thread and takes a few hundred milliseconds, so "not yet known"
-     * is an ordinary state for the whole of one commit — and stays the state for good on the branch
-     * where this device cannot open the bytes at all.
-     */
     @Test
     fun `the size line says it is still opening rather than inventing a frame`() {
         val line = dwPhotographSizeSentence(sourceWidth = 0, sourceHeight = 0, sizeBytes = 2_400_000L)
@@ -501,7 +299,6 @@ class DwSketchDerivationPhotoTest {
         assertTrue("the file size is known before the frame is, and is worth saying", line.contains("2.4 MB"))
     }
 
-    /** With the header read, the line is the frame and the file — what tells two photographs apart. */
     @Test
     fun `the size line names the frame and the file`() {
         assertEquals(
@@ -514,16 +311,6 @@ class DwSketchDerivationPhotoTest {
         )
     }
 
-    /* ────────────────────────────────────────────────────────────────────────────────────────────
-     * What the collapsed tracing card reports
-     * ──────────────────────────────────────────────────────────────────────────────────────────── */
-
-    /**
-     * **AN UNTOUCHED CARD READS AS THE INVITATION IT WAS.**
-     *
-     * `dwMeasureSummary` returns null for the same state and for the same reason: a summary of nothing
-     * would make a card nobody has opened look like a set-up nobody made.
-     */
     @Test
     fun `a tracing card nobody has used has no summary`() {
         assertNull(
@@ -537,12 +324,6 @@ class DwSketchDerivationPhotoTest {
         )
     }
 
-    /**
-     * **IT NAMES THE PHOTOGRAPH AND THE COUNT, NEVER ONE WITHOUT THE OTHER.**
-     *
-     * "412 paths" does not say which sheet, on a card that can be pointed at any of the record's
-     * photographs; the sheet alone does not say whether anything came out of it.
-     */
     @Test
     fun `a finished trace is reported with its photograph and its counts`() {
         val summary = dwTraceCardSummary(
@@ -555,12 +336,6 @@ class DwSketchDerivationPhotoTest {
         assertEquals("traced from “sheet-3.jpg” · 412 paths · 5310 nodes", summary)
     }
 
-    /**
-     * **A PREVIEW SAYS SO.**
-     *
-     * A preview is a coarser drawing that may not be attached, and a collapsed card that reported it
-     * as a trace would send a designer back expecting the thing they can actually file.
-     */
     @Test
     fun `a preview is reported as a preview`() {
         val summary = dwTraceCardSummary(
@@ -573,13 +348,6 @@ class DwSketchDerivationPhotoTest {
         assertTrue(summary.orEmpty().startsWith("a preview traced from “sheet-3.jpg”"))
     }
 
-    /**
-     * **AN ATTACHMENT OUTLIVES THE DRAWING THAT MADE IT.**
-     *
-     * The drawing belongs to one photograph and is dropped when the photograph changes; the attached
-     * file is on the record whichever photograph the card is pointed at afterwards. So the summary
-     * still reports it with nothing traced.
-     */
     @Test
     fun `an attachment is reported even after the drawing is forgotten`() {
         val summary = dwTraceCardSummary(
@@ -592,10 +360,6 @@ class DwSketchDerivationPhotoTest {
         assertEquals("attached as “Line art / vector file”", summary)
     }
 
-    /* ────────────────────────────────────────────────────────────────────────────────────────────
-     * The source guards
-     * ──────────────────────────────────────────────────────────────────────────────────────────── */
-
     private fun sourceOf(name: String): String {
         val file = File("src/main/java/com/designprototype/workshop/ui/designworkshop/$name")
         assertTrue("$name is missing — a rename must move this guard", file.exists())
@@ -604,14 +368,6 @@ class DwSketchDerivationPhotoTest {
             .replace(Regex("""//[^\n]*"""), " ")
     }
 
-    /**
-     * **A FINISHED SURFACE THAT IS REACHABLE FROM NOTHING IS THE DEFECT THIS REPOSITORY NAMES MOST.**
-     *
-     * `FieldRenderer.kt` records what it cost the last time: five finished, tested export surfaces
-     * were reachable from no screen at all, behind a defaulted argument and a comment that read as a
-     * decision. The shared-photograph section is exactly that kind of surface, so this asserts it is
-     * mounted rather than merely written.
-     */
     @Test
     fun `the shared photograph section is actually mounted`() {
         val chooser = sourceOf("DwSketchChooserUpload.kt")
@@ -634,19 +390,6 @@ class DwSketchDerivationPhotoTest {
         )
     }
 
-    /**
-     * **A TRACE THAT FINISHES AFTER THE PHOTOGRAPH CHANGED MUST NOT WRITE ITS RESULT.**
-     *
-     * This is the one bug a shared owner introduces that the panel never had: the chooser chips are
-     * disabled while `running != null`, so nothing could change the photograph mid-trace — a host
-     * can. Cancellation is most of the answer and not all of it, because Kotlin does not poll for
-     * cancellation between two ordinary statements, and a run that has just returned from
-     * `runtime.trace` is a few assignments away from `result = traced` with no suspension in between.
-     *
-     * A trace of sheet A shown under sheet B's name is a drawing a designer would attach believing it
-     * came from what they are looking at, which is the single worst outcome this panel is written
-     * against.
-     */
     @Test
     fun `a superseded trace cannot write its result`() {
         val panel = sourceOf("DwSketchTracePanel.kt")
@@ -680,14 +423,6 @@ class DwSketchDerivationPhotoTest {
         }
     }
 
-    /**
-     * **NEITHER DERIVATION PANEL OWNS A FILE DIALOG, AND NEITHER MAY GROW ONE.**
-     *
-     * Every photograph these cards can see has already been imported by `DwMediaBridge.attach`, which
-     * is why they are handed a path at all. A picker inside one of them would be a second import route
-     * into a feature whose whole premise is that there is exactly one — and the bytes it produced
-     * would be a content Uri scoped to a task rather than a durable copy under `filesDir`.
-     */
     @Test
     fun `the derivation panels open no file dialogs`() {
         for (name in listOf(
@@ -705,14 +440,6 @@ class DwSketchDerivationPhotoTest {
         }
     }
 
-    /**
-     * **THE PREVIEW IS NOT ALLOWED TO BE A SECOND FULL-SIZE DECODE.**
-     *
-     * The shared card is on screen for as long as the section is, above two cards that are already the
-     * largest allocators in the app. At `DwImageDecode.DISPLAY_EDGE_PX` its thumbnail would be about
-     * six megabytes held permanently; at [DW_SHARED_PREVIEW_EDGE_PX] it is under a tenth of one. This
-     * is the assertion that stops somebody "simplifying" the call by dropping the argument.
-     */
     @Test
     fun `the shared preview decodes small`() {
         val code = sourceOf("DwSketchDerivationPhoto.kt")

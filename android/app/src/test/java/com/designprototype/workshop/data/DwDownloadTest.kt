@@ -7,57 +7,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The body's first reading in these traces: 8,192 bytes, what the API 37 emulator's first published
- * reading carried in run 37939404066. Any non-zero count would do — what the traces pin is that the
- * rate's window opens at the first byte, whatever that first reading weighs.
- */
 private const val FIRST_READ = 8_192L
 
-/**
- * **THE TRANSFER READOUT: EVERY NUMBER ON IT, DRIVEN BY A SCRIPTED CLOCK.**
- *
- * `DwDownload.kt`'s header has claimed since it was written that *"every function takes the clock as
- * an argument, which is what lets `DwDownloadTest` drive a stalled connection, a sub-second download,
- * a server that never sent a length and a zero-byte start on a desktop JVM in microseconds"*. **That
- * file did not exist.** 621 lines of arithmetic behind the one sentence the owner asked for first —
- * *"the loading bar should show speed, expected duration, and how much of it has been downloaded"* —
- * had no test at all, in a lane opened because a number on this surface was not believed.
- *
- * ── WHAT THESE TESTS ARE FOR, WHICH IS NOT "COVERAGE" ─────────────────────────────────────────
- *
- * A fabricated figure is the defect this whole surface is being reviewed for, so every test below
- * asserts against a number computed **independently of the code under test** — a byte count and a
- * clock written out by hand, and the answer worked out in the assertion's own arithmetic. Nothing here
- * reads a constant and asserts the constant equals itself; `DwAsrModelTest` records what this
- * repository already paid for doing that.
- *
- * The two that matter most, because they are the two ways a progress readout lies:
- *
- *  * [aFastStartThenAStallDoesNotPromiseAnEarlyFinish] — the failure `DwDownload.kt`'s sliding window
- *    exists to prevent, asserted against what total-over-elapsed would have printed at the same moment.
- *  * [theTimeRemainingConvergesRatherThanJumping] — an ETA that swings is one a designer learns to
- *    disbelieve, and they then disbelieve the honest one too.
- *
- * And a third, found on a real socket rather than reasoned out:
- * [aSlowFirstByteNeitherDragsTheSpeedNorInventsHoursLeft] — a host's wait before its first byte,
- * divided into the first reading. Since that fix the rate's window opens at the first observation that
- * carries bytes, so the traces below record the zero a fetch takes when its headers arrive AND a first
- * byte, as `DwAsrModelController` does.
- */
 class DwDownloadTest {
 
-    // -----------------------------------------------------------------------------------------
-    // The line the owner asked for
-    // -----------------------------------------------------------------------------------------
-
-    /**
-     * **THE OWNER'S SENTENCE, AS ONE STRING, OFF A MEASURED TRACE.**
-     *
-     * 349 MB total; 173 MB on disk at the top of the window and 185 MB five seconds later. Every
-     * clause is worked out here by hand: 12 MB in 5 s is 2.4 MB/s; 185 of 349 is 53%; the remaining
-     * 164 MB at 2.4 MB/s is 68.3 s, which rounds up to 69 and reads as one minute.
-     */
     @Test
     fun theLineCarriesBytesPercentSpeedAndTimeLeft() {
         val meter = DwTransferMeter(totalBytes = 349_000_000L)
@@ -77,7 +30,6 @@ class DwDownloadTest {
         )
     }
 
-    /** Nothing has arrived yet: a total, a zero, and the word for "not measured", never a speed. */
     @Test
     fun beforeAnythingHasArrivedTheSpeedIsMeasuringNotZero() {
         val meter = DwTransferMeter(totalBytes = 349_000_000L)
@@ -90,12 +42,6 @@ class DwDownloadTest {
         assertEquals("0 kB of 349 MB · 0% · measuring…", dwTransferLine(first))
     }
 
-    /**
-     * A transfer that finished inside the minimum window prints no speed **and no ETA**.
-     *
-     * One 64 KiB buffer landing 200 ms in reads as 300 MB/s, and a rate nobody could reproduce is the
-     * same defect as a rate nobody measured.
-     */
     @Test
     fun aSubSecondTransferNeverPrintsASpeed() {
         val meter = DwTransferMeter(totalBytes = 2_000_000L)
@@ -108,27 +54,12 @@ class DwDownloadTest {
         assertEquals("2 MB of 2 MB · 100% · measuring…", dwTransferLine(done))
     }
 
-    // -----------------------------------------------------------------------------------------
-    // The two ways a progress readout lies
-    // -----------------------------------------------------------------------------------------
-
-    /**
-     * **THE FAILURE THE SLIDING WINDOW EXISTS FOR, ASSERTED AGAINST THE NAIVE ANSWER.**
-     *
-     * 20 MB off a warm cache in the first ten seconds, then 40 kB/s for fifty seconds. The naive
-     * readout — everything received over everything elapsed — is computed in the assertion below from
-     * the same two numbers and is nearly ten times the truth; the ETA it implies is about eighteen
-     * minutes against a real answer above two hours. **A designer plans their afternoon around that
-     * difference.**
-     */
     @Test
     fun aFastStartThenAStallDoesNotPromiseAnEarlyFinish() {
         val total = 349_000_000L
         val meter = DwTransferMeter(totalBytes = total)
-        // The warm-cache burst.
         meter.observe(0L, 0L)
         meter.observe(20_000_000L, 10_000L)
-        // Then a district-town link at 40 kB/s, a sample a second, out to one minute.
         var moved = 20_000_000L
         var readout = meter.readAt(10_000L)
         for (second in 11..60) {
@@ -136,7 +67,6 @@ class DwDownloadTest {
             readout = meter.observe(moved, second * 1_000L)
         }
 
-        // What the naive readout would have printed at this same moment, worked out here.
         val naiveBytesPerSecond = moved * 1_000.0 / 60_000L
         assertTrue(
             "The naive rate should be the optimistic one this test is about.",
@@ -150,7 +80,6 @@ class DwDownloadTest {
             honest < naiveBytesPerSecond / 5.0,
         )
 
-        // And therefore the time left is the true one, not the flattering one.
         val naiveSeconds = ((total - moved) / naiveBytesPerSecond).toLong()
         assertTrue("The naive ETA is the one a designer would plan around.", naiveSeconds < 1_200L)
         assertTrue(
@@ -160,13 +89,6 @@ class DwDownloadTest {
         assertTrue(dwEtaLabel(readout.secondsRemaining)!!.startsWith("about 2 hr"))
     }
 
-    /**
-     * **THE ETA CONVERGES.** On a steady link it counts down, never jumps up, and lands on the truth.
-     *
-     * A number that walks backwards is one a designer learns to disbelieve. 100 MB at a flat 2 MB/s is
-     * fifty seconds; the assertion checks every reading is within four seconds of the remainder worked
-     * out here and that no reading is larger than the one before it.
-     */
     @Test
     fun theTimeRemainingConvergesRatherThanJumping() {
         val total = 100_000_000L
@@ -194,20 +116,6 @@ class DwDownloadTest {
         assertTrue("The trace should have produced a run of ETAs.", checked > 40)
     }
 
-    // -----------------------------------------------------------------------------------------
-    // The wait for the first byte, which is latency and not throughput
-    // -----------------------------------------------------------------------------------------
-
-    /**
-     * **A HOST THAT THINKS FOR THREE SECONDS BEFORE ITS FIRST BYTE MUST NOT PRINT "3 kB/s".**
-     *
-     * The shape of what `DwAsrModelTransferProbeTest` recorded on the API 37 emulator (run
-     * 37939404066): the response headers at 0, the host silent for 2.9 s, an 8,192-byte first reading,
-     * and then the body arriving steadily. The card printed `3 kB/s · about 6 hr 50 min left`, because
-     * the window's origin was the zero recorded at the headers and the first reading was divided by the
-     * server's thinking time. Here the body runs at a flat 1.1 MB/s, sampled every 250 ms as
-     * `publishProgress` does, and every figure is worked out in this test's own arithmetic.
-     */
     @Test
     fun aSlowFirstByteNeitherDragsTheSpeedNorInventsHoursLeft() {
         val total = 71_082_637L
@@ -216,7 +124,6 @@ class DwDownloadTest {
         val firstByteAt = 2_900L
         val first = meter.observe(FIRST_READ, firstByteAt)
 
-        // What the old origin printed at this moment, from the same two numbers.
         val zeroOriginRate = FIRST_READ * 1_000.0 / firstByteAt
         assertEquals("3 kB/s", dwRateLabel(zeroOriginRate))
         val zeroOriginEta = ((total - FIRST_READ) / zeroOriginRate).toLong()
@@ -251,19 +158,12 @@ class DwDownloadTest {
         }
         assertTrue("The trace should have produced a run of measured readings.", measured >= 20)
 
-        // Two seconds into the body: 8,192 + 2,200,000 = 2,208,192 of 71,082,637 bytes (3%), and
-        // 68,874,445 to go at 1.1 MB/s is 62.6 s, which rounds up to 63 and reads as one minute.
         assertEquals(
             "2 MB of 71 MB · 3% · 1.1 MB/s · about 1 min left",
             dwTransferLine(twoSecondsIn!!),
         )
     }
 
-    /**
-     * **AND THE STALL CLOCK STILL STARTS AT THE HEADERS.** Moving the rate's origin to the first byte
-     * must not move this one with it: a host that answers and then sends nothing is the stall a
-     * designer most needs to hear about, and it would otherwise read "measuring…" for ever.
-     */
     @Test
     fun aServerThatAnswersAndThenSendsNothingStallsOnTheHeaderClock() {
         val meter = DwTransferMeter(totalBytes = 71_082_637L)
@@ -279,8 +179,6 @@ class DwDownloadTest {
         assertEquals("0 kB of 71 MB · 0% · stalled", dwTransferLine(stalled))
         assertNotNull(dwStalledSentence(stalled, DwTransferPhase.FETCHING))
 
-        // The first byte does come, late. It clears the stall, and the rate is measured from it — not
-        // from the headers eleven seconds earlier, which would read 2 MB over 13 s instead of over 2 s.
         val firstByteAt = headersAt + DW_RATE_STALL_MILLIS + 1_000L
         assertFalse(meter.observe(FIRST_READ, firstByteAt).stalled)
         val later = meter.observe(FIRST_READ + 2_000_000L, firstByteAt + 2_000L)
@@ -288,14 +186,6 @@ class DwDownloadTest {
         assertEquals(1_000_000.0, later.bytesPerSecond!!, 1.0)
     }
 
-    // -----------------------------------------------------------------------------------------
-    // A connection that stops, and one nobody can describe
-    // -----------------------------------------------------------------------------------------
-
-    /**
-     * Ten seconds without a byte is **stalled** — said instead of a speed, with the ETA withheld and a
-     * sentence naming what happens to the bytes already on the phone.
-     */
     @Test
     fun tenSilentSecondsReadAsStalledAndWithholdTheSpeedAndTheEta() {
         val meter = DwTransferMeter(totalBytes = 349_000_000L)
@@ -323,15 +213,9 @@ class DwDownloadTest {
         )
     }
 
-    /**
-     * A window whose halves disagree many-fold prints the measured speed and **refuses the ETA**,
-     * saying so in words rather than printing a figure that would swing.
-     */
     @Test
     fun anErraticWindowPrintsTheSpeedAndRefusesTheTimeLeft() {
         val meter = DwTransferMeter(totalBytes = 349_000_000L)
-        // The headers at 0 and the first byte at 500 ms: the window runs from 500 ms to 5.5 s, its
-        // first half moving 10 MB and its second 0.1 MB.
         meter.observe(0L, 0L)
         meter.observe(FIRST_READ, 500L)
         meter.observe(FIRST_READ + 10_000_000L, 3_000L)
@@ -345,17 +229,9 @@ class DwDownloadTest {
         )
     }
 
-    /**
-     * **READING THE METER DOES NOT ADVANCE IT**, which is the only reason a stall is visible at all.
-     *
-     * The surface asks on its own clock while the connection delivers nothing. Every answer must keep
-     * the same byte count and a rate that decays towards zero — a sampling read would instead record
-     * that the count is still climbing and hold the old speed for ever.
-     */
     @Test
     fun readingTheMeterNeitherMovesTheBytesNorHoldsTheOldSpeed() {
         val meter = DwTransferMeter(totalBytes = 349_000_000L)
-        // The headers at 0, the body's first byte at 500 ms, and 5 MB more by 2.5 s.
         meter.observe(0L, 0L)
         meter.observe(FIRST_READ, 500L)
         meter.observe(FIRST_READ + 5_000_000L, 2_500L)
@@ -373,18 +249,11 @@ class DwDownloadTest {
         val rateAfterEight = afterEight.bytesPerSecond!!
         assertTrue("Silence must lower the reported rate.", rateAfterFour < rateAfterTwo)
         assertTrue(rateAfterEight < rateAfterFour)
-        // 2.5 MB/s measured over the two seconds after the first byte, halved by two more seconds of
-        // nothing arriving. The first byte's own buffer is the origin, so it is in neither figure.
         assertEquals(2_500_000.0, rateAfterTwo, 1.0)
         assertEquals(1_250_000.0, rateAfterFour, 1.0)
         assertTrue(dwTransferLine(afterFour).startsWith("5 MB of 349 MB · 1% · "))
     }
 
-    // -----------------------------------------------------------------------------------------
-    // What the server did or did not say
-    // -----------------------------------------------------------------------------------------
-
-    /** No `Content-Length` means no percentage and no ETA — bytes and a speed, and nothing invented. */
     @Test
     fun aServerThatSentNoLengthGetsNoPercentageAndNoBar() {
         val meter = DwTransferMeter(totalBytes = null)
@@ -398,7 +267,6 @@ class DwDownloadTest {
         assertEquals("3 MB · 1.0 MB/s", dwTransferLine(readout))
     }
 
-    /** A host that over-serves cannot push the percentage past 100 or the bar off the end. */
     @Test
     fun anOverServingHostCannotDriveThePercentagePastOneHundred() {
         val meter = DwTransferMeter(totalBytes = 349_000_000L)
@@ -410,7 +278,6 @@ class DwDownloadTest {
         assertEquals(0L, readout.secondsRemaining)
     }
 
-    /** The readout refuses to be constructed with a percentage that is not one. */
     @Test
     fun aReadoutRefusesAPercentageOutsideItsRange() {
         val rejected = runCatching {
@@ -427,16 +294,6 @@ class DwDownloadTest {
         assertTrue(rejected.exceptionOrNull() is IllegalArgumentException)
     }
 
-    // -----------------------------------------------------------------------------------------
-    // Resuming
-    // -----------------------------------------------------------------------------------------
-
-    /**
-     * **A RESUME'S PERCENTAGE IS ABOUT THE FILE; ITS SPEED IS ABOUT THIS ATTEMPT.**
-     *
-     * 200 MB was already on the phone. Conflating the two is how a resumed download reads "100%" in
-     * its first millisecond, or claims 200 MB/s.
-     */
     @Test
     fun aResumeCountsThePrefixInThePercentageButNotInTheRate() {
         val meter = DwTransferMeter(totalBytes = 349_000_000L, resumedFromBytes = 200_000_000L)
@@ -449,10 +306,6 @@ class DwDownloadTest {
         assertEquals("203 MB of 349 MB · 58% · 1.0 MB/s · about 2 min left", dwTransferLine(readout))
     }
 
-    /**
-     * The resume decision, arm by arm. **Each of the three refusals is a real corruption avoided**, and
-     * the numbers are the pinned container's.
-     */
     @Test
     fun theResumePlanRefusesEveryPrefixItCannotReasonAbout() {
         val total = 292_571_207L
@@ -485,7 +338,6 @@ class DwDownloadTest {
         )
     }
 
-    /** A 200 with the whole file is not a resume, whatever it says. */
     @Test
     fun onlyATwoOhSixThatStartsWhereWeAskedIsAResume() {
         assertTrue(dwRangeHonoured(206, 200_000_000L, 200_000_000L))
@@ -498,7 +350,6 @@ class DwDownloadTest {
         assertFalse(dwRangeHonoured(416, 0L, 200_000_000L))
     }
 
-    /** `Content-Range` parsing, including the 416 form that must never read as an offset of zero. */
     @Test
     fun theContentRangeOffsetIsReadOrRefused() {
         assertEquals(200L, dwParseContentRangeStart("bytes 200-1000/1001"))
@@ -510,7 +361,6 @@ class DwDownloadTest {
         assertNull(dwParseContentRangeStart("bytes -1-1000/1001"))
     }
 
-    /** The part-file's name is not the finished file's, and the sweep can tell them apart by it. */
     @Test
     fun aPartialIsNamedSoItCannotBeMistakenForAFinishedFile() {
         val partial = dwPartialFileName("model-omnilingual.zip")
@@ -520,11 +370,6 @@ class DwDownloadTest {
         assertFalse(dwIsPartialFileName("model.int8.onnx"))
     }
 
-    // -----------------------------------------------------------------------------------------
-    // The words around the numbers
-    // -----------------------------------------------------------------------------------------
-
-    /** Null in, null out — the readout drops a clause rather than printing "0 MB/s" for unmeasured. */
     @Test
     fun aRateIsNeverInventedAndItsUnitsAreTheOnesTheSizesUse() {
         assertNull(dwRateLabel(null))
@@ -532,11 +377,9 @@ class DwDownloadTest {
         assertEquals("2.4 MB/s", dwRateLabel(2_400_000.0))
         assertEquals("400 kB/s", dwRateLabel(400_000.0))
         assertEquals("40 B/s", dwRateLabel(40.0))
-        // Decimal MB, matching dwBytesLabel — a 349 MB file at "2.4 MiB/s" would not divide.
         assertEquals("1.0 MB/s", dwRateLabel(1_000_000.0))
     }
 
-    /** Coarse on purpose: minutes change slowly enough to be believed. */
     @Test
     fun theTimeLeftIsRoundedTheWayAPersonWaitingWouldRoundIt() {
         assertNull(dwEtaLabel(null))
@@ -549,7 +392,6 @@ class DwDownloadTest {
         assertEquals("about 2 hr 16 min left", dwEtaLabel(8_175L))
     }
 
-    /** Pause keeps the prefix and says how much; the two labels for the two intents are not one word. */
     @Test
     fun aPauseNamesWhatItKeptInBytes() {
         val sentence = dwPausedSentence(184_000_000L)
@@ -561,7 +403,6 @@ class DwDownloadTest {
         assertEquals("Start again", dwPauseLabel(DwTransferControlState.CANCELLED))
     }
 
-    /** Room is asked for before a byte moves, and an unmeasured volume is a refusal, not a guess. */
     @Test
     fun theSpaceRefusalNamesBothFiguresOrRefusesToGuess() {
         assertNull(dwTransferSpaceRefusal(2_000_000_000L, 1_000_000_000L))
@@ -576,7 +417,6 @@ class DwDownloadTest {
         assertTrue(unknown!!.contains("unknown"))
     }
 
-    /** Each phase has one heading, so the copy route and the fetch cannot describe themselves twice. */
     @Test
     fun everyPhaseHasItsOwnHeadingAndNoTwoShareOne() {
         val headings = DwTransferPhase.entries.map { dwTransferHeading(it) }
@@ -585,19 +425,6 @@ class DwDownloadTest {
         assertEquals("Copying onto this phone", dwTransferHeading(DwTransferPhase.COPYING))
     }
 
-    // -----------------------------------------------------------------------------------------
-    // The volume filling up while the bytes were arriving
-    // -----------------------------------------------------------------------------------------
-
-    /**
-     * **THE MESSAGE A FULL PHONE ACTUALLY PRODUCES, WHICH IS THE ONLY REASON THIS IS A STRING TEST.**
-     *
-     * There is no `DiskFullException` on Android: a full volume is an [java.io.IOException] whose
-     * message carries the `errno` name. The exact texts below are the two shapes seen — bionic's
-     * `write failed: ENOSPC (No space left on device)`, and the human clause on its own from a wrapped
-     * rethrow. `DW_TRANSFER_DISK_FULL_SENTENCE` was written for this moment and was drawn nowhere at
-     * all, so what a designer read was the first of those strings.
-     */
     @Test
     fun aFullVolumeIsRecognisedFromWhatThePlatformActuallySays() {
         assertTrue(dwIsDiskFull("write failed: ENOSPC (No space left on device)"))
@@ -610,12 +437,6 @@ class DwDownloadTest {
         assertFalse(dwIsDiskFull(""))
     }
 
-    /**
-     * A fetch promises a resume because it kept the prefix; a copy must not, because it did not.
-     *
-     * Offering "tap Resume" after a copy would name a button that is not drawn — `pause()` refuses any
-     * phase but FETCHING, and the copy's source files are still on the phone anyway.
-     */
     @Test
     fun theDiskFullSentencePromisesAResumeOnlyWhereThereIsOneToPromise() {
         val fetching = dwTransferDiskFullSentence(DwTransferPhase.FETCHING)
@@ -633,25 +454,6 @@ class DwDownloadTest {
         }
     }
 
-    // -----------------------------------------------------------------------------------------
-    // Two threads on one meter
-    // -----------------------------------------------------------------------------------------
-
-    /**
-     * **THE METER IS FED FROM THE IO DISPATCHER AND READ FROM THE MAIN THREAD, AND IT USED TO RACE.**
-     *
-     * `DwAsrModelController.publishProgress` calls [DwTransferMeter.observe] from inside
-     * `withContext(Dispatchers.IO)`; the surface's once-a-second tick calls [DwTransferMeter.readAt] on
-     * the main thread, because that is the only way a stall is ever noticed. Both walk the sample
-     * deque and one of them mutates it. `kotlin.collections.ArrayDeque` nulls the head slot before it
-     * advances the head index, so an interleaved `first()` could read that null and throw inside
-     * `windowRate` — a main-thread crash during a download, in the one code path where losing the
-     * readout also loses the Pause button.
-     *
-     * This drives the same two callers on two threads over a hundred thousand samples. It is a race, so
-     * a green run is not a proof — but the unsynchronised version fails it, and a regression that
-     * removes the lock has something that objects.
-     */
     @Test
     fun aReaderOnAnotherThreadCannotTripTheMeterMidWrite() {
         val meter = DwTransferMeter(totalBytes = 349_000_000L)
@@ -663,8 +465,6 @@ class DwDownloadTest {
                 var moved = 0L
                 for (i in 1..100_000) {
                     moved += 64 * 1024
-                    // A clock that advances fast enough to keep the window pruning on every call,
-                    // which is where the mutation this test is about happens.
                     meter.observe(moved, i * 3L)
                 }
             }.onFailure { failures += it }
@@ -673,7 +473,6 @@ class DwDownloadTest {
             runCatching {
                 for (i in 1..100_000) {
                     val readout = meter.readAt(i * 3L)
-                    // Touch the derived figures so the whole read path is exercised, not just the call.
                     if (readout.receivedBytes >= 0L) reads.incrementAndGet()
                     dwTransferLine(readout)
                 }

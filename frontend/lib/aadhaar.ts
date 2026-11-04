@@ -1,23 +1,3 @@
-/**
- * Aadhaar verification on the web — what the server switched on, the calls, the consent words, and
- * reading the Secure QR out of a picture.
- *
- * ── NOTHING HERE DRAWS UNLESS THE SERVER SAYS SO ──────────────────────────────────────────────
- *
- * Both features are server-side flags that default OFF. The answer arrives on the session payload
- * as `features` (`auth.serialize_user`), and every component in `components/aadhaar/` returns null
- * unless `aadhaarFeaturesOf(user)` says its method is on. An account cached from an older server has
- * no `features` key at all, and that reads as "off".
- *
- * ── THE BROWSER NEVER CHECKS A SIGNATURE ───────────────────────────────────────────────────────
- *
- * UIDAI's signature is verified on the server, against the certificates pinned there. The browser's
- * only work is to turn a photograph of the QR into its text, and a ZIP file into base64 — both are
- * sent over TLS and neither is kept: not in localStorage, not in IndexedDB, not in the outbox. A
- * verification is an online act by design (it needs the server's certificates and writes an audit
- * row), so `saveOrQueue` is deliberately not used here.
- */
-
 import { ApiError, apiFetch, describeApiDetail } from "@/lib/api";
 
 export type AadhaarFeatures = {
@@ -28,7 +8,6 @@ export type AadhaarFeatures = {
 
 const OFF: AadhaarFeatures = { offline: false, online: false, ekyc: false };
 
-/** The switches, read defensively off whatever account object the caller holds. */
 export function aadhaarFeaturesOf(user: unknown): AadhaarFeatures {
   if (!user || typeof user !== "object") return OFF;
   const features = (user as { features?: unknown }).features;
@@ -48,8 +27,6 @@ export function aadhaarEnabled(features: AadhaarFeatures): boolean {
 export type AadhaarStatus = "VERIFIED" | "NAME_MISMATCH" | "REJECTED";
 export type AadhaarMethod = "SECURE_QR" | "OFFLINE_XML" | "ONLINE_OTP" | "ONLINE_EKYC";
 
-/** `records.summary` on the server. Fields beyond the first four are withheld from readers outside
- *  an artisan's circle, so every one of them is optional here. */
 export type AadhaarSummary = {
   status: AadhaarStatus | null;
   verified: boolean;
@@ -66,7 +43,6 @@ export type AadhaarSummary = {
   decidedAt?: string | null;
 };
 
-/** The columns an account row carries when a feature is on (`/me`, `GET /users`). */
 export type AadhaarAccountColumns = {
   aadhaarVerifyStatus?: AadhaarStatus | null;
   aadhaarVerifyMethod?: AadhaarMethod | null;
@@ -93,7 +69,6 @@ export const STATUS_LABEL: Record<AadhaarStatus, string> = {
   REJECTED: "Aadhaar not accepted"
 };
 
-/** Who the verification is about. */
 export type AadhaarSubject = { kind: "self" } | { kind: "artisan"; id: string };
 
 function base(subject: AadhaarSubject): string {
@@ -165,7 +140,6 @@ export function decideAadhaar(
   return apiFetch<AadhaarSummary>(path, { method: "POST", body: JSON.stringify({ accept }) });
 }
 
-/** The server's refusal sentence, or a fallback. Refusals arrive as `{detail: {code, message}}`. */
 export function aadhaarErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) {
     const payload = error.payload;
@@ -175,13 +149,6 @@ export function aadhaarErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-/**
- * ── THE CONSENT NOTICE ────────────────────────────────────────────────────────────────────────
- *
- * Shown, in full, before any scan, upload or number is accepted; the server refuses a request whose
- * `consent` is not true. Plain words, and the same sentences the handset shows
- * (`android/.../ui/aadhaar/AadhaarCopy.kt`) — change them together.
- */
 export function consentPoints(subject: AadhaarSubject): string[] {
   const whose = subject.kind === "self" ? "your" : "the artisan's";
   return [
@@ -199,7 +166,6 @@ export function consentStatement(subject: AadhaarSubject): string {
     : "The artisan has heard this read out and agrees to verify their identity with Aadhaar.";
 }
 
-/** A File to base64, for the offline e-KYC ZIP. The bytes stay in memory. */
 export async function fileToBase64(file: Blob): Promise<string> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   let binary = "";
@@ -210,7 +176,6 @@ export async function fileToBase64(file: Blob): Promise<string> {
   return btoa(binary);
 }
 
-/** A Secure QR's text is a long decimal integer. Anything else is not one, said before upload. */
 export function looksLikeSecureQr(text: string): boolean {
   const digits = text.replace(/\s+/g, "");
   return digits.length > 200 && /^\d+$/.test(digits);

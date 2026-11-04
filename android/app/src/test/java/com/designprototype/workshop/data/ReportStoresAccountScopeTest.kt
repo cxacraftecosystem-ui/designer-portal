@@ -7,10 +7,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * M15 (audit 21 Oct 2026): the two report stores hold respondents' names and answers, so a copy is
- * served only to the account that read it, as the web's questionnaire cache already refuses.
- */
 class ReportStoresAccountScopeTest {
 
     @Test
@@ -18,7 +14,6 @@ class ReportStoresAccountScopeTest {
         assertTrue(dwCacheReadableBy("usr_a", "usr_a"))
         assertFalse(dwCacheReadableBy("usr_a", "usr_b"))
         assertFalse(dwCacheReadableBy("usr_a", null))
-        // A copy an earlier build wrote carries no owner and is refused to everybody.
         assertFalse(dwCacheReadableBy("", "usr_a"))
     }
 

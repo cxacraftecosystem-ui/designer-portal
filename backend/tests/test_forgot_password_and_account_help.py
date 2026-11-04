@@ -1,18 +1,3 @@
-"""ACCOUNT PARITY (2026-10-17): "Forgot your password?", a first password for a provider-only
-account, "Sign out of every device", the access list's "with a password", and ``hasPassword``.
-
-The forgot-password door is ported from cxa-cms (``lib/auth/password-reset.ts``) and every assertion
-below about it is one of that file's rules: ONE answer whatever the address, the address-dependent
-work done after the answer, a per-connection 429 and a SILENT per-address cap, no mail for an account
-with no password or one the allow-list does not admit, an audit row for every request, and a link
-whose origin is the configured one and never the request's ``Host``.
-
-Postgres is required — the routes read accounts, the allow-list and the link table — so the module
-skips itself when ``DATABASE_URL`` does not point at a local database. Rows written by the app are
-read back through ``client.portal`` (``tests/test_stage_sync.py`` carries the argument): the Prisma
-connection belongs to the TestClient's loop once the ``with`` block is open.
-"""
-
 import asyncio
 import functools
 import time
@@ -34,10 +19,8 @@ pytestmark = [needs_db]
 
 PASSWORD = "forgot-password-original-1"
 
-#: The one answer, written out rather than imported so a rewording is a decision a test notices.
 ONE_ANSWER = "If that address has an account, a reset link is on its way."
 
-#: slug -> (role, has a password, allow-list status or None, provider)
 ACCOUNTS: dict[str, tuple[str, bool, str | None, str]] = {
     "admin": ("ADMIN", True, "ACTIVE", "LOCAL"),
     "researcher": ("RESEARCHER", True, "ACTIVE", "LOCAL"),
@@ -102,7 +85,6 @@ def client(world):
 
 @pytest.fixture
 def mail_on(monkeypatch):
-    """Mail configured, without SES: messages are queued in the outbox and nothing is sent."""
     monkeypatch.setattr(mailer, "mail_configured", lambda settings=None: True)
 
 
@@ -128,10 +110,6 @@ def _forgot(client: Any, email: str, **headers: str) -> Any:
     return client.post("/api/auth/forgot-password", json={"email": email}, headers=headers)
 
 
-# ==================================================================================================
-# "Forgot your password?"
-# ==================================================================================================
-
 
 def test_known_and_unknown_addresses_get_the_same_answer(world, client, mail_on):
     known = world["address"]("researcher")
@@ -151,7 +129,6 @@ def test_known_and_unknown_addresses_get_the_same_answer(world, client, mail_on)
     assert _requests_for(client, unknown)[0].accountId is None
     assert _messages_to(client, unknown) == []
 
-    # The link went to the account's own address, as a RESET nobody issued.
     tokens = _read(
         client,
         db.passwordresettoken.find_many,
@@ -163,8 +140,6 @@ def test_known_and_unknown_addresses_get_the_same_answer(world, client, mail_on)
 
 
 def test_the_link_is_built_from_the_configured_origin_not_the_host_header(world, client, mail_on):
-    """The previous test sent a forged ``Host`` and ``X-Forwarded-Host``; the sealed link must not
-    carry either."""
     known = world["address"]("researcher")
     messages = _messages_to(client, known)
     assert messages, "no message was queued for the known address"
@@ -227,13 +202,8 @@ def test_the_audit_row_records_the_client(world, client):
     assert row.ipAddress
 
 
-# ==================================================================================================
-# A first password for an account that signs in with a provider
-# ==================================================================================================
-
 
 def _fresh_google(monkeypatch, email: str, *, age_seconds: int = 0) -> dict[str, str]:
-    """A Google ID token, as ``verify_google_token`` would answer for one issued ``age_seconds`` ago."""
     from app.api.routes import auth as auth_routes
 
     claims = {"email": email, "email_verified": True, "iat": int(time.time()) - age_seconds}
@@ -260,9 +230,7 @@ def test_a_provider_only_account_sets_a_first_password_with_a_fresh_provider_sig
 
     after = client.get("/api/auth/me", headers={"Authorization": f"Bearer {fresh}"})
     assert after.status_code == 200 and after.json()["hasPassword"] is True
-    # The session the password was set from carries on; any other one opened before it ends.
     assert client.get("/api/auth/me", headers={"Authorization": f"Bearer {old}"}).status_code == 401
-    # And the account now signs in either way: with the password, too.
     signed_in = client.post(
         "/api/auth/login",
         json={"email": world["address"]("googler"), "password": "a-first-password-1"},
@@ -271,8 +239,6 @@ def test_a_provider_only_account_sets_a_first_password_with_a_fresh_provider_sig
 
 
 def test_without_a_fresh_provider_sign_in_it_is_asked_to_confirm(world, client, monkeypatch):
-    """A session is not proof any more (2026-10-17): an hour-old one and a brand-new one alike are
-    asked for the provider's own proof, and a stale proof is refused the same way."""
     person = world["people"]["staleGoogler"]
     settings = get_settings()
     now = int(time.time())
@@ -302,16 +268,12 @@ def test_without_a_fresh_provider_sign_in_it_is_asked_to_confirm(world, client, 
     assert row.passwordHash is None
 
 
-# ==================================================================================================
-# Sign out of every device
-# ==================================================================================================
-
 
 def test_an_administrator_signs_somebody_out_of_every_device(world, client):
     target = world["people"]["target"]
     held = _headers(world, "target")
     assert client.get("/api/auth/me", headers=held).status_code == 200
-    time.sleep(1.1)  # the watermark is compared with a token's whole-second ``iat``
+    time.sleep(1.1)
 
     answer = client.post(f"/api/users/{target.id}/sign-out-everywhere", headers=_headers(world, "admin"))
     assert answer.status_code == 200, answer.text
@@ -319,7 +281,6 @@ def test_an_administrator_signs_somebody_out_of_every_device(world, client):
     assert "hasPassword" in answer.json() and "passwordHash" not in answer.json()
     assert client.get("/api/auth/me", headers=held).status_code == 401
 
-    # The password still works: nothing but the sessions changed.
     again = client.post("/api/auth/login", json={"email": world["address"]("target"), "password": PASSWORD})
     assert again.status_code == 200, again.text
 
@@ -336,10 +297,6 @@ def test_sign_out_everywhere_is_refused_for_yourself_and_for_non_provisioners(wo
     missing = client.post("/api/users/no-such-account/sign-out-everywhere", headers=_headers(world, "admin"))
     assert missing.status_code == 404
 
-
-# ==================================================================================================
-# The access list's "with a password"
-# ==================================================================================================
 
 
 def test_the_access_list_can_admit_an_address_with_a_password(world, client):

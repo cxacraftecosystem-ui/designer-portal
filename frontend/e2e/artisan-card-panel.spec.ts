@@ -5,12 +5,6 @@ import { expect, test } from "@playwright/test";
 
 import { artisanCardPdfPath, maskedLast4, qrImageSrc, REISSUE_REASONS } from "@/lib/artisanCardApi";
 
-/**
- * The artisan card panel and the two bulk-print surfaces: the print buttons reach the server's PDF
- * routes, Reissue confirms with a reason first, and nothing is drawn while cards are off. No browser
- * (there is no React renderer in devDependencies), so the wiring is read off the source and the pure
- * halves are called.
- */
 const read = (path: string) => readFileSync(join(__dirname, "..", path), "utf8");
 const PANEL = read("components/artisans/ArtisanCardPanel.tsx");
 const SHEET = read("components/artisans/ArtisanCardSheetActions.tsx");
@@ -22,9 +16,7 @@ test("Print card and Print A6 ask the single-card PDF route at the two sizes", (
   expect(PANEL).toContain('onClick={() => void print("id1")}');
   expect(PANEL).toContain('onClick={() => void print("a6")}');
   expect(PANEL).toContain("downloadArtisanCard(artisanId, size, photo)");
-  // One row of three buttons through ActionGroup, Reissue last and marked destructive.
   expect(PANEL).toMatch(/<ActionGroup>[\s\S]*Print card[\s\S]*Print A6[\s\S]*data-danger[\s\S]*Reissue[\s\S]*<\/ActionGroup>/);
-  // The photo switch is the shared Toggle, not a checkbox.
   expect(PANEL).toContain('<Toggle label="Include photo"');
 });
 

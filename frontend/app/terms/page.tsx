@@ -1,39 +1,5 @@
 "use client";
 
-/**
- * THE TERMS PAGE — where the long text went.
- *
- * ── WHY THIS ROUTE EXISTS ───────────────────────────────────────────────────────────────────────
- *
- * The sign-in card used to carry the whole usage-recording notice: three sentences of label copy,
- * an expandable disclosure, and a live region explaining why a button was disabled. It was the
- * first thing a designer met and the last thing any of them read. The owner's instruction on
- * 2026-08-30 was to reduce the door to one line — "I agree to terms and conditions", the phrase
- * linked — which leaves exactly one question: where does the text go?
- *
- * Here. Nothing is deleted. The recording notice is still rendered word for word off
- * `GET /usage/consent/notice` (see `UsageConsentNoticeBody`'s own header for why not one sentence of
- * it is written in TSX), it is still versioned, and the version a person agreed to is still what the
- * sign-in card posts back. What changed is that a person who wants to read it now goes to a page
- * built for reading instead of squinting at a disclosure inside a 448px glass card over a
- * half-typed password.
- *
- * ── PUBLIC, AND THEREFORE NOT `PageHeader` ──────────────────────────────────────────────────────
- *
- * This route sits beside `/login` and outside `app/(protected)`, so there is no
- * `UnsavedChangesProvider` above it and `PageHeader`'s back arrow — which calls `interceptLeave` —
- * has no provider to talk to. The header here is hand-rolled for that reason and for no other; do
- * not "standardise" it onto `PageHeader` without moving the route inside the protected tree, which
- * would put the terms behind the sign-in they are a condition of.
- *
- * ── THE NOTICE MAY FAIL TO LOAD, AND THAT IS NOT AN ERROR PAGE ──────────────────────────────────
- *
- * The terms proper are static and are the substance of the agreement; the recording notice is one
- * section of them, served. If the endpoint cannot be reached, every other section still renders and
- * that one says so in a line. Blanking the page because a sub-section failed would hide the terms a
- * person came to read on the strength of a fetch that has nothing to do with most of them.
- */
-
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
@@ -42,7 +8,6 @@ import { WorkshopLogo } from "@/components/WorkshopLogo";
 import { UsageConsentNoticeBody } from "@/components/settings/UsageConsentNotice";
 import { loadUsageConsentNotice, type UsageConsentNotice } from "@/lib/usage";
 
-/** One numbered clause. The heading carries the number so the list is quotable in a message. */
 function Clause({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
   return (
     <section className="grid gap-2">
@@ -166,11 +131,6 @@ export default function TermsPage() {
             </p>
           </Clause>
 
-          {/*
-            THE RECORDING NOTICE, VERBATIM AND VERSIONED. Clause 10 is the one section of this page
-            that is not written here: every sentence comes off the server so a deployment that
-            changes what it records publishes the changed notice on the same deploy.
-          */}
           <section className="grid gap-3 border-t border-line-200 pt-6">
             <h2 className="font-display text-lg font-bold text-ink-900">
               <span className="text-ink-500">10.</span> How your use of the platform is recorded

@@ -1,16 +1,3 @@
-"""The consolidated per-artisan questionnaire: attribution, conflicts, ordering and provenance.
-
-WHY THESE ARE UNIT TESTS AND NOT A LIVE CHECK. The live repository currently holds ZERO
-``QuestionnaireResponse`` rows — every answer in it is an audio clip attached to an interview — so
-the two behaviours that matter most here cannot be demonstrated against it at all:
-
-* a question answered DIFFERENTLY in two interviews must keep both, newest first, flagged;
-* an answer given in a group sitting must not be attributed to one artisan.
-
-Both are the reason the view exists, so they are pinned here with a fake database instead of left
-to be discovered the first time a researcher types answers into two sittings.
-"""
-
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -34,8 +21,6 @@ def _dt(day: int) -> datetime:
 
 
 class _Delegate:
-    """One Prisma model delegate, returning a canned list however it is queried."""
-
     def __init__(self, rows):
         self._rows = rows
 
@@ -99,12 +84,6 @@ def _media(mid, iid, filename, day, extra=None, transcript="spoken answer"):
 
 
 def _build_db():
-    """Two interviews: a SOLO sitting on the 20th, a THREE-artisan sitting on the 24th.
-
-    Question q1 is answered in both, with different text — the conflict case. q2 is answered only in
-    the group sitting. One clip names its section by filename token, one names a question outright,
-    and one names nothing.
-    """
     sections = [
         SimpleNamespace(id="sec-a", code="A", title="Origin", sortOrder=1, isActive=True),
         SimpleNamespace(id="sec-b", code="B", title="Family", sortOrder=2, isActive=True),
@@ -160,8 +139,6 @@ def _question_row(payload, code, qid):
     return next(q for q in _section(payload, code)["questions"] if q["id"] == qid)
 
 
-# --- Requirement: consolidate by artisan, in the questionnaire's order ---------------------------
-
 
 def test_sections_and_questions_read_in_questionnaire_order_not_by_interview(payload):
     assert [s["code"] for s in payload["sections"]] == ["A", "B"]
@@ -172,8 +149,6 @@ def test_answers_from_every_interview_the_artisan_belongs_to_are_present(payload
     assert payload["summary"]["interviewCount"] == 2
     assert payload["summary"]["typedAnswerCount"] == 3
 
-
-# --- Requirement: conflicts are shown, never silently resolved -----------------------------------
 
 
 def test_same_question_answered_differently_keeps_both_and_flags_the_conflict(payload):
@@ -197,7 +172,6 @@ def test_one_answer_repeated_verbatim_is_not_a_conflict(monkeypatch):
     db.questionnaireresponse = _Delegate(
         [
             _response("r1", "iv-solo", "q1", "From my father."),
-            # Same answer, different whitespace and case — the same account given twice, not a change.
             _response("r2", "iv-group", "q1", "  from my  FATHER. "),
         ]
     )
@@ -210,8 +184,6 @@ def test_one_answer_repeated_verbatim_is_not_a_conflict(monkeypatch):
     assert _question_row(result, "A", "q1")["conflict"] is False
     assert len(_question_row(result, "A", "q1")["answers"]) == 2
 
-
-# --- Requirement: never misattribute a group answer ----------------------------------------------
 
 
 def test_solo_sitting_answer_is_attributed_to_the_artisan(payload):
@@ -229,15 +201,11 @@ def test_group_sitting_answer_is_not_attributed_to_the_artisan(payload):
 
 
 def test_attribution_is_a_function_of_the_sitting_size_only():
-    # The models carry no per-artisan response link, so sitting size is the ONLY thing that can
-    # decide this. Pinned so a later "improvement" that guesses a speaker fails loudly here.
     assert qc._attribution(0) == SOLE
     assert qc._attribution(1) == SOLE
     assert qc._attribution(2) == GROUP
     assert qc._attribution(5) == GROUP
 
-
-# --- Requirement: provenance on every answer -----------------------------------------------------
 
 
 def test_every_answer_row_names_its_source_and_date(payload):
@@ -257,9 +225,6 @@ def test_every_answer_row_names_its_source_and_date(payload):
 
 
 def test_date_basis_is_reported_when_interview_date_is_absent(payload):
-    # Every interview in the live repository has a null interviewDate, so the fallback is the normal
-    # path — and the row has to say it is a fallback rather than pass recordedAt off as the sitting's
-    # own date.
     assert {i["dateBasis"] for i in payload["interviews"]} == {"recordedAt"}
 
 
@@ -271,8 +236,6 @@ def test_interview_date_wins_when_present():
         "recordedAt",
     )
 
-
-# --- Recordings: placed where the data actually says, never further ------------------------------
 
 
 def test_clip_naming_a_question_lands_on_that_question(payload):
@@ -290,8 +253,6 @@ def test_clip_naming_nothing_is_listed_as_unfiled_rather_than_dropped(payload):
     assert [r["mediaId"] for r in payload["unfiled"]] == ["m3"]
     assert payload["summary"]["unfiledRecordingCount"] == 1
 
-
-# --- Export --------------------------------------------------------------------------------------
 
 
 def test_csv_has_one_row_per_answer_so_a_conflict_stays_legible(payload):
@@ -326,8 +287,6 @@ def test_csv_carries_recordings_and_their_transcripts(payload):
     assert all(r[answer] == "spoken answer" for r in recorded)
 
 
-# --- Identity numbers never reach this surface ----------------------------------------------------
-
 
 def test_payload_carries_no_identity_numbers(payload):
     import json
@@ -349,32 +308,8 @@ def test_unknown_artisan_yields_none(monkeypatch):
     )
 
 
-# --- Requirement: a rich-text answer is prose everywhere this document is read --------------------
-#
-# WHAT WENT WRONG. ``QuestionnaireResponse.answerText`` is a ``String?`` that has held plain prose
-# since this feature was written, and since the answer box became a ``RichTextField`` on 2026-08-31
-# it sometimes holds a serialised document instead (``rich_text``'s "rich text inside a plain String
-# column" section carries the encoding). This module passed the raw column value straight through, so
-# ONE unflattened value went four ways at once:
-#
-#   * onto the web consolidated page and the Android consolidated screen, which printed
-#     ``{"blocks":[{"kind":"PARAGRAPH",…}]}`` at a reader;
-#   * into ``consolidated.csv``, which a researcher archives;
-#   * into ``_answer_key``, which decides whether two sittings CONFLICT — so the SAME sentence typed
-#     in two sittings, one of them formatted, produced two keys and the screen said the two accounts
-#     disagreed. That is the wrong answer dressed as a right one, in the one view built to show a
-#     reader where the record genuinely differs.
-#
-# And the emptiness test above it read a JSON-shaped string as filled, so a box that was focused and
-# left alone was consolidated as a real answer.
-
 
 def _rich(text: str) -> str:
-    """What the web editor writes into the column once a mark is applied.
-
-    Built through ``rich_text`` rather than hand-typed so the fixture cannot drift from the encoder;
-    ``test_rich_text_stored_columns`` is what pins that the two agree.
-    """
     from app.services.rich_text import Mark, RichBlock, RichDoc, RichSpan, to_stored_text
 
     return to_stored_text(
@@ -395,15 +330,12 @@ def _consolidate(monkeypatch, responses):
 
 class TestRichTextAnswers:
     def test_the_answer_key_reads_a_formatted_answer_as_its_prose(self):
-        """The pure half, and the one that decides ``conflict``."""
         assert qc._answer_key(_rich("From my father.")) == qc._answer_key("From my father.")
 
     def test_the_answer_key_still_folds_whitespace_and_case(self):
-        """Unchanged behaviour for prose — the flattening returns a plain string by identity."""
         assert qc._answer_key("  from my  FATHER. ") == qc._answer_key("From my father.")
 
     def test_the_same_answer_typed_once_formatted_is_not_a_conflict(self, monkeypatch):
-        """THE DEFECT, end to end. Two sittings, one sentence, one of them bolded."""
         result = _consolidate(
             monkeypatch,
             [
@@ -415,7 +347,6 @@ class TestRichTextAnswers:
         assert result["summary"]["conflictCount"] == 0
 
     def test_the_payload_carries_prose_and_never_the_documents_json(self, monkeypatch):
-        """What the web page, the Android screen and the CSV all read."""
         result = _consolidate(
             monkeypatch, [_response("r1", "iv-solo", "q1", _rich("From my father."))]
         )
@@ -423,7 +354,6 @@ class TestRichTextAnswers:
         assert [a["answerText"] for a in answers] == ["From my father."]
 
     def test_the_csv_cell_carries_prose_too(self, monkeypatch):
-        """``consolidated_rows`` reads the same key, so this is the archived file's half of it."""
         result = _consolidate(
             monkeypatch, [_response("r1", "iv-solo", "q1", _rich("From my father."))]
         )
@@ -432,9 +362,6 @@ class TestRichTextAnswers:
         assert not any("{\"blocks\"" in cell for cell in cells)
 
     def test_an_empty_document_is_not_consolidated_as_an_answer(self, monkeypatch):
-        """A rich-text box focused and left alone saves ``{"blocks":[{"kind":"PARAGRAPH","spans":[]}]}``.
-        Read raw it is a non-empty string, so it was carried as a real answer with an empty cell under
-        the artisan's name and counted in ``typedAnswerCount``."""
         result = _consolidate(
             monkeypatch,
             [_response("r1", "iv-solo", "q1", '{"blocks":[{"kind":"PARAGRAPH","spans":[]}]}')],
@@ -442,8 +369,6 @@ class TestRichTextAnswers:
         assert result["summary"]["typedAnswerCount"] == 0
 
     def test_an_empty_document_with_a_note_is_still_kept(self, monkeypatch):
-        """The emptiness test is an AND over the answer and the note, and flattening must not turn it
-        into a drop: an interviewer's note with no typed answer is a real row and always was."""
         result = _consolidate(
             monkeypatch,
             [

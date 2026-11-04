@@ -1,16 +1,3 @@
-"""The artisan register keeps a keyed fingerprint and the last four digits, never the Aadhaar number.
-
-Owner decision #2 (2026-10-17). What is pinned here:
-
-* the fingerprint is deterministic, keyed, and computed over the NORMALISED number only — so one
-  person typed two ways is one fingerprint, and the formula is byte for byte the cross-portal code;
-* duplicates are still found by fingerprint, on create, on edit and in the mid-form lookup (POST
-  and the old GET); the legacy column was dropped on 2026-10-19 after the backfill;
-* no response, export, edit-history entry or log line carries the full number or the fingerprint;
-* the drop migration that removed the legacy column ships guarded: it refuses while any row
-  still holds a number without its fingerprint.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -38,7 +25,6 @@ DROP_MIGRATION = (
 
 
 def _fresh_aadhaar() -> str:
-    """A Verhoeff-valid number nobody in a shared database is likely to hold already."""
     while True:
         stem = str(random.randint(2, 9)) + "".join(random.choices("0123456789", k=10))
         for last in "0123456789":
@@ -49,8 +35,6 @@ def _fresh_aadhaar() -> str:
 def _settings(key: str | None = KEY) -> SimpleNamespace:
     return SimpleNamespace(aadhaar_fingerprint_key=key)
 
-
-# ── The fingerprint itself ──────────────────────────────────────────────────────────────────────
 
 
 def test_the_fingerprint_is_hmac_sha256_of_the_twelve_digits_in_lower_case_hex() -> None:
@@ -63,9 +47,6 @@ def test_the_fingerprint_is_hmac_sha256_of_the_twelve_digits_in_lower_case_hex()
 
 
 def test_the_formula_is_the_cross_portal_code_byte_for_byte() -> None:
-    """The cross-portal link's code is computed BY ``services/cross_portal.aadhaar_code`` itself,
-    not re-implemented here, so the two cannot drift apart: with one shared key a stored
-    fingerprint IS the code the other portal sends, and the link matches on the column."""
     from app.services import cross_portal
 
     number = _fresh_aadhaar()
@@ -78,11 +59,6 @@ def test_the_formula_is_the_cross_portal_code_byte_for_byte() -> None:
 
 
 def test_the_cross_portal_module_uses_this_key_and_this_column() -> None:
-    """Once feature/s-cross-portal is merged, its code IS the fingerprint and it reads the column.
-
-    Imports the real module, so the two cannot drift apart unnoticed. Skipped on a branch that does
-    not carry the cross-portal link yet.
-    """
     cross_portal = pytest.importorskip("app.services.cross_portal")
     number = _fresh_aadhaar()
     assert cross_portal.aadhaar_code(number, KEY) == fp.fingerprint(number, KEY)
@@ -124,8 +100,6 @@ def test_no_key_means_nothing_is_stored_or_matched() -> None:
 
 
 def test_the_spreadsheet_import_refuses_the_file_without_the_key(monkeypatch) -> None:
-    """No key: the import answers the same 503 and sentence as create, edit and lookup, before it
-    writes anything (not even its ledger row), instead of failing half-way with an unhandled error."""
     from fastapi import HTTPException
 
     from app.core import config, db as db_module
@@ -152,8 +126,6 @@ def test_the_spreadsheet_import_refuses_the_file_without_the_key(monkeypatch) ->
     assert writes == []
 
 
-# ── seal: the write side ────────────────────────────────────────────────────────────────────────
-
 
 def test_seal_replaces_the_number_with_its_fingerprint_and_last_four() -> None:
     number = _fresh_aadhaar()
@@ -161,7 +133,6 @@ def test_seal_replaces_the_number_with_its_fingerprint_and_last_four() -> None:
     assert fp.seal(data, _settings()) == number
     assert data["aadhaarFingerprint"] == fp.fingerprint(number, KEY)
     assert data["aadhaarLast4"] == number[-4:]
-    # The legacy column is dropped, so the request field leaves the payload entirely.
     assert "aadhaarNumber" not in data
     assert number not in repr(data)
 
@@ -198,11 +169,8 @@ def test_a_legacy_row_re_sending_its_own_number_gains_the_columns_without_a_retr
 
 def test_the_lookup_matches_the_fingerprint_only() -> None:
     number = _fresh_aadhaar()
-    # The legacy column is dropped: the number itself never reaches a WHERE.
     assert fp.match_where(number, _settings()) == {"aadhaarFingerprint": fp.fingerprint(number, KEY)}
 
-
-# ── The read side ───────────────────────────────────────────────────────────────────────────────
 
 
 def test_an_encoded_artisan_carries_the_mask_and_never_the_fingerprint() -> None:
@@ -220,7 +188,6 @@ def test_an_encoded_artisan_carries_the_mask_and_never_the_fingerprint() -> None
     out = public_encode({"artisan": row}, admin)["artisan"]
     assert out["aadhaarNumber"] == f"XXXX XXXX {number[-4:]}"
     assert "aadhaarFingerprint" not in out
-    # A stray full number under the dropped column's name is never served, not even masked.
     legacy = {"id": "a2", "createdById": "viewer", "aadhaarNumber": number, "aadhaarLast4": None}
     out = public_encode([legacy], admin)[0]
     assert out["aadhaarNumber"] is None
@@ -298,7 +265,6 @@ def test_the_edit_history_records_one_valueless_aadhaar_change() -> None:
 
 @pytest.mark.parametrize("sep", ["", "%20", "+", "-"])
 def test_an_aadhaar_in_a_logged_query_string_is_redacted(sep: str) -> None:
-    """Old app builds send the lookup as ``GET ...?number=``; uvicorn's access line is redacted."""
     import logging as _logging
 
     number = _fresh_aadhaar()
@@ -312,13 +278,11 @@ def test_an_aadhaar_in_a_logged_query_string_is_redacted(sep: str) -> None:
     assert fp.AccessLogRedaction().filter(record) is True
     assert typed not in record.getMessage() and number not in record.getMessage()
     assert "[redacted]" in record.getMessage()
-    # A path without a query, or a query with no Aadhaar-shaped value, is left alone.
     assert fp.redact_path("/api/artisans?page=2&pageSize=20") == "/api/artisans?page=2&pageSize=20"
     assert fp.redact_path("/api/artisans/abc") == "/api/artisans/abc"
 
 
 def test_the_drop_migration_ships_guarded() -> None:
-    # Shipped 2026-10-19, after the backfill printed "Nothing left" on the box.
     assert not (BACKEND / "prisma" / "deferred_migrations").exists()
     sql = DROP_MIGRATION.read_text(encoding="utf-8")
     guard_at = sql.index("RAISE EXCEPTION")
@@ -326,8 +290,6 @@ def test_the_drop_migration_ships_guarded() -> None:
     assert guard_at < sql.index('DROP COLUMN "aadhaarNumber"')
     assert not fp.LEGACY_COLUMN_PRESENT, "the column is gone, so nothing may name it"
 
-
-# ── Against a database ──────────────────────────────────────────────────────────────────────────
 
 LOCATION = {"latitude": 26.82, "longitude": 75.54, "state": "Rajasthan", "district": "Jaipur"}
 
@@ -384,8 +346,6 @@ def _body(world: dict[str, Any], number: str, **extra: Any) -> dict[str, Any]:
 
 
 def _client() -> Any:
-    """A Prisma client of the test's own. The app under TestClient holds ``app.core.db.db`` connected
-    on its own event loop, so a test reading a column the API never serves needs a second one."""
     from prisma import Prisma
 
     return Prisma()
@@ -409,7 +369,6 @@ def _no_secret_in(text: str, number: str) -> None:
 @needs_db
 def test_the_register_stores_a_fingerprint_finds_duplicates_and_leaks_nothing(world, caplog) -> None:
     client, designer, admin = world["client"], world["headers"]["designer"], world["headers"]["admin"]
-    # The legacy column is dropped, so the typed number never travels to the database at all.
     fp.reset_legacy_pending()
     caplog.set_level(logging.DEBUG)
     number = _fresh_aadhaar()
@@ -426,7 +385,6 @@ def test_the_register_stores_a_fingerprint_finds_duplicates_and_leaks_nothing(wo
     assert row.aadhaarFingerprint == fp.fingerprint(number, KEY)
     assert row.aadhaarLast4 == number[-4:]
 
-    # The same person typed without spaces is a duplicate, and the 409 still names the Aadhaar box.
     again = client.post("/api/artisans", json=_body(world, number), headers=designer)
     assert again.status_code == 409, again.text
     detail = again.json()["detail"]
@@ -435,7 +393,6 @@ def test_the_register_stores_a_fingerprint_finds_duplicates_and_leaks_nothing(wo
     assert detail["maskedValue"] == f"XXXX XXXX {number[-4:]}"
     _no_secret_in(again.text, number)
 
-    # The mid-form lookup, in the body (new clients) and in the query (builds in the field).
     found = client.post("/api/artisans/lookup/aadhaar", json={"number": spaced}, headers=designer)
     assert found.json()["found"] is True and found.json()["artisan"]["id"] == artisan_id
     old = client.get("/api/artisans/lookup/aadhaar", params={"number": number}, headers=designer)
@@ -445,7 +402,6 @@ def test_the_register_stores_a_fingerprint_finds_duplicates_and_leaks_nothing(wo
     )
     assert other.json() == {"found": False, "artisan": None}
 
-    # Every read surface, for the creator and for an admin: the mask, never the number.
     surfaces = [
         client.get(f"/api/artisans/{artisan_id}", headers=designer),
         client.get(f"/api/artisans/{artisan_id}", headers=admin),
@@ -457,7 +413,6 @@ def test_the_register_stores_a_fingerprint_finds_duplicates_and_leaks_nothing(wo
         assert response.status_code == 200, (response.request.url, response.text[:300])
         _no_secret_in(response.text, number)
 
-    # An edit that re-sends the mask changes nothing; a new number replaces the fingerprint.
     unchanged = client.patch(
         f"/api/artisans/{artisan_id}",
         json={"aadhaarNumber": f"XXXX XXXX {number[-4:]}", "phone": "9876543210"},
@@ -486,11 +441,6 @@ def test_the_register_stores_a_fingerprint_finds_duplicates_and_leaks_nothing(wo
     _no_secret_in(history.text, number)
     _no_secret_in(history.text, replacement)
 
-    # Nothing above wrote either number to a log line, at any level, from any logger — the Prisma
-    # engine's DEBUG trace of every query included. The fingerprint appears only in that trace (off
-    # in every deployment); no application logger writes it.
-    # The one line that carries a number is the TEST CLIENT's own record of the old GET it sent; on
-    # the server, uvicorn's access line for that request is redacted (aadhaar_fingerprint.redact_path).
     leaks = [r for r in caplog.records if number in r.getMessage() or replacement in r.getMessage()]
     assert all(
         r.name.startswith("httpx") and "lookup/aadhaar?number=" in r.getMessage() for r in leaks

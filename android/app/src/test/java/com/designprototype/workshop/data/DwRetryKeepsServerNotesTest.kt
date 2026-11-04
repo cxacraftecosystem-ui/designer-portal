@@ -6,33 +6,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-/**
- * "TRY AGAIN" WAS DELETING THE ONE SENTENCE THAT NAMED AN ANSWER THE REPOSITORY NEVER STORED.
- *
- * `retryWorkshop` clears a stale note so the button can mean what it says — "assume the world changed"
- * — and it deliberately spares a per-field refusal, because the same bytes get the same answer. The
- * guard it used to spare it with was `record.refusedFields > 0`.
- *
- * ── WHY THAT GUARD IS THE WRONG QUESTION ─────────────────────────────────────────────────────────
- *
- * A save can report `droppedCustomKeys` and refuse NOTHING: the designer edited their own sections on
- * the web, and this phone still holds an answer to a question those sections no longer ask. Then
- * `recordStageSent` writes the sentence, writes a non-null [StageSyncRecord.refusal] carrying the
- * dropped keys — and leaves `refusedFields` at **0**, because nothing was refused. Keyed on the count,
- * that record fell down the clearing arm, and one tap of Try again erased the sentence.
- *
- * It is not a note the button can act on, either. The remedy is to open the workshop once with a
- * connection so the definitions are re-read, which is exactly what the sentence says.
- *
- * And the sentence is the whole of the evidence a designer can see without opening the stage, because
- * `statusOf` scores a dropped custom key as nothing at all — `failedStages` counts only `permanent`
- * records, `refusedAnswers` sums only `refusedFields` — so with it gone the workshop row reads
- * "Backed up to the server" over a question whose answer was never stored.
- *
- * EVERY CASE HERE ASSERTS `refusedFields` AS WELL AS THE OUTCOME, so none of them can pass for the old
- * reading by accident: case one is the one where the count is 0 and the note must survive anyway, and
- * saying so in the assertions is what makes it a test of the rule rather than of one example.
- */
 class DwRetryKeepsServerNotesTest {
 
     private val droppedKeysOnly = DwStageRefusalRecord(
@@ -53,7 +26,6 @@ class DwRetryKeepsServerNotesTest {
             refusal = droppedKeysOnly,
         )
 
-        // The reading the old guard used, stated so this test cannot quietly become a test of it.
         assertEquals("nothing was REFUSED — this is the arm the old guard got wrong", 0, record.refusedFields)
 
         val after = retriedStageRecord(record)
@@ -84,7 +56,6 @@ class DwRetryKeepsServerNotesTest {
 
         assertEquals(record.failure, after.failure)
         assertEquals(3, after.refusedFields)
-        // The two things the button IS allowed to reset, so the pass stops stepping over the stage.
         assertFalse(after.permanent)
         assertNull(after.skewRun)
     }

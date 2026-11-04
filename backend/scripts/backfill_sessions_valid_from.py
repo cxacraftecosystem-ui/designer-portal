@@ -105,15 +105,8 @@ from app.core.db import connect_db, db, disconnect_db
 from app.services import access_roster
 from app.services.designers import canonical_email, normalise_email
 
-#: A ceiling on each candidate read, so a run pointed at a large production database cannot pull a
-#: whole table into memory. Its own number rather than a borrowed one, and far above any plausible
-#: deployment of a single institution's portal; if a run reports that it was hit, the answer is to
-#: raise it deliberately rather than to trust a cut list — a cut list here is a person who is still
-#: signed in and whom this run silently did not find.
 CANDIDATE_READ_LIMIT = 50_000
 
-#: The buckets, in the order the report prints them. Named here so the plan, the report, the count
-#: line and the write loop cannot end up disagreeing about what exists.
 BUCKETS: tuple[str, ...] = ("live", "expired", "protected", "already")
 
 
@@ -221,7 +214,6 @@ def _barred_at(row: Any) -> datetime:
     if status == access_roster.REJECTED:
         return getattr(row, "decidedAt", None) or row.updatedAt
     if status == access_roster.SUSPENDED:
-        # NOT ``decidedAt``: on this row it is the APPROVAL date. See the docstring.
         return row.updatedAt
     return getattr(row, "revokedAt", None) or row.updatedAt
 
@@ -275,7 +267,6 @@ def _accounts_by_mailbox(accounts: list[Any]) -> dict[str, list[Any]]:
     return indexed
 
 
-#: One candidate: the mailbox, the account id, the stamp to write, and the sentence explaining it.
 Candidate = tuple[str, str, datetime, str]
 
 
@@ -313,9 +304,6 @@ async def plan(*, window: timedelta) -> dict[str, list[Candidate]]:
     def _file(mailbox: str, account: Any, barred_at: datetime, why: str) -> None:
         """Put one account in the bucket its bar date decides, or in ``already`` if it is current."""
         if account.id in seen:
-            # THE ALLOW-LIST BUCKET RUNS FIRST AND WINS. An address can be barred on the allow-list
-            # AND carry an ended empanelment; it is one revocation of one person, and reporting it
-            # twice would double every count on the last line.
             return
         seen.add(account.id)
         if not _needs_stamp(account, barred_at):
@@ -324,7 +312,6 @@ async def plan(*, window: timedelta) -> dict[str, list[Candidate]]:
         key = "live" if now - barred_at <= window else "expired"
         buckets[key].append((mailbox, account.id, barred_at, why))
 
-    # ── THE ALLOW-LIST: barred from the application, so no carve-out applies ──────────────────────
     for row in barred_access:
         mailbox = canonical_email(row.email)
         barred_at = _barred_at(row)
@@ -337,7 +324,6 @@ async def plan(*, window: timedelta) -> dict[str, list[Candidate]]:
                 f"allow-list says {standing} since {barred_at:%Y-%m-%d}{_stored_as(mailbox, row)}",
             )
 
-    # ── THE EMPANELMENT: narrower, and guarded ────────────────────────────────────────────────────
     for row in ended_empanelments:
         mailbox = canonical_email(row.email)
         candidates = [a for a in by_mailbox.get(mailbox, []) if a.id not in seen]
@@ -345,12 +331,6 @@ async def plan(*, window: timedelta) -> dict[str, list[Candidate]]:
             continue
         admission = admitted.get(mailbox)
         if admission is None:
-            # No LIVE designer-tier admission rests on this empanelment, and the address is not
-            # barred either (that bucket ran first) — so either the mirror already suspended the
-            # admission and this account is somebody else on the same mailbox, or the person is
-            # admitted at another tier entirely. Both are somebody whose place in the application
-            # does not depend on the empanelment. Reported rather than dropped, because "the script
-            # did not mention them" is indistinguishable from "the script missed them".
             for account in candidates:
                 seen.add(account.id)
                 buckets["protected"].append(
@@ -366,12 +346,6 @@ async def plan(*, window: timedelta) -> dict[str, list[Candidate]]:
             continue
         carried = await access_roster.admissions_an_empanelment_carries(mailbox)
         if not carried:
-            # THE GUARD DECLINED, WHICH IS THE OUTCOME THIS SCRIPT MOST NEEDS TO REPORT RATHER THAN
-            # ACT ON. The usual reason is the one it exists for: an account on this mailbox is not a
-            # designer — a professor or an admin who runs workshops — and ending their empanelment
-            # neither bars them nor should sign them out. It also declines when its own Gmail sweep
-            # was cut, which it logs at ERROR; either way the answer here is the same and a human
-            # decides it on /admin/access.
             held = "/".join(
                 sorted({str(getattr(a.role, "value", a.role)) for a in candidates})
             )
@@ -527,8 +501,6 @@ async def main() -> None:
         help="actually stamp sessionsValidFrom. Without it this is a DRY RUN and writes nothing.",
     )
     parser.add_argument(
-        # The spelling the other scripts in this tree use, kept working on purpose. Same ``dest``,
-        # so the two cannot disagree.
         "--execute",
         dest="write",
         action="store_true",
@@ -552,10 +524,6 @@ async def main() -> None:
 
     _console_that_cannot_kill_the_run()
     settings = get_settings()
-    # READ FROM THE DEPLOYMENT'S OWN SETTING rather than written as "seven days". This is the same
-    # number ``create_access_token`` mints against, so a box that lengthened its tokens lengthens
-    # this window with them — and a box that shortened them stops being told that a March bar is
-    # still urgent.
     window = timedelta(minutes=settings.jwt_expires_minutes)
     await _connect()
     try:
@@ -566,16 +534,10 @@ async def main() -> None:
             buckets,
             write=args.write,
             window=window,
-            # THE HEADING FOR THE EXPIRED BUCKET IS A CLAIM ABOUT WHETHER THOSE ROWS WERE WRITTEN,
-            # and only this flag answers it — see ``_expired_heading``. (2026-09-03)
             include_expired=args.include_expired,
         )
 
         if not args.write:
-            # THE FINAL LINE OF A DRY RUN SAYS THAT NOTHING HAPPENED, in those words, at the bottom
-            # where somebody who scrolled past four sections of addresses is looking. A report that
-            # lists thirty people under "WOULD STAMP" and then stops reads, to a tired operator, like
-            # a report of thirty sessions ended.
             print(
                 f"\nCOUNT — {_counts(buckets)}. NOTHING WAS WRITTEN; re-run with --write to apply "
                 "(add --include-expired to take the historic rows as well)."
@@ -587,17 +549,6 @@ async def main() -> None:
         stamped = 0
         skipped = 0
         for mailbox, account_id, barred_at, _why in capped:
-            # THE GUARD IS REPEATED IN THE ``WHERE`` AND NOT ONLY IN THE PLAN, which is what makes a
-            # row somebody stamps between the two a no-op rather than a downgrade. ``update_many``
-            # because a conditional update is the only way to express it — ``update`` on the id alone
-            # would overwrite a fresher watermark with an older one.
-            #
-            # ``invalidate_cached_user`` IS DELIBERATELY NOT CALLED (2026-09-03). It empties the
-            # identity cache of the process that calls it, and this process serves no requests — the
-            # running API's cache is out of any script's reach. The closing report names the real
-            # bound instead (AUTH_USER_CACHE_TTL_SECONDS). This paragraph names the symbol on
-            # purpose: tests/test_user_identity_cache.py sweeps every user-row writer for it, and a
-            # written refusal is that sweep's honest answer where a call would be theatre.
             changed = await db.user.update_many(
                 where={
                     "id": account_id,

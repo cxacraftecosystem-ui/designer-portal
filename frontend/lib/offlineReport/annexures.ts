@@ -1,16 +1,3 @@
-/**
- * The four parts of a report that are not a stage: the designer's own sections, the questionnaire
- * sittings, the transcripts and the accepted machine-assisted text. Ported from
- * `report_custom_sections.py`, `report_questionnaires.py`, `report_annexures.py` and
- * `report_ai_layers.py`, sentence for sentence, because every one of these sentences is printed in a
- * file a ministry receives and the browser's copy must print the same words.
- *
- * Their SOURCES are the snake_case items `GET /design-workshops/{id}/report/sources` returns
- * (`dataclasses.asdict` of the server's own item types), kept on the device by
- * `lib/offlineReport/sourcesCache.ts`; the custom sections come from the definition and the answers
- * the draft already holds.
- */
-
 import { byCount, countNoun } from "@/lib/format";
 import {
   DocumentBuilder,
@@ -27,10 +14,6 @@ import {
   type TableBlock
 } from "@/lib/offlineReport/model";
 import { plainFromStored, plainRuns, storedTextDocument } from "@/lib/offlineReport/richText";
-
-/* ────────────────────────────────────────────────────────────────────────────
- * The designer's own sections — report_custom_sections.py
- * ──────────────────────────────────────────────────────────────────────────── */
 
 export const CUSTOM_NOT_RECORDED = "Not recorded.";
 export const RETIRED_NOTE = "no longer asked";
@@ -93,7 +76,6 @@ export function sectionsHiddenByTier(items: Array<CustomSectionItem | undefined>
   );
 }
 
-/** `report_custom_sections.custom_scoring`: the stage's own fields and answers, for completeness. */
 export function customScoring(items: CustomSectionItem[], stageKey: string): [CustomReportField[], Record<string, unknown>] {
   const fields: CustomReportField[] = [];
   const values: Record<string, unknown> = {};
@@ -113,7 +95,6 @@ function optionLabel(field: CustomReportField, value: unknown): string {
   return found ? found[1] || token : token;
 }
 
-/** `report_custom_sections.display_value`; `formatValue` is the builder's `format_value`. */
 function displayValue(
   field: CustomReportField,
   value: unknown,
@@ -187,7 +168,6 @@ function customSectionBlocks(
   return blocks;
 }
 
-/** `report_custom_sections.append_custom_section`. */
 export function appendCustomSection(
   doc: DocumentBuilder,
   item: CustomSectionItem | undefined,
@@ -202,7 +182,6 @@ export function appendCustomSection(
   return answeredCountAt(item, opts.maxTierRank);
 }
 
-/** The definition's API shape, as `lib/customSections.ts` holds it. */
 export type CustomDefinitionInput = {
   sections: Array<{
     key: string;
@@ -224,7 +203,6 @@ export type CustomDefinitionInput = {
   }>;
 } | null;
 
-/** `design_workshops.report_custom_section_items`: the sections, and the warning about empty ones. */
 export function customSectionItems(
   definition: CustomDefinitionInput,
   valuesByStage: Record<string, Record<string, unknown>>
@@ -266,7 +244,6 @@ export function customSectionItems(
   return [items, warnings];
 }
 
-/** Python's default string ordering: by code point, not by locale. */
 export function pyCompare(a: string, b: string): number {
   const x = Array.from(a);
   const y = Array.from(b);
@@ -276,10 +253,6 @@ export function pyCompare(a: string, b: string): number {
   }
   return x.length - y.length;
 }
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Questionnaires — report_questionnaires.py
- * ──────────────────────────────────────────────────────────────────────────── */
 
 export type QuestionnaireAnswer = {
   prompt: string;
@@ -465,7 +438,6 @@ function sittingBlocks(sitting: QuestionnaireSitting): Block[] {
   return blocks;
 }
 
-/** `report_questionnaires.append_questionnaire_annexure`. */
 export function appendQuestionnaireAnnexure(
   doc: DocumentBuilder,
   items: QuestionnaireItem[],
@@ -485,7 +457,6 @@ export function appendQuestionnaireAnnexure(
     "LEAD"
   );
   doc.add(questionnaireIndex(printed));
-  // `grouped_by_stage`: a stable sort by the group's rank, then runs of one heading.
   const keyed = printed
     .map((item, index) => ({ item, index, rank: stageGroup(item, stageTitles)[0] }))
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
@@ -522,10 +493,6 @@ export function appendQuestionnaireAnnexure(
   }
   return printed.length;
 }
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Transcripts — report_annexures.py
- * ──────────────────────────────────────────────────────────────────────────── */
 
 export type TranscriptItem = {
   media_id: string;
@@ -615,7 +582,6 @@ function runsForLine(line: string): Run[] {
   return pieces;
 }
 
-/** `report_annexures.transcript_body_blocks`. */
 export function transcriptBodyBlocks(text: string): Block[] {
   const blocks: Block[] = [];
   let truncated = false;
@@ -660,7 +626,6 @@ function transcriptLabel(item: TranscriptItem): string {
   return item.field_label || item.filename || item.media_id;
 }
 
-/** `report_annexures.append_transcript_annexure`. */
 export function appendTranscriptAnnexure(
   doc: DocumentBuilder,
   items: TranscriptItem[],
@@ -711,10 +676,6 @@ export function appendTranscriptAnnexure(
   }
   return printed.length;
 }
-
-/* ────────────────────────────────────────────────────────────────────────────
- * Machine-assisted text — report_ai_layers.py
- * ──────────────────────────────────────────────────────────────────────────── */
 
 export type AiLayerItem = {
   layer_id: string;
@@ -845,7 +806,6 @@ const WITHHELD_NOTE =
   "and who accepted it, are stated above and are complete. For a copy carrying the text, ask the " +
   "colleague who uploaded the recording to generate the report, or to grant access to their media.";
 
-/** `report_ai_layers.append_ai_layer_annexure`. */
 export function appendAiLayerAnnexure(
   doc: DocumentBuilder,
   items: AiLayerItem[],

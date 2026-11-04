@@ -26,17 +26,6 @@ import java.io.File
 import java.io.IOException
 import java.net.InetSocketAddress
 
-/**
- * THE RELEASE BLOCKER OF 2026-10-16, END TO END: an online create lands, its answer is lost, the form
- * moves it into the outbox under the same Idempotency-Key, and the replay finds the record the first
- * send made — one record, with its photograph, and no duplicate.
- *
- * The server here is a fake with the real middleware's rules (`backend/app/core/idempotency.py`): a
- * repeat of a key with the SAME body is answered from the stored record; the same key with a DIFFERENT
- * body is a 422 `IDEMPOTENCY_KEY_REUSED`; `GET /api/idempotency-keys/{key}` hands back the stored
- * answer. Storage is a real local HTTP server, because the photograph's bytes go through the
- * repository's own storage client.
- */
 class OutboxReplayEndToEndTest {
     @get:Rule
     val folder = TemporaryFolder()
@@ -45,7 +34,6 @@ class OutboxReplayEndToEndTest {
     private lateinit var storage: HttpServer
     private val user = UserDto(id = "u-designer", email = "d@example.org", name = "Dee", role = "DESIGNER")
 
-    // ── The fake server's state ──────────────────────────────────────────────────────────────────
     private data class Stored(val body: String, val answer: String)
     private val keys = HashMap<String, Stored>()
     private val crafts = ArrayList<String>()
@@ -160,7 +148,6 @@ class OutboxReplayEndToEndTest {
         }
     }
 
-    /** Queue the create the way the form's fallback does, and give it one staged photograph. */
     private fun queueWithPhoto(repository: WorkshopRepository, body: CraftCreateRequest, key: String): PendingEntry =
         runBlocking {
             val result = repository.queueOfflineEntry(
@@ -206,7 +193,6 @@ class OutboxReplayEndToEndTest {
     fun `a replay refused as a different request finds the stored record instead of losing the photograph`() {
         val repository = repository()
         val key = "4f1d2c7e-0000-4000-8000-000000000002"
-        // The first send, as an older build made it: same key, a body that differs in one field.
         loseNextCreateAnswer = true
         runCatching { runBlocking { repository.createCraft(CraftCreateRequest(name = "Ajrakh", place = "Bhuj"), key) } }
 

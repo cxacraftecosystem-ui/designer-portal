@@ -7,22 +7,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * **THE TIER 2 CATALOGUE, AND THE FOUR THINGS IT MUST NEVER STOP BEING TRUE ABOUT.**
- *
- * `DwDeviceTierTest`'s old test *"the real catalogues are empty, because nothing has been weighed"*
- * asserted `DW_TIER2_CATALOGUE.isEmpty()` and said in its own comment that adding a row without a
- * measurement "should require deleting this test, which is a conversation". This file is the other half
- * of that conversation: the rows exist now, and what replaces the emptiness assertion is a set of
- * assertions about the EVIDENCE behind each row — that the size came off a file somebody weighed, that
- * the memory figure names the handset it was published for, and that a claim is never printed in a
- * measurement's voice.
- */
 class DwTier2ModelsTest {
 
     private val mib = 1024L * 1024L
 
-    /** The fleet's SM-M325F, read off the handset at 03:00 on 2026-08-13. Not invented. */
     private val fleetHandset = DwDeviceMeasurement(
         totalRamBytes = 5_789_032L * 1024L,
         availableRamBytes = 1_285_164L * 1024L,
@@ -31,10 +19,8 @@ class DwTier2ModelsTest {
         abis = listOf("arm64-v8a", "armeabi-v7a", "armeabi"),
     )
 
-    /** A 32-bit-only handset. The one shape that is refused outright, and not for its memory. */
     private val thirtyTwoBitOnly = fleetHandset.copy(abis = listOf("armeabi-v7a", "armeabi"))
 
-    /** A phone with plenty of everything, so a COMFORTABLE row can be exercised at all. */
     private val roomy = DwDeviceMeasurement(
         totalRamBytes = 12_000L * mib,
         availableRamBytes = 8_000L * mib,
@@ -42,10 +28,6 @@ class DwTier2ModelsTest {
         freeStorageBytes = 80_000L * mib,
         abis = listOf("arm64-v8a"),
     )
-
-    // -----------------------------------------------------------------------------------------
-    // The rows, and the evidence behind each number in them
-    // -----------------------------------------------------------------------------------------
 
     @Test
     fun `every row carries a weighed file, a named handset for its memory figure, and no language claim`() {
@@ -57,8 +39,6 @@ class DwTier2ModelsTest {
         assertEquals("DW_TIER2_CATALOGUE must delegate here, not hold a second copy", DW_TIER2_PLANS, DW_TIER2_CATALOGUE)
 
         DW_TIER2_PLANS.forEach { plan ->
-            // The size is not off a model card: an artifact with the same byte count was weighed, and
-            // this is the assertion that the two lists cannot drift apart.
             val artifact = dwTier2ArtifactFor(plan.modelId)
             assertNotNull("every plan needs the file it is a plan for", artifact)
             assertEquals(
@@ -75,8 +55,6 @@ class DwTier2ModelsTest {
                 artifact.digestProvenance.startsWith("MEASURED")
             )
 
-            // THE PROVENANCE OF THE MEMORY FIGURE IS IN THE FIELD THAT GETS PRINTED. Google measured
-            // it on an S26 Ultra; this fleet measured nothing, and the row says both.
             assertTrue(
                 "${plan.modelId}: the memory figure must name the handset it came off",
                 plan.measuredOn.contains("S26 Ultra")
@@ -86,7 +64,6 @@ class DwTier2ModelsTest {
                 plan.measuredOn.contains("published") && plan.measuredOn.contains("not a reading")
             )
 
-            // A CLAIM MAY NOT BECOME A CAPABILITY. Google say 35+ languages; nobody has checked one.
             assertNull(
                 "${plan.modelId}: languages must be null — the word “unmeasured” — because an " +
                     "upstream README's count is a claim about a family",
@@ -100,7 +77,6 @@ class DwTier2ModelsTest {
             assertNull("nobody has timed a token on a handset in this fleet", plan.realTimeFactor)
             assertNull("nobody has backgrounded a loaded model on any handset here", plan.survivesBackgrounding)
 
-            // The envelope the memory figure was taken over, stated in the units it was taken in.
             assertEquals(DW_TIER2_MEASURED_CONTEXT_TOKENS, plan.contextCapTokens)
             assertTrue(plan.runBound.contains("2,048"))
             assertEquals("arm64-v8a", plan.abi)
@@ -109,13 +85,6 @@ class DwTier2ModelsTest {
 
     @Test
     fun `the memory figures are the CPU ones, because the GPU reading is a floor nobody has reproduced`() {
-        /*
-         * THE ONE PLACE A TUNED NUMBER WOULD HAVE MADE BOTH MODELS LOOK COMFORTABLE. Google publish
-         * 676 MiB (E2B) and 710 MiB (E4B) for the GPU backend against 1733 and 3283 for the CPU. The
-         * smaller figure is `ru_maxrss`, which does not count GPU or dmabuf allocations, and whether
-         * the GPU path initialises at all on this fleet's Mali-G52 is unmeasured. A row built from it
-         * would be this app choosing the flattering half of somebody else's measurement.
-         */
         val e2b = DW_TIER2_PLANS.first { it.modelId.contains("E2B") }
         val e4b = DW_TIER2_PLANS.first { it.modelId.contains("E4B") }
         assertEquals(1733L * mib, e2b.peakRssBytes)
@@ -132,10 +101,6 @@ class DwTier2ModelsTest {
         }
     }
 
-    // -----------------------------------------------------------------------------------------
-    // The verdict comes from the existing rules, on every device shape
-    // -----------------------------------------------------------------------------------------
-
     @Test
     fun `both models are judged on every handset, and only the arithmetic decides the verdict`() {
         listOf(fleetHandset, thirtyTwoBitOnly, roomy, DwDeviceMeasurement()).forEach { device ->
@@ -146,7 +111,6 @@ class DwTier2ModelsTest {
                 choices.size
             )
             choices.forEach { choice ->
-                // The verdict is dwModelFit's, not a second opinion computed in the Tier 2 file.
                 assertEquals(
                     "${choice.plan.modelId} on this device must read the same as dwModelFit says",
                     dwModelFit(choice.plan, device).fit,
@@ -158,10 +122,6 @@ class DwTier2ModelsTest {
 
     @Test
     fun `on the fleet handset both models are tight on this minute's free memory, and neither is refused`() {
-        // The reading is real and so is the arithmetic: 1733 MiB and 3283 MiB peaks against 5.93 GB
-        // total is nowhere near the line, and 2.59 GB and 3.66 GB against 39.97 GB free storage is
-        // nowhere near the other one. What is short is free memory AT THIS INSTANT, which is the
-        // overridable kind, because memory frees.
         dwModelChoices(DW_TIER2_PLANS, fleetHandset, tier = DwAiTier.TIER_2).forEach { choice ->
             assertEquals(
                 "${choice.plan.modelId} should be TIGHT on the fleet handset, not refused",
@@ -203,10 +163,6 @@ class DwTier2ModelsTest {
         }
     }
 
-    // -----------------------------------------------------------------------------------------
-    // The gate: nothing may be fetched, and the reason is the runtime rather than the phone
-    // -----------------------------------------------------------------------------------------
-
     @Test
     fun `a download is offered exactly where the fit allows it, with a connection, and the runtime in the APK`() {
         assertTrue("LiteRT-LM is in this APK", DW_TIER2_RUNTIME_PRESENT)
@@ -222,18 +178,12 @@ class DwTier2ModelsTest {
                 }
             }
         }
-        // A 32-bit phone is never offered either model: the AAR has no 32-bit build.
         dwModelChoices(DW_TIER2_PLANS, thirtyTwoBitOnly, tier = DwAiTier.TIER_2).forEach { choice ->
             assertFalse(dwTier2InstallMayBeOffered(choice, DwConnection.UNMETERED))
         }
-        // And a build without the runtime offers nothing anywhere.
         val comfortable = dwModelChoices(DW_TIER2_PLANS, roomy, tier = DwAiTier.TIER_2).first()
         assertFalse(dwTier2InstallMayBeOffered(comfortable, DwConnection.UNMETERED, runtimePresent = false))
     }
-
-    // -----------------------------------------------------------------------------------------
-    // The words: terse, and never a claim in a measurement's voice
-    // -----------------------------------------------------------------------------------------
 
     @Test
     fun `a row states the size, the memory and the verdict, and never a transcription sentence`() {
@@ -269,9 +219,6 @@ class DwTier2ModelsTest {
             assertFalse(DW_TIER2_LIST_INTRO.contains(it))
         }
     }
-    // -----------------------------------------------------------------------------------------
-    // Sideloading goes through the same check as a download
-    // -----------------------------------------------------------------------------------------
 
     @Test
     fun `a file is verified by size AND digest, whichever cable it arrived on`() {
@@ -311,7 +258,6 @@ class DwTier2ModelsTest {
 
     @Test
     fun `every artifact refuses to exist without a digest, a size and a repository`() {
-        // The constructor is the enforcement mechanism, so it is worth one test that it is.
         val good = DW_TIER2_ARTIFACTS.first()
         listOf(
             { good.copy(sha256 = "") },

@@ -17,11 +17,6 @@ import {
 } from "@/lib/unifiedSearch";
 import { plainSnippet } from "@/lib/transcript/preview";
 
-/**
- * The unified answer on `/search` (docs/SEARCH.md): one panel per group in the server's order, five
- * rows each, "Show all" paging one group. A Field Repository row carries a portal badge and opens
- * the read-only remote card; a local row opens the record's own read-only page.
- */
 export function UnifiedResults({
   data,
   focus,

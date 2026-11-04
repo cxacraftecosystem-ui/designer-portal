@@ -1,16 +1,3 @@
-"""The market-research providers, end to end, against recorded responses. NO NETWORK ANYWHERE.
-
-The two hosted providers are driven through a stub placed in ``sys.modules`` — possible only
-because ``requests`` is imported inside the function that uses it, so the lazy-import rule buys
-testability as well as boot time. The local one is driven against real files in ``tmp_path``,
-because that is what it reads in production too.
-
-The first section is the one that matters most: **a fresh clone with no new environment variables
-behaves exactly as it did before this capability existed.** Everything is off, the probe says which
-variable to set, importing the package loads none of the provider modules and does not touch
-``app.services``, and a call raises a typed error rather than an ImportError or a network attempt.
-"""
-
 import importlib.machinery
 import json
 import subprocess
@@ -39,8 +26,6 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 ALL_OFF = build_settings({})
 BRIEF = ResearchBrief(keyword="sambalpuri ikat stole", craft="handloom", category="stole")
 
-#: Provider implementations and the analysis module they bridge to. None of these may be in
-#: sys.modules after ``import app.ai_features``.
 LAZY_MODULES = (
     "app.ai_features.providers.serper_shopping",
     "app.ai_features.providers.serpapi_shopping",
@@ -49,11 +34,6 @@ LAZY_MODULES = (
     "requests",
 )
 
-
-# --------------------------------------------------------------------------------------------
-# Recorded provider responses. Shapes follow each vendor's published documentation; nothing here
-# was fetched, and nothing in this file can reach a network.
-# --------------------------------------------------------------------------------------------
 
 SERPER_PAGE = {
     "searchParameters": {"q": "sambalpuri ikat stole", "gl": "in", "hl": "en", "page": 1},
@@ -75,7 +55,6 @@ SERPER_PAGE = {
             "position": 2,
         },
         {
-            # The same listing again, from a second query, with a different campaign parameter.
             "title": "Sambalpuri Ikat Silk Stole - Handwoven",
             "source": "Boyanika",
             "link": "https://boyanika.example.invalid/p/1201?utm_source=shopping&gclid=abc",
@@ -169,8 +148,6 @@ def _json_response(payload, status: int = 200) -> _StubResponse:
 
 
 class _StubRequests:
-    """The four names the transport touches: request, post, Timeout, RequestException."""
-
     class RequestException(Exception):
         pass
 
@@ -178,14 +155,9 @@ class _StubRequests:
         pass
 
     def __init__(self, responses) -> None:
-        # A list is consumed one response per call, so pagination can be driven; a single value is
-        # returned for every call.
         self.responses = responses if isinstance(responses, list) else None
         self.single = None if isinstance(responses, list) else responses
         self.calls: list[dict] = []
-        # find_spec reads __spec__ off whatever is in sys.modules, and the registry's readiness
-        # check asks it whether requests is installed. Without this the stub would make the probe
-        # answer "requests is missing" and the call would never be made.
         self.__spec__ = importlib.machinery.ModuleSpec("requests", None)
 
     def request(self, method: str, url: str, **kwargs):
@@ -244,10 +216,6 @@ def _serpapi_settings(**overrides: str):
     return build_settings(base)
 
 
-# --------------------------------------------------------------------------------------------
-# 1. Dormant. This section is the contract.
-# --------------------------------------------------------------------------------------------
-
 
 def test_market_research_is_off_on_a_fresh_clone() -> None:
     assert ALL_OFF.market_research_enabled is False
@@ -274,7 +242,7 @@ def test_probing_a_dormant_capability_raises_nothing_and_names_every_setting() -
     assert entry["available"] is False
     named = {name for item in entry["providers"] for name in item["missingSettings"]}
     assert named == {"AI_MARKET_RESEARCH_CATALOGUE_PATH", "SERPER_API_KEY", "SERPAPI_API_KEY"}
-    json.dumps(report)  # raises if a dataclass or an enum leaked into the report
+    json.dumps(report)
     assert "market_research" in format_probe(ALL_OFF)
 
 
@@ -288,8 +256,6 @@ def test_calling_a_disabled_capability_names_the_variable_to_set() -> None:
 
 
 def test_disabled_beats_a_bad_brief() -> None:
-    # An operator with the feature off should be told it is off, not told their keyword is empty
-    # by a code path that could not have run either way.
     with pytest.raises(FeatureDisabled):
         research_market("", settings=ALL_OFF)
 
@@ -307,8 +273,6 @@ def test_enabled_with_nothing_configured_names_all_three_options() -> None:
 
 
 def test_an_explicit_provider_is_never_silently_swapped() -> None:
-    # Asking for the offline catalogue and being charged for a hosted search instead would be
-    # worse than an error naming the one thing that has to be set.
     settings = build_settings({
         "AI_FEATURES_ENABLED": "true",
         "AI_MARKET_RESEARCH_ENABLED": "true",
@@ -343,8 +307,6 @@ def test_an_image_provider_cannot_be_pointed_at_market_research() -> None:
 
 
 def test_importing_the_package_loads_no_provider_and_no_service_module() -> None:
-    # Checked in a clean interpreter: in-process, sys.modules is polluted by every other test in
-    # this file. This is the test that fails the moment somebody moves an import to module scope.
     script = (
         "import sys;"
         "import app.ai_features;"
@@ -374,7 +336,6 @@ def test_every_market_research_provider_declares_a_labelled_cost() -> None:
         if resources.basis == "MEASURED":
             assert "MEASURED" in resources.notes
         else:
-            # An unmeasured figure has to say so where it is read, not only in its basis field.
             assert any(
                 label in (resources.money + resources.notes)
                 for label in ("VENDOR-STATED", "ESTIMATED", "THIRD-PARTY REPORTED")
@@ -394,10 +355,6 @@ def test_auto_prefers_the_provider_that_costs_nothing_and_discloses_nothing(tmp_
     assert chosen.id == "local_catalogue"
 
 
-# --------------------------------------------------------------------------------------------
-# 2. serper.dev, through the public entry point.
-# --------------------------------------------------------------------------------------------
-
 
 def test_a_hosted_search_returns_comparable_products_with_their_provenance(stub_requests) -> None:
     stub = stub_requests(_json_response(SERPER_PAGE))
@@ -408,7 +365,6 @@ def test_a_hosted_search_returns_comparable_products_with_their_provenance(stub_
     assert result.currency == "INR"
     names = [item.name for item in result.products]
     assert "Sambalpuri Ikat Silk Stole - Handwoven" in names
-    # Every kept product carries the two facts that make it auditable.
     for item in result.products:
         assert item.source_url.startswith("https://")
         assert item.retrieved_at.endswith("+00:00")
@@ -418,8 +374,6 @@ def test_a_hosted_search_returns_comparable_products_with_their_provenance(stub_
     assert sent["method"] == "POST"
     assert sent["url"] == "https://google.serper.dev/shopping"
     assert sent["headers"]["X-API-KEY"] == "test-key"
-    # An identifying User-Agent on every outbound request, so a vendor has somebody to contact
-    # before blocking a shared address.
     assert "DesignWorkshopBackend" in sent["headers"]["User-Agent"]
     assert sent["json"]["gl"] == "in"
     assert sent["timeout"][0] <= 10.0
@@ -456,16 +410,12 @@ def test_a_hosted_result_still_refuses_to_be_mistaken_for_survey_evidence(stub_r
 
 
 def test_a_brief_with_no_facets_costs_one_query_not_three(stub_requests) -> None:
-    # One query is one credit. A bare keyword must not silently buy the maximum.
     stub = stub_requests(_json_response(SERPER_PAGE))
     research_market("sambalpuri ikat stole", settings=_serper_settings())
     assert len(stub.calls) == 1
 
 
 def test_the_query_budget_is_split_across_queries_rather_than_multiplied(stub_requests) -> None:
-    # Three queries each fetching a full budget would be three times the credits for one button
-    # press. A page that already covers a query's share ends its pagination rather than spending
-    # another credit to confirm.
     stub = stub_requests(_json_response(SERPER_PAGE))
     brief = ResearchBrief(
         keyword="sambalpuri ikat stole", craft="handloom", place="Sambalpur district"
@@ -487,7 +437,6 @@ def test_pagination_stops_when_the_budget_is_reached(stub_requests) -> None:
             AI_MARKET_RESEARCH_MAX_QUERIES="1", AI_MARKET_RESEARCH_MAX_RESULTS="10"
         ),
     )
-    # Ten results asked for, ten returned by the first full page: no second page is bought.
     assert len(stub.calls) == 1
 
 
@@ -561,10 +510,6 @@ def test_an_endless_response_is_abandoned_rather_than_buffered(stub_requests) ->
     assert "abandoned" in caught.value.message
 
 
-# --------------------------------------------------------------------------------------------
-# 3. SerpApi — the second vendor, whose failures arrive in a different shape.
-# --------------------------------------------------------------------------------------------
-
 
 def test_the_second_vendor_answers_the_same_question(stub_requests) -> None:
     stub = stub_requests(_json_response(SERPAPI_PAGE))
@@ -579,8 +524,6 @@ def test_the_second_vendor_answers_the_same_question(stub_requests) -> None:
 
 
 def test_a_200_carrying_an_error_string_is_not_an_empty_market(stub_requests) -> None:
-    # SerpApi answers 200 with {"error": ...}. Left unhandled this reads as "the market has
-    # nothing", which is the one wrong answer this module exists to avoid producing.
     stub_requests(_json_response({"error": "Your account has run out of searches."}))
     with pytest.raises(ProviderFailed) as caught:
         research_market(BRIEF, settings=_serpapi_settings())
@@ -592,10 +535,6 @@ def test_the_second_vendor_reports_no_results_without_complaining(stub_requests)
     result = research_market(BRIEF, settings=_serpapi_settings())
     assert result.products == ()
 
-
-# --------------------------------------------------------------------------------------------
-# 4. The local catalogue: the whole capability on the device's own CPU.
-# --------------------------------------------------------------------------------------------
 
 
 CATALOGUE_CSV = """name,seller,price,currency,url,updated
@@ -633,8 +572,6 @@ def test_the_offline_provider_answers_the_whole_capability_from_a_file(tmp_path)
 
 
 def test_a_catalogue_row_is_stamped_with_the_date_the_catalogue_claims(tmp_path) -> None:
-    # A catalogue price was true when the catalogue was compiled, not when this happened to read
-    # it. Stamping it "now" would be a small lie that gets more wrong every month.
     path = tmp_path / "prices.csv"
     path.write_text(CATALOGUE_CSV, encoding="utf-8")
     result = research_market(BRIEF, settings=_catalogue_settings(path))
@@ -642,8 +579,6 @@ def test_a_catalogue_row_is_stamped_with_the_date_the_catalogue_claims(tmp_path)
 
 
 def test_a_row_without_a_url_still_gets_a_distinct_citable_source(tmp_path) -> None:
-    # The row number goes in the query string, not the fragment: canonical_url drops fragments,
-    # so "#row=3" would make every row compare equal and deduplication would keep one of them.
     path = tmp_path / "prices.csv"
     path.write_text(CATALOGUE_CSV, encoding="utf-8")
     result = research_market(BRIEF, settings=_catalogue_settings(path))
@@ -667,8 +602,6 @@ def test_the_offline_provider_reads_jsonl_too(tmp_path) -> None:
         encoding="utf-8",
     )
     result = research_market(BRIEF, settings=_catalogue_settings(path))
-    # A malformed line is skipped, not raised on: one bad row in a hand-edited price list must
-    # not cost the operator the other nine hundred.
     assert sorted(item.price for item in result.products) == [800.0, 950.0]
 
 
@@ -706,8 +639,6 @@ def test_an_enormous_catalogue_is_refused_before_a_byte_is_read(tmp_path) -> Non
 
 
 def test_the_offline_provider_needs_nothing_installed() -> None:
-    # The only provider in the package that adds no install step of any kind: csv and json are
-    # stdlib, so "is it available" is purely a question of the path being set.
     assert registry.LOCAL_CATALOGUE.required_modules == ()
     settings = build_settings({
         "AI_FEATURES_ENABLED": "true",
@@ -727,7 +658,5 @@ def test_a_result_from_the_edge_device_merges_into_market_analysis_unchanged(tmp
     observations = to_price_observations(result)
 
     verdict = ma.judge_band("stole", 1000, 2000, observations)
-    # Five observations is below market_analysis's own verdict floor, so it declines to judge —
-    # exactly as it would for five surveyed prices. Retrieved data gets no special credibility.
     assert verdict.verdict == "UNVERIFIABLE"
     assert all(o.source == "RETRIEVED_LISTING" for o in observations)

@@ -6,52 +6,29 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/**
- * "Links on sync": an artisan card scanned into a stage's artisan box with no signal and no match in
- * the cached register leaves `card:<shortCode>` in the row (`ArtisanCardCode.pendingValue`).
- * The workshop form's artisan picker keeps the same value in a queued entry's body. Before the
- * stage or the entry is sent, `WorkshopSync.pushStages` and `WorkshopRepository`'s outbox pass
- * resolve every such value with the server and write the artisan's id in its place. A card the
- * server cannot match holds the stage or entry with the server's sentence; nothing is dropped and
- * nothing half-linked is sent.
- *
- * Pure apart from [resolvePendingCards]'s injected lookup, so `PendingCardsTest` drives it directly.
- */
-
-/** Every pending card value anywhere in [element]. */
 fun pendingCardsIn(element: JsonElement): Set<String> = when (element) {
     is JsonPrimitive -> if (element.isString && ArtisanCardCode.isPending(element.content)) setOf(element.content) else emptySet()
     is JsonArray -> element.flatMapTo(LinkedHashSet()) { pendingCardsIn(it) }
     is JsonObject -> element.values.flatMapTo(LinkedHashSet()) { pendingCardsIn(it) }
 }
 
-/** [element] with each pending value in [ids] replaced by its artisan id. */
 fun substitutePendingCards(element: JsonElement, ids: Map<String, String>): JsonElement = when (element) {
     is JsonPrimitive -> if (element.isString) ids[element.content]?.let(::JsonPrimitive) ?: element else element
     is JsonArray -> JsonArray(element.map { substitutePendingCards(it, ids) })
     is JsonObject -> JsonObject(element.mapValues { (_, value) -> substitutePendingCards(value, ids) })
 }
 
-/** Every pending card value in a queued entry's body (`PendingEntry.payloadJson`); none for a body that won't parse. */
 fun pendingCardsInPayload(payloadJson: String): Set<String> =
     runCatching { pendingCardsIn(Json.parseToJsonElement(payloadJson)) }.getOrDefault(emptySet())
 
-/** [payloadJson] with each pending value in [ids] replaced by its artisan id; key order is kept. */
 fun substitutePendingCardsInPayload(payloadJson: String, ids: Map<String, String>): String =
     substitutePendingCards(Json.parseToJsonElement(payloadJson), ids).toString()
 
-/** Every pending card value in a design-workshop draft's stages, core and custom answers alike. */
 fun pendingCardsInDraft(draft: WorkshopDraft): Set<String> =
     draft.stages.values.flatMapTo(LinkedHashSet()) { stage ->
         pendingCardsIn(JsonObject(stage.values)) + pendingCardsIn(JsonObject(stage.custom))
     }
 
-/**
- * Whether [card] is already held, waiting to sync, on this phone: in one of [payloads] (queued
- * outbox bodies) or in a stage of one of [drafts] (design-workshop drafts, where the stage's
- * artisan box keeps it). The top-bar scanner says so offline instead of a bare "You're offline":
- * the card is known on this phone and links on the next sync.
- */
 fun cardWaitingToSync(
     card: ArtisanCardCode.Parsed,
     payloads: List<String>,
@@ -62,15 +39,11 @@ fun cardWaitingToSync(
 }
 
 sealed interface PendingCardOutcome {
-    /** Every card resolved: pending value → artisan id. */
     data class Resolved(val ids: Map<String, String>) : PendingCardOutcome
-    /** Still no signal: try again on the next pass. */
     data object Offline : PendingCardOutcome
-    /** The server could not match one: the stage waits, with this sentence. */
     data class Held(val message: String) : PendingCardOutcome
 }
 
-/** "Card D-7K3QM-9XA2F-HQ: No artisan matches this card." */
 fun heldCardSentence(pendingValue: String, reason: String): String =
     "Card ${ArtisanCardCode.pendingInput(pendingValue)}: $reason"
 
@@ -82,7 +55,6 @@ suspend fun resolvePendingCards(
     for (value in pending) {
         when (val answer = resolve(ArtisanCardCode.pendingInput(value))) {
             is CardResolution.Found -> ids[value] = answer.artisanId
-            // The card was reissued, and it still names its artisan: link them.
             is CardResolution.Replaced ->
                 if (answer.artisanId.isNotBlank()) ids[value] = answer.artisanId
                 else return PendingCardOutcome.Held(heldCardSentence(value, CARD_REPLACED))

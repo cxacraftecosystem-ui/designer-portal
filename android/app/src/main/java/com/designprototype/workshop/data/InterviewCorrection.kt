@@ -3,28 +3,6 @@ package com.designprototype.workshop.data
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 
-/*
- * AN INTERVIEW CORRECTION QUEUED WITH NO SIGNAL (2026-10-17).
- *
- * Interview corrections used to be refused offline because the interview's version did not move when
- * another interviewer wrote answers: answers live in their own table, so a correction composed before
- * their answers passed its precondition and replaced what they wrote. The server now moves the
- * interview's `updatedAt` on every answer write and claims it with a compare-and-set
- * (`records.claim_expected_updated_at`), so the correction is queued like the six record types: only
- * its changed keys, guarded by the version it was composed against, and held for "Review changes"
- * when the interview moved. Pinned by `InterviewCorrectionTest`.
- */
-
-/**
- * The PATCH body a queued interview correction sends. The form's payload is encoded with explicit
- * nulls, and the online save sends none (`ApiClient`'s `explicitNulls = false`), where the route
- * reads a present null on place, language or notes as "clear it". Dropping them here keeps the
- * queued save saying exactly what the online one would have said, before it is narrowed to its
- * changed keys and given its precondition.
- *
- * [cleared] is the exception: a workshop box the person deliberately emptied
- * ([PendingEntry.clearedLinkKeys]) goes as an explicit null, which is how the route un-files it.
- */
 fun interviewCorrectionBody(
     payload: JsonObject,
     changedKeys: Set<String>?,
@@ -35,19 +13,6 @@ fun interviewCorrectionBody(
     return restrictCorrectionBody(JsonObject(sent), changedKeys, baseUpdatedAt)
 }
 
-/**
- * "Review changes" for an interview: each thing this correction changes, in words, with the phone's
- * value against the interview's value now. Answers are named by their question ([questionLabels],
- * question id to label) rather than by an id, and every part of an answer the correction sends is
- * compared (the answer and its note). Things both sides already agree on are left out, and answers
- * the other interviewer added that this correction does not touch are not listed: sending this
- * correction leaves them as they are.
- *
- * [changedKeys] is the set the queued correction actually sends ([PendingEntry.changedKeys]); null
- * means the whole body is sent, as from an older build. An EMPTY review therefore means the server
- * already holds everything this correction would write, which the outbox reads as "it already
- * landed" (a PATCH whose answer was lost) and sends again without asking.
- */
 fun interviewCorrectionReview(
     mine: QuestionnaireInterviewUpdateRequest,
     record: QuestionnaireInterviewDetailDto,
@@ -118,7 +83,6 @@ fun interviewCorrectionReview(
     return StaleCorrectionReview(fields, record.updatedAt)
 }
 
-/** A review status, worded as the web's `StatusBadge` words it. */
 private fun statusWords(status: String): String = when (status.uppercase(java.util.Locale.ROOT)) {
     "DRAFT" -> "Draft"
     "PENDING" -> "Pending"
@@ -128,22 +92,14 @@ private fun statusWords(status: String): String = when (status.uppercase(java.ut
     else -> status.replace('_', ' ').lowercase(java.util.Locale.ROOT).replaceFirstChar { it.uppercaseChar() }
 }
 
-/** "B3. What tools are used…" — how a question is named in "Review changes". */
 fun interviewQuestionLabel(question: QuestionnaireQuestionDto): String =
     listOfNotNull(
         "${question.sectionCode}${question.sortOrder}".takeIf { it.isNotBlank() },
         question.prompt.takeIf { it.isNotBlank() },
     ).joinToString(". ")
 
-/**
- * Can this interview correction be queued? Only when the interview it was composed against carries
- * its version: the version is what makes the server refuse the correction if another interviewer
- * answered since. Without it the answer diff would replay bare and could drop their answers, so the
- * correction is refused in the room instead ([INTERVIEW_CORRECTION_NEEDS_SIGNAL]).
- */
 fun interviewCorrectionCanQueue(baseUpdatedAt: String?): Boolean = !baseUpdatedAt.isNullOrBlank()
 
-/** Said when [interviewCorrectionCanQueue] is false. The answers stay on screen. */
 const val INTERVIEW_CORRECTION_NEEDS_SIGNAL =
     "This correction cannot be kept on this device to send later, because other interviewers may " +
         "also be answering this interview. Your answers are still on screen — save again when you " +

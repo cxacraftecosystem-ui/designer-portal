@@ -8,16 +8,10 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The craft picker held 50 of the 459 crafts and said "Partly loaded" while online (owner report,
- * 2026-10-21): it read one page of the references endpoint at the server's default size. These pin
- * the whole-list read, the honest "partly loaded" flag and the search merge.
- */
 class DwReferencePagingTest {
 
     private val crafts = (1..459).map { DwReferenceOption(id = "c$it", label = "Craft $it") }
 
-    /** The server: `limit` rows from `offset`, `truncated` while more remain. */
     private fun server(rows: List<DwReferenceOption>, calls: MutableList<Pair<Int, Int>>) =
         { offset: Int, limit: Int ->
             calls += offset to limit
@@ -82,7 +76,6 @@ class DwReferencePagingTest {
     fun `partly loaded only when the list is short`() {
         assertFalse(DwReferenceList(items = crafts, complete = true).partial)
         assertTrue(DwReferenceList(items = crafts.take(200), complete = false).partial)
-        // A list cached before pages were read: one full page of 50 is the cut, fewer is the whole.
         assertTrue(DwReferenceList(items = crafts.take(50)).partial)
         assertFalse(DwReferenceList(items = crafts.take(7)).partial)
         assertNull(DwReferenceList().complete)

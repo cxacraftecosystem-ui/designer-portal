@@ -2,21 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { apiToken, CREDENTIALS_MISSING, PASSWORD, signIn, signInWithToken } from "./support/session";
 
-/**
- * Responsive navigation, in a browser (REQUIREMENTS_2026-10-20 §4). Signed in, against a running
- * stack. The pure rules are `island-nav-unit.spec.ts`; the source shape is `nav-responsive-unit.spec.ts`.
- *
- * Below 1024 px: the search header at the top and the bottom island (at most five slots, the fifth
- * "More" when there are more) — and no desktop island. From 1024 px: the desktop island, expanded,
- * with its strip and bell — and neither the header nor the bar.
- *
- * E2E_EMAIL must be an admin (the seeded `admin2@example.org` in e2e-live.yml); admin view is turned
- * on for it so the Admin group is on the bar's list. The non-admin is the seeded researcher.
- */
-
 test.skip(Boolean(CREDENTIALS_MISSING), CREDENTIALS_MISSING);
 
-/** A seeded account with no Admin destinations: Home, Tour, Record, Browse and Account — five, no More. */
 const NON_ADMIN_EMAIL = process.env.E2E_RESEARCHER_EMAIL ?? "researcher@example.org";
 
 const bar = (page: Page) => page.getByTestId("bottom-island-nav");
@@ -24,13 +11,11 @@ const slots = (page: Page) => bar(page).locator(":scope > div > div > :is(a, but
 const header = (page: Page) => page.getByTestId("app-search-header");
 const islandMenu = (page: Page) => page.getByRole("button", { name: "Toggle navigation menu" });
 
-/** The slots' accessible names, less any unread count. */
 async function slotNames(page: Page): Promise<string[]> {
   const names = await slots(page).evaluateAll((nodes) => nodes.map((node) => node.getAttribute("aria-label") ?? ""));
   return names.map((name) => name.replace(/, \d+\+? unread$/, ""));
 }
 
-/** Signed in as the E2E admin with admin view ON, landed on the dashboard. */
 async function signInAsAdminWithAdminView(page: Page) {
   const token = await apiToken(page.request);
   await signInWithToken(page, token);
@@ -39,7 +24,6 @@ async function signInAsAdminWithAdminView(page: Page) {
       const sub = String(JSON.parse(atob(value.split(".")[1] ?? "")).sub ?? "");
       if (sub) window.localStorage.setItem(`field_repo_admin_view:${sub}`, "on");
     } catch {
-      // Not a JWT: the slot-order assertion says what is missing.
     }
   }, token);
   await page.goto("/dashboard");
@@ -66,7 +50,6 @@ for (const size of [
     test("the bottom island and the header replace the desktop island", async ({ page }) => {
       await expect(header(page)).toBeVisible();
       await expect(islandMenu(page)).toBeHidden();
-      // At most five slots, "More" included, then the menu button.
       const count = await slots(page).count();
       expect(count).toBeGreaterThan(0);
       expect(count).toBeLessThanOrEqual(5);
@@ -80,7 +63,6 @@ for (const size of [
 
     test("an admin with six slots sees Home, Tour, Record, Browse and More", async ({ page }) => {
       await expect.poll(() => slotNames(page)).toEqual(["Dashboard", "Walkthrough", "Record", "Browse", "More"]);
-      // The bar prints the short words; the full names stay the accessible names.
       await expect(slots(page).nth(0)).toContainText("Home");
       await expect(slots(page).nth(1)).toContainText("Tour");
     });
@@ -120,13 +102,9 @@ for (const size of [
     });
 
     test("the header hides on the way down and returns on any move up", async ({ page }) => {
-      // Let the dashboard finish loading first: content arriving above the fold moves the page by
-      // scroll anchoring, which the header rightly reads as more scrolling.
       await page.waitForLoadState("networkidle");
       await tallPage(page);
       const frame = page.locator(".app-search-header-frame");
-      // Window scrolls, not wheels: a wheel lands on whatever is under the pointer, and a card list
-      // there that contains its own overscroll swallows the move before the page sees it.
       await page.evaluate(() => window.scrollTo({ top: 200, behavior: "instant" }));
       await expect(frame).toHaveAttribute("data-shown", "false");
       await page.evaluate(() => window.scrollBy({ top: -10, behavior: "instant" }));
@@ -175,7 +153,6 @@ test.describe("at 390×844, the upload tray", () => {
     await page.locator('input[type="file"][multiple]:not([capture])').first().setInputFiles({
       name: "loom.png",
       mimeType: "image/png",
-      // A 1x1 PNG: only the tray's position is looked at.
       buffer: Buffer.from(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
         "base64"
@@ -187,7 +164,6 @@ test.describe("at 390×844, the upload tray", () => {
       .first()
       .click();
     await page.getByRole("option", { name: "Artisan" }).click();
-    // The form's required location: the device's coordinates, a state and its district.
     await page.getByRole("spinbutton", { name: /^Latitude/ }).fill("26.82");
     await page.getByRole("spinbutton", { name: /^Longitude/ }).fill("75.54");
     await page.getByRole("button", { name: /^State/ }).click();

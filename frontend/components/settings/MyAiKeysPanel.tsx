@@ -9,33 +9,6 @@ import { FieldLabelProvider } from "@/components/ui/fieldLabel";
 import { PasswordRevealButton } from "@/components/ui/PasswordReveal";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/**
- * **A designer's OWN provider keys.** One card, one row per provider, and an accordion per provider
- * explaining how to get a key.
- *
- * ── WHAT THIS PANEL IS FOR, AND HOW IT DIFFERS FROM THE ONE BELOW IT ──────────────────────────
- *
- * `ApiKeysPanel` manages the DEPLOYMENT's keys and is master-admin only: those are the
- * organisation's credentials and the organisation's bill. This one is the opposite in every respect
- * — it is visible to every signed-in account, it acts only on the caller's own rows, and the key it
- * saves is billed to that person's own card at their own provider. Nothing here can read or write
- * anybody else's key, because the server takes the owner from the token and never from the request.
- *
- * There is deliberately **no reveal control**. The admin panel has one, because a master admin
- * sometimes has to compare a stored key against a provider dashboard. Nobody has that need for
- * somebody else's personal key, and the owner can always paste a new one — so a saved key leaves
- * the server only as a call made on its owner's behalf, and this panel shows the last four
- * characters and nothing more.
- *
- * ── THE CAPABILITY LINE IS NOT DECORATION ─────────────────────────────────────────────────────
- *
- * Each model row prints what that model can actually be used for, and the panel says plainly when a
- * provider cannot do something at all — Claude cannot transcribe audio, because no Claude model
- * accepts a sound file. Without that, a designer who pastes a Claude key reasonably assumes their
- * recordings are now on their own account, and finds out otherwise only from a bill that never
- * arrives. The server enforces the same rule; this is where a person can see it before choosing.
- */
-
 type AiModel = {
   id: string;
   label: string;
@@ -71,11 +44,6 @@ type KeyState = {
   lastError: string | null;
 };
 
-/** The designer-facing name of each job. The server sends the enum; this is the only place it is
- *  turned into words, so the names read the same on every row. Deliberately a COMPLETE mirror of
- *  `ai_providers.AiTask` — what a row is allowed to SAY is decided by `TASKS_NOTHING_CAN_ASK_FOR`
- *  below, not by leaving a name out of this dictionary, which would print a raw "SUMMARISE" at a
- *  designer instead of hiding it. */
 const TASK_LABELS: Record<string, string> = {
   PROOFREAD: "Proofread",
   EXPAND: "Expand",
@@ -85,45 +53,6 @@ const TASK_LABELS: Record<string, string> = {
   CAPTION: "Describe photos"
 };
 
-/**
- * JOBS THE SERVER'S CATALOGUE LISTS THAT NOTHING IN THIS PRODUCT CAN ACTUALLY ASK FOR.
- *
- * **`SUMMARISE` IS ADVERTISED AND UNREACHABLE, AND THIS PANEL WAS THE PLACE THE CLAIM WAS MADE.**
- * `AiTask.SUMMARISE` is in the enum and in `TEXT_TASKS`, so every chat model in every family carries
- * it and every "Used for:" line printed it. But there is no way to run one: `ai_verbs.Verb` has five
- * members — PROOFREAD, EXPAND, TRANSLATE, CAPTION, SUBTITLES — matched one-for-one by five routes
- * (`POST /{workshop_id}/ai-layers/{proofread,expand,translate,caption,subtitles}`), and SUMMARISE is
- * in neither list. `ai.summarise_text` does exist, with its own system prompt and a
- * `LayerKind.SUMMARY` that has a placement law — and NOTHING CALLS IT: its only reference anywhere
- * in the repository is the `summarize_text` alias on the line beneath its own definition.
- *
- * So the line "Used for: … Summarise …" told a designer their own key and their own money would be
- * spent on a job they cannot ask this product to do. That is a small lie in exactly the place a
- * person is deciding whether to hand over a credential, which is the worst place in the app to keep
- * one.
- *
- * **WHY HIDDEN RATHER THAN WIRED, WHICH IS THE DECISION AND NOT AN OMISSION.** Wiring it is not the
- * missing route: a verb in this system is a `Verb` member, a `LayerKind`, a rung in
- * `ALLOWED_PARENTS`, an acceptance step, an annexure section in the report, cap accounting, and the
- * same surface on the handset — where a release ships to a fleet that may be offline for a
- * fortnight. Whether a designer should be able to summarise a transcript, and what a SUMMARY layer
- * means sitting under a report somebody signs, is a product decision with an owner; it is not
- * something to conclude as a side effect of correcting a caption. Hiding is reversible in one line
- * and cannot mislead anybody; shipping a half-wired fifth verb is neither.
- *
- * **AND IT IS FILTERED HERE RATHER THAN CUT FROM THE CATALOGUE** because `AiModel.tasks` is an honest
- * statement about the MODEL — GPT-4o really can summarise — while this line is a statement about
- * what THIS DEPLOYMENT WILL SPEND YOUR KEY ON. They are different claims and only the second one was
- * wrong. `ai_providers.py` belongs to another lane besides.
- *
- * WHEN A SUMMARISE VERB IS WIRED, DELETE THE ENTRY AND NOTHING ELSE — the label above is already
- * there, and the same one-line deletion is waiting in the handset's `MyAiKeysScreen.kt`.
- *
- * True as of «2026-08-27»; re-check with
- * «grep -rn "summarise_text\|summarize_text" backend/app» (only the definition and its alias, both
- * in `services/ai.py`) and «grep -n "class Verb" -A 8 backend/app/services/ai_verbs.py» (five
- * members, no SUMMARISE among them).
- */
 const TASKS_NOTHING_CAN_ASK_FOR = new Set(["SUMMARISE"]);
 
 function taskList(tasks: string[]): string {
@@ -135,9 +64,6 @@ function taskList(tasks: string[]): string {
 
 function priceLine(model: AiModel, checkedOn: string): string | null {
   if (model.inputPricePerMTok === null || model.outputPricePerMTok === null) return null;
-  // The date travels with the figure, every time it is printed. These go stale — providers
-  // re-price, and two of the current rates are introductory — and a stale price shown as current is
-  // a small lie told to somebody deciding how to spend their own money.
   return `About $${model.inputPricePerMTok} in / $${model.outputPricePerMTok} out per million words-ish, checked ${checkedOn}`;
 }
 
@@ -205,15 +131,11 @@ function ProviderRow({
   onChanged: (next: KeyState) => void;
 }) {
   const [key, setKey] = useState("");
-  /** Per-render only, never persisted: this is a shared machine. See `PasswordRevealButton`. */
   const [revealKey, setRevealKey] = useState(false);
   const [model, setModel] = useState(state.model);
   const [busy, setBusy] = useState<null | "save" | "test" | "remove">(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  // Follow the server when it changes the row under us (a save, a test, a fresh load). Without this
-  // the select would keep showing whatever was picked before a Remove, which reads as if the choice
-  // had survived the delete.
   useEffect(() => setModel(state.model), [state.model]);
 
   const run = async (
@@ -265,12 +187,6 @@ function ProviderRow({
       <label className="mt-3 block text-xs font-medium text-ink-700" htmlFor={`key-${provider.provider}`}>
         {state.configured ? "Replace the key" : "Paste your key"}
       </label>
-      {/*
-        THE EYE, ADDED 2026-08-30, and the reason is the same one as `ApiKeysPanel`'s with one
-        addition: this key is the PERSON'S OWN, billed to them, and a mistyped one costs them a
-        support conversation about somebody else's provider. `relative` on the wrapper is what
-        the absolutely-positioned button needs; `pr-10` is where it sits.
-      */}
       <div className="relative mt-1">
         <input
           id={`key-${provider.provider}`}
@@ -290,44 +206,6 @@ function ProviderRow({
         />
       </div>
 
-      {/*
-        ── THE THEMED DROPDOWN, AND WHY THE ARGUMENT FOR THE NATIVE `<select>` DID NOT SURVIVE ─────
-
-        This was a native `<select>` until 2026-08-30, defended on a real accessibility point that
-        turned out to have a better answer than "keep the native control". The old note read: "the
-        `htmlFor` above and the price/task sentence below are both bound to this control by id, and
-        the themed dropdown renders a <button> that accepts neither an id nor a ref, so converting
-        would trade a properly named and described field for a filter box over five rows."
-
-        HALF OF THAT WAS TRUE AND IS WHY THIS IS NOT A ONE-LINE SWAP. A `<label htmlFor>` genuinely
-        cannot name a `<button>` — HTML-AAM computes a button's name from its own contents and the
-        label association plays no part — so replacing the `<select>` with a bare `<Dropdown>` under
-        that `<label>` would have announced "Claude Sonnet 4.5, combobox": the answer, and never the
-        question. That is the exact failure `ui/fieldLabel.tsx` was written to end, at forty-four
-        call sites at once.
-
-        THE OTHER HALF WAS NOT. The trigger DOES take an id — it publishes its own (`triggerId`) —
-        and it takes `describedBy`. `FieldLabelProvider` hands the label's id down through context,
-        and `SearchableSelect` composes `aria-labelledby="<label id> <trigger id>"`, which the
-        accname algorithm concatenates into "Model Claude Sonnet 4.5" — the question AND the answer,
-        which is strictly better than what the `<select>` announced. `ariaLabel` is deliberately NOT
-        passed: it would REPLACE name-from-content and drop the value again.
-
-        THE DESCRIPTION IS NOW ACTUALLY BOUND, which the old note claimed and the old markup did not
-        do — that `<select>` carried no `aria-describedby` at all, so the price and capability
-        sentence below reached a sighted reader and nobody else. It has an id now and the control
-        points at it.
-
-        WHAT THE VISIBLE LABEL BECAME. A `<span>`, not a `<label>`, because a `<label>` that names
-        nothing is worse than no label element: it looks correct in review and does nothing. The
-        class list is unchanged, so the card still reads as a pair with "Paste your key" above it —
-        `Field` was not used here for exactly that reason; its `field-label` styling would have made
-        the two labels in this one card disagree.
-
-        NO `searchable`: `provider.models` is the server's declared catalogue for ONE provider, a
-        handful of rows and a vocabulary rather than a corpus. §11.5's threshold would withdraw the
-        filter box anyway; this is the case it was calibrated on.
-      */}
       <span id={`model-label-${provider.provider}`} className="mt-3 block text-xs font-medium text-ink-700">
         Model
       </span>
@@ -338,10 +216,6 @@ function ProviderRow({
             onChange={setModel}
             options={provider.models.map((option) => ({
               value: option.id,
-              // Kept in the LABEL rather than moved to `SelectOption.hint`, which is where secondary
-              // text belongs. `hint` is drawn in the open panel only, and "(recommended)" has to
-              // stay legible on the CLOSED trigger — that is the state a designer reads when they
-              // come back to check what their key is set to.
               label: `${option.label}${option.id === provider.defaultModel ? " (recommended)" : ""}`
             }))}
             describedBy={`model-hint-${provider.provider}`}
@@ -353,10 +227,6 @@ function ProviderRow({
         if (!chosen) return null;
         const price = priceLine(chosen, checkedOn);
         return (
-          // The id the dropdown's `aria-describedby` points at. A dangling reference is harmless on
-          // the branch above that renders nothing — assistive technology ignores an id that resolves
-          // to no element — and that branch only fires when the saved model is one this app no
-          // longer offers, which already has its own warning above the field.
           <p id={`model-hint-${provider.provider}`} className="mt-1.5 text-xs leading-5 text-ink-500">
             {chosen.note} <span className="block">Used for: {taskList(chosen.tasks)}.</span>
             {price ? <span className="block">{price}</span> : null}
@@ -473,10 +343,6 @@ export function MyAiKeysPanel() {
         </span>
         <h2 className="font-display font-bold text-ink-900">My AI keys</h2>
       </div>
-      {/* "summarising" was in the list below and is not any more: nothing in this product can ask
-          for a summary — see TASKS_NOTHING_CAN_ASK_FOR. Naming a job here that a designer will then
-          go hunting for and not find is the same lie as printing it on a model's row, told earlier
-          and to somebody who has not yet decided whether to hand over a credential. */}
       <p className="mt-1.5 text-sm leading-6 text-ink-500">
         Optional. With your own key, the AI work you ask for runs and bills on your account.
         Leave empty to use the portal&apos;s key.

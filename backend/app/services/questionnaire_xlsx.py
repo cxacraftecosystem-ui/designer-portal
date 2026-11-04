@@ -1,66 +1,3 @@
-"""The .xlsx pro-forma a designer builds their own questionnaire in, and the parser that reads it
-back.
-
-The loop this serves, in the owner's words: *designers want to make their OWN questionnaires*. They
-download a pro-forma, type their questions into it in Excel, upload it, and then record answers
-against it in the platform. The spreadsheet they upload MAY ALREADY CONTAIN ANSWERS — a designer who
-ran the interview on paper and typed it up — and it may equally be blank. Both have to work, and
-they have to produce the same shape of data, so an answer that arrived on the spreadsheet is stored
-in exactly the same table as one typed into the app.
-
-Two directions, and they are inverses of each other:
-
-``build_pro_forma``           -> a blank workbook: the working sheet, a Details sheet for the title,
-                                 and a worked example on the instructions sheet.
-``build_questionnaire_workbook`` -> an EXISTING questionnaire as the same workbook, carrying question
-                                 IDs and one Answer/Notes column pair per recorded sitting.
-``build_question_set_workbook`` -> the same questionnaire's QUESTIONS AND NOTHING ELSE — no answers,
-                                 no respondents, no question IDs. The artefact a designer SENDS to
-                                 another designer; see the block comment above it.
-``parse_questionnaire_workbook`` -> any of the above, or something a designer built from scratch,
-                                 read back into sections + questions + answers.
-
-THERE ARE THEREFORE TWO DOWNLOADS OF ONE QUESTIONNAIRE AND THEY ARE NOT INTERCHANGEABLE. The full
-workbook is a LOSSLESS copy of somebody's fieldwork and belongs to the designer who collected it; the
-question set is the INSTRUMENT, which is the part that is meant to travel. Conflating them is how a
-sharing feature becomes a data leak, so they are two functions with two names rather than one
-function with a flag — a flag defaults, and the wrong default here hands over a stranger's
-respondents.
-
-WHAT "FORGIVING" MEANS HERE, precisely, because it is the whole difference between a feature a
-designer uses and one they abandon after the first upload:
-
-* **Column order is not fixed.** Columns are located by reading the header row, not by position, so
-  a designer who dragged "Answer" to the front loses nothing.
-* **Header spelling is not fixed.** Each column accepts a family of names (see ``_COLUMN_ALIASES``);
-  matching ignores case, punctuation, non-breaking spaces and repeated whitespace, because "Section
-  Code", "section_code" and "SECTION  CODE " are the same column to everyone except a computer.
-* **The header does not have to be on row 1.** Designers put a title across the top. The header row
-  is *found* by scanning for one that names a question column.
-* **The sheet does not have to be the first one.** A sheet named like the working sheet wins;
-  failing that, whichever sheet yields the most questions does.
-* **Section codes are optional.** A section is identified by its title if no code was typed, and a
-  code is derived from the title so it stays stable when a designer inserts a section above it.
-* **A section header can be written once or repeated.** Blank section cells inherit the last section
-  seen, which is how a person lays a table out; repeating it on every row also works.
-
-AND THE RULE THAT OUTRANKS ALL OF THAT: a row this parser cannot read is REPORTED, never dropped.
-Every skipped or assumed-about row comes back in ``ParsedQuestionnaire.problems`` with its sheet, its
-Excel row number and a sentence saying what happened. A silent drop means a designer uploads forty
-questions, sees thirty-eight, and has no way to find out which two went missing or why — and the
-most likely reason for a genuinely unreadable cell is the one case openpyxl cannot help with: a
-FORMULA whose cached value was never written (see ``xlsx_table.FormulaCell``).
-
-WRITING SIDE: every value goes into a cell through :func:`app.services.xlsx_report._put`, imported
-rather than restated. That module's docstring records three separate ways ordinary field text made
-Excel open a download with "We found a problem with some content" — a lone surrogate from a phone
-that halved an emoji, a note beginning "=" that openpyxl stored as a formula, and a sheet name
-carrying an apostrophe — and ``tests/test_xlsx_report.py`` is what keeps those fixed. A private copy
-of that guard here would be a fourth renderer of the same file format that drifts the first time one
-of them is corrected; the repo already shares ``csv_response`` between two routers for exactly this
-reason. The import is deliberate, and if it ever breaks it breaks loudly at import time.
-"""
-
 from __future__ import annotations
 
 import re
@@ -70,27 +7,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
 from app.services import naming
-
-# See the module docstring: shared, not restated. `_put` is the single door every value in an .xlsx
-# this repo produces goes through, and it is what stops Excel offering to repair the download.
 from app.services.xlsx_report import XLSX_MIME, _put, _sanitise
-
-# ── THE READER CORE, EXTRACTED RATHER THAN COPIED (2026-09-13) ──────────────────────────────────
-#
-# Everything below used to be defined in this file, and every line of it is still the same line —
-# it moved to ``services/xlsx_table`` unchanged when a SECOND uploader of a SECOND kind of table
-# (the artisan roster) arrived. The alternative was a private copy of the header normaliser, the
-# two-pass formula map and the magic-byte branch, which is how two readers of one file format come
-# to disagree the first time one of them is corrected: the next fix to ``cell_text`` would land in
-# exactly one of them and nothing would say which. That is the same argument this module's header
-# already makes about importing ``xlsx_report._put`` rather than restating it, and the one
-# ``questionnaire.py:11-15`` makes about sharing ``csv_response`` with ``export.py``.
-#
-# THE FOUR STILL-PRIVATE NAMES ARE KEPT AS ALIASES ON PURPOSE. Every reference in the body of this
-# file goes on reading exactly as it did; an extraction that also renamed a hundred call sites would
-# have made the diff unreviewable and buried any real change inside it. The names this file no
-# longer uses at all are simply not imported — an alias nothing reads is a second place for a reader
-# to look up a definition that has moved.
 from app.services.xlsx_table import (
     FormulaCell as _FormulaCell,
     ParseProblem,
@@ -126,16 +43,13 @@ __all__ = [
 
 PRO_FORMA_FILENAME = naming.export_filename("Questionnaire", "Pro-Forma", "xlsx", dated=False)
 
-# Sheet names. The parser prefers the working sheet by name and the writer emits these, but neither
-# depends on them: a designer who renamed the tab is still read (see `xlsx_table.pick_sheet`).
 SHEET_QUESTIONS = "Questionnaire"
 SHEET_DETAILS = "Details"
 SHEET_HELP = "How to fill this in"
 
-_BRAND = "5B21B6"  # the same purple the relational report's Overview uses
+_BRAND = "5B21B6"
 _WHITE = "FFFFFFFF"
 
-# Column widths, in characters. The question column is where the typing happens, so it gets room.
 _WIDTHS = {
     "sectionCode": 14,
     "sectionTitle": 30,
@@ -147,16 +61,10 @@ _WIDTHS = {
     "notes": 34,
 }
 
-# Ceilings. A questionnaire is a research instrument, not a data dump: these exist so a malformed or
-# hostile workbook cannot turn one upload into an unbounded read. They are far above any real form —
-# the global artisan questionnaire, the largest instrument in the repository, has a few hundred
-# questions across seventeen sections.
 MAX_QUESTIONS = 2000
 MAX_SECTIONS = 200
 MAX_ROWS_SCANNED = 20000
 MAX_SHEETS_SCANNED = 12
-# How far down a sheet to look for the header row before concluding there isn't one. Generous
-# enough for a title block and a logo, small enough that a sheet of prose is not mistaken for a form.
 MAX_HEADER_SCAN_ROWS = 15
 
 MAX_PROMPT_CHARS = 2000
@@ -169,12 +77,7 @@ _UPLOAD_ENTRY_LABEL = "Answer"
 
 
 class QuestionnaireXlsxError(ValueError):
-    """The upload is not a workbook this can read at all.
-
-    Distinct from a *problem*, which is one row of an otherwise-good file. This is the whole file:
-    not a zip, not an .xlsx, password-protected, or carrying no recognisable question column
-    anywhere. The message is written to be shown to the designer as-is.
-    """
+    pass
 
 
 _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
@@ -218,15 +121,6 @@ _COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "required": ("required", "mandatory", "is required", "compulsory", "must answer"),
 }
-# Answer and note columns are matched by PREFIX, not exact name, because an exported questionnaire
-# emits one pair per recorded sitting: "Answer — Ramesh", "Notes — Ramesh". The text after the dash
-# names the sitting and is what pairs the two columns back up.
-#
-# HANDED TO ``xlsx_table.scan_header`` AS ``prefix_roles``, which is also what tells that function
-# these two roles may legitimately REPEAT while every alias family above may not. The pairing of
-# "the role may occur many times" with "the role is matched by prefix" is not a coincidence to be
-# tidied into two parameters: a prefix role carries a LABEL, and a label is what makes the second
-# occurrence a different column rather than a duplicate of the first.
 _ANSWER_PREFIXES = ("answer", "response", "reply")
 _NOTES_PREFIXES = ("notes", "note", "remarks", "remark", "comment", "comments", "observation")
 _PREFIX_ROLES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -234,14 +128,6 @@ _PREFIX_ROLES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("notes", _NOTES_PREFIXES),
 )
 
-#: The Details sheet's label vocabulary. **PRIVATE TO THIS FEATURE AND IT MUST STAY THAT WAY.**
-#:
-#: ``_details_sheet``'s ``extra`` rows must not collide with these, because this table is what reads
-#: the sheet back: a row labelled "Notes" or "Summary" added for a reader's benefit would be read as
-#: the questionnaire's DESCRIPTION and would silently overwrite it on the next import.
-#: ``tests/test_questionnaire_interchange.py`` pins that the question set's extra rows survive the
-#: round trip without doing this, and ``artisan_xlsx`` deliberately uses a disjoint key set for its
-#: own Details sheet for the same reason.
 _DETAIL_KEYS = {
     "title": ("questionnaire title", "title", "name", "questionnaire name", "form title"),
     "description": ("description", "purpose", "about", "notes", "summary"),
@@ -256,7 +142,6 @@ class ParsedQuestion:
     questionId: str | None = None
     helpText: str | None = None
     isRequired: bool = False
-    # Sitting label -> answer text / note, for answers that arrived already filled in on the sheet.
     answers: dict[str, str] = field(default_factory=dict)
     answerNotes: dict[str, str] = field(default_factory=dict)
 
@@ -274,12 +159,8 @@ class ParsedQuestionnaire:
     problems: list[ParseProblem] = field(default_factory=list)
     title: str | None = None
     description: str | None = None
-    # Carried on the Details sheet of an exported questionnaire. Its presence is how a re-upload
-    # knows it is an EDIT of a known form rather than a new one — though the endpoint takes the id
-    # from the URL and only uses this to catch a designer uploading the wrong file.
     questionnaireId: str | None = None
     sheet: str | None = None
-    # The sittings named by the answer columns, in the order they appeared.
     entryLabels: list[str] = field(default_factory=list)
 
     @property
@@ -303,12 +184,6 @@ class ParsedQuestionnaire:
 
 
 def derive_section_code(title: str, taken: set[str]) -> str:
-    """A stable, unique code for a section the designer titled but did not code.
-
-    Derived from the TITLE rather than from the position. Positional codes ("S1", "S2") look tidier
-    and are wrong: inserting a section at the top renumbers every section below it, so a re-upload
-    matches nothing and the whole form churns. A title-derived code survives insertion.
-    """
     base = re.sub(r"[^A-Za-z0-9]+", "_", unicodedata.normalize("NFKD", title)).strip("_").upper()
     base = base[:MAX_CODE_CHARS].strip("_") or "SECTION"
     candidate = base
@@ -324,21 +199,9 @@ def derive_section_code(title: str, taken: set[str]) -> str:
 def parse_questionnaire_workbook(
     data: bytes, *, filename: str | None = None
 ) -> ParsedQuestionnaire:
-    """Read an uploaded workbook into sections + questions (+ any answers it already carried).
-
-    Raises :class:`QuestionnaireXlsxError` only when the FILE is unusable. Anything wrong with a row
-    of an otherwise-readable file comes back in ``result.problems`` and the rest of the file is
-    still imported, because a designer with thirty-eight of forty questions and a list of the two
-    that need fixing is far better off than one with an error page.
-    """
     if not data:
         raise QuestionnaireXlsxError("The upload was empty. Attach the filled-in .xlsx pro-forma.")
     try:
-        # BOTH LOAD PASSES, AND THE MAGIC-BYTE BRANCH, LIVE IN ``xlsx_table.load_sheets`` NOW. The
-        # behaviour is unchanged and the reasoning is stated there: which exception openpyxl raised
-        # tells the designer nothing, so the message is chosen from the FILE'S OWN magic bytes.
-        # ``XlsxTableError`` is re-raised as this module's own error so that every caller's
-        # ``except QuestionnaireXlsxError`` goes on meaning exactly what it meant.
         sheets = load_sheets(
             data,
             max_sheets=MAX_SHEETS_SCANNED,
@@ -353,8 +216,6 @@ def parse_questionnaire_workbook(
 
     result = ParsedQuestionnaire()
 
-    # Details, if there is a sheet that looks like one. Missing is normal — a designer who built the
-    # form from scratch has no Details sheet, and the title then comes from the filename.
     for name, rows in sheets.items():
         if _norm_header(name) in (
             "details",
@@ -371,10 +232,6 @@ def parse_questionnaire_workbook(
             result.questionnaireId = details.get("questionnaireId") or None
             break
 
-    # THE VOCABULARY IS THIS MODULE'S AND THE MECHANISM IS ``xlsx_table``'S, which is the whole
-    # shape of the extraction: the aliases, the required role and the four sentences a reader sees
-    # are the questionnaire's, and the sheet-picking rule — name first, then whichever candidate has
-    # the most rows under its header, naming the sheets it did NOT use — is shared.
     picked = pick_sheet(
         sheets,
         result.problems,
@@ -398,7 +255,6 @@ def parse_questionnaire_workbook(
     _read_questions(sheets[sheet_name], sheet_name, header_row, columns, result)
 
     if not result.title and filename:
-        # Last resort, and a good one: designers name the file after the questionnaire.
         stem = re.sub(r"\.(xlsx|xlsm|xltx)$", "", filename, flags=re.IGNORECASE).strip()
         stem = re.sub(r"[_-]+", " ", stem).strip()
         if stem:
@@ -419,15 +275,12 @@ def _read_questions(
     columns: dict[int, tuple[str, str | None]],
     result: ParsedQuestionnaire,
 ) -> None:
-    """Walk the data rows under the header, building sections as they are met."""
     sections: dict[str, ParsedSection] = {}
     order: list[str] = []
     codes_taken: set[str] = set()
     current: ParsedSection | None = None
     seen_ids: set[str] = set()
     entry_labels: list[str] = []
-    # Counted as we go rather than read off `result`, whose sections are only assembled at the end —
-    # reading the ceiling off an always-empty list is how this cap silently never fires.
     kept = 0
 
     def get(values: list[str], role: str, label: str | None = None) -> str:
@@ -505,11 +358,10 @@ def _read_questions(
                         value=_clip(formula, 120),
                     )
                 )
-            continue  # an ordinary blank row: layout, not data
+            continue
 
         try:
             if not prompt:
-                # A section header row: names a section and asks nothing. Common and correct.
                 section_for(code, title, row_number)
                 continue
             if code or title:
@@ -624,18 +476,13 @@ def _read_questions(
         current.questions.append(question)
         kept += 1
 
-    # Every section is kept, INCLUDING one that ended up with no questions: a designer who typed
-    # their section headings first and their questions second would otherwise upload the file and
-    # find the headings gone.
     result.sections = [sections[key] for key in order]
     result.entryLabels = entry_labels
 
 
 class _StopReading(Exception):
-    """Internal: a ceiling was hit and the rest of the sheet is deliberately not read."""
+    pass
 
-
-# --- Writing ------------------------------------------------------------------------------------
 
 
 def _header(ws: Worksheet, row: int, labels: list[tuple[str, str]]) -> None:
@@ -669,21 +516,6 @@ def _details_sheet(
     extra: list[tuple[str, str]] | None = None,
     note: str = _DETAILS_NOTE,
 ) -> None:
-    """The Details sheet: four label/value rows, optionally some more, then one italic note.
-
-    ``extra`` LABELS MUST NOT COLLIDE WITH ``_DETAIL_KEYS`` above, and that is a real constraint
-    rather than a stylistic one — this sheet is parsed back by ``xlsx_table.read_details`` against
-    :data:`_DETAIL_KEYS`, which matches
-    the label in column A against a family of aliases. A row labelled "Notes" or "Summary" would be
-    read back as the questionnaire's DESCRIPTION, so a provenance line added here for the reader's
-    benefit would silently overwrite the description of the questionnaire the file is imported into.
-    ``tests/test_questionnaire_interchange.py`` pins that the question set's own extra rows survive
-    the round trip without doing this.
-
-    The note row is placed BELOW whatever rows exist rather than at a fixed row 8, so adding a pair
-    cannot land the paragraph on top of it. With the four base pairs it still lands on row 8, exactly
-    where it always did.
-    """
     from openpyxl.styles import Alignment, Font
     ws.sheet_properties.tabColor = f"FF{_BRAND}"
     heading = _put(ws, 1, 1, "Questionnaire details")
@@ -804,11 +636,6 @@ def _help_sheet(ws: Worksheet) -> None:
 
 
 def _question_columns(entry_labels: list[str]) -> list[tuple[str, str]]:
-    """The working sheet's headings: the fixed ones, then one Answer/Notes pair per sitting.
-
-    The label is repeated in both headings of a pair, which is exactly what the parser reads to pair
-    them back up — so a workbook exported with three sittings re-imports as three sittings.
-    """
     columns = [
         ("sectionCode", "Section Code"),
         ("sectionTitle", "Section Title"),
@@ -857,28 +684,16 @@ def _write_questions_sheet(
                 cell = _put(ws, row, index, value)
                 cell.alignment = wrap
                 if index == 3 and value:
-                    # The identity column. Greyed because it is the one column a designer must not
-                    # retype: it is what ties this row to the answers already recorded against it.
                     cell.font = grey
             first = False
             row += 1
         if not (section.get("questions") or []):
-            # A section with no questions still has to survive the round trip, or a designer who
-            # typed their headings first and their questions second loses the headings.
             _put(ws, row, 1, section.get("code") or "")
             _put(ws, row, 2, section.get("title") or "")
             row += 1
 
 
 def build_pro_forma() -> bytes:
-    """The BLANK pro-forma: headings, a Details sheet to name the questionnaire, and instructions.
-
-    Deliberately EMPTY under the headings. An earlier shape seeded three example questions on the
-    working sheet to show what one looked like, which reads well and imports badly: the designer who
-    adds their questions below the examples uploads a questionnaire whose first three questions are
-    "How long have you practised this craft?" and has to work out where they came from. The worked
-    example lives on the instructions sheet, where it cannot be imported.
-    """
     from openpyxl import Workbook
     wb = Workbook()
     questions = wb.active
@@ -907,13 +722,6 @@ def build_questionnaire_workbook(
     sections: list[dict[str, Any]],
     entry_labels: list[str] | None = None,
 ) -> bytes:
-    """An EXISTING questionnaire as the same workbook — the download half of the edit loop.
-
-    ``sections`` is ``[{code, title, questions: [{id, prompt, helpText, isRequired, answers,
-    answerNotes}]}]``, where ``answers``/``answerNotes`` are ``{sitting label: text}``. Question ids
-    are written into the Question ID column, which is what makes a download-edit-upload round trip
-    an EDIT of these questions rather than a second copy of them.
-    """
     from openpyxl import Workbook
     labels = list(entry_labels or [])
     wb = Workbook()
@@ -955,43 +763,6 @@ def build_question_set_workbook(
     shared_by: str | None = None,
     exported_on: str | None = None,
 ) -> bytes:
-    """One questionnaire's QUESTIONS, as a workbook a designer may hand to another designer.
-
-    ================================================================================================
-    WHY THIS EXISTS AS A SECOND ARTEFACT RATHER THAN AS A RELAXED PERMISSION ON THE FIRST
-    ================================================================================================
-
-    ``build_questionnaire_workbook`` is deliberately LOSSLESS — every sitting, every respondent's
-    name, every answer, every retired question — because a download-edit-upload round trip has to be.
-    That is why its route refuses anyone but the owner, a designer on its design workshop, or an
-    admin, and that refusal is correct: the artefact really does carry somebody's fieldwork.
-
-    But the thing designers actually want to send each other is the INSTRUMENT — "here are the
-    eighteen questions we ask weavers, use them". There was no way to produce that, so sharing was
-    impossible and the only workaround was to widen the gate on a file full of respondents' names.
-    This is the second artefact instead. It is not the same file with columns blanked out: it is
-    built from a query that never reads an answer at all (see ``load_question_set`` in
-    ``services/questionnaire_forms.py``), so it cannot leak one by omission.
-
-    THREE THINGS ARE DELIBERATELY ABSENT AND EACH OF THEM WOULD CAUSE A DISTINCT BUG IF ADDED BACK:
-
-    * **No Answer/Notes values.** The obvious one, and the point of the artefact.
-    * **No Question IDs.** Those ids belong to the SENDER's questionnaire. Left in, a receiving
-      designer's re-upload would report every row as "Question ID … does not belong to this
-      questionnaire", and — worse — the ids are the signal the import uses to recognise a workbook
-      that came out of the app and therefore to refuse to re-record its answers (see
-      ``create_from_parsed``). A shared question set has to read as what it is: a filled-in
-      pro-forma.
-    * **No Questionnaire ID on the Details sheet.** Same reason from the other side: with one, the
-      receiving designer's ``POST /questionnaires/{id}/upload`` answers 409 "that workbook was
-      downloaded from a different questionnaire", which is exactly right for the full workbook and
-      exactly wrong for a question set they are entitled to use.
-
-    RETIRED QUESTIONS ARE NOT INCLUDED, and that is the one place this differs from the full
-    workbook for a reason other than privacy. A retired question is not part of the instrument any
-    more — it is kept only because answers hang off it. Sending it would plant a question the sender
-    deliberately replaced into the receiver's brand-new form, next to its replacement.
-    """
     from openpyxl import Workbook
     extra = [("Contents", QUESTION_SET_CONTENTS)]
     if source_title:
@@ -1004,9 +775,6 @@ def build_question_set_workbook(
     wb = Workbook()
     questions = wb.active
     questions.title = SHEET_QUESTIONS
-    # `entry_labels=[]` gives ONE blank Answer/Notes pair, exactly as the pro-forma does, so the
-    # receiving designer can record on paper in the same file. It carries no values because every
-    # question handed in below has empty `answers`/`answerNotes`.
     _write_questions_sheet(questions, sections, [])
     _details_sheet(
         wb.create_sheet(title=SHEET_DETAILS),
@@ -1025,20 +793,10 @@ def build_question_set_workbook(
 
 
 def download_filename(title: str | None) -> str:
-    """A safe, readable filename for a questionnaire download."""
-    # NAMING 2.1: <Portal>_Questionnaire_2026-10-18_Craft-Survey-2026_Export.xlsx
     return naming.export_filename("Questionnaire", "Export", "xlsx", subject=_sanitise(title or ""))
 
 
 def question_set_filename(title: str | None) -> str:
-    """The same, for the questions-only download.
-
-    The ``-questions`` suffix is not decoration. Both downloads land in the same Downloads folder
-    with the same questionnaire title on them, and the two files are the difference between sending
-    a colleague your question list and sending them every respondent you have ever interviewed. The
-    name is the last thing standing between a designer and that mistake, so it says which one this
-    is.
-    """
     return naming.export_filename(
         "Questionnaire", "Questions", "xlsx", subject=_sanitise(title or "")
     )

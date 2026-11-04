@@ -1,70 +1,5 @@
 "use client";
 
-/**
- * "Measure this dimension off the photograph" — the DETERMINISTIC, on-device route to a product's or
- * a tool's length, breadth and height, and the primary one on both record forms.
- *
- * ── THE OWNER'S DECISION THIS IMPLEMENTS (2026-08-27) ─────────────────────────────────────────
- * Until now the only measuring aid on `ProductForm` and `ToolForm` was `GridMeasurement`, which
- * posts the photograph to `POST /media/analyze-measurement` and asks a vision model to ESTIMATE the
- * inches — the endpoint's own prompt uses that verb. That route costs money on every capture, needs
- * a connection it has no queue or retry behind, and cannot say how it arrived at a number. It is now
- * the FALLBACK. It is not deleted and it is not broken: it stays on both forms, below this panel,
- * labelled as an estimate that needs a connection, because a designer whose object will not sit flat
- * on a sheet still has it.
- *
- * ── THE INSIGHT THAT MADE THIS CHEAP, AND IT IS ONE SENTENCE ──────────────────────────────────
- * A 1-INCH GRID SHEET IS ITSELF A PERFECT DETERMINISTIC REFERENCE. The grid route already asks the
- * designer to lay the object on ruled paper and photograph it; that photograph is a reference
- * photograph, and it does not need a model to be read. Marking across N squares states a reference
- * of N inches exactly, `lib/photoMeasure.ts` returns the answer WITH its error bar, and the whole
- * computation is a ratio of two pixel distances running on this device. No model, no network, no
- * per-call cost, and a number a later reader can re-derive from the same photograph.
- *
- * ── IT NEVER WRITES A DIMENSION ───────────────────────────────────────────────────────────────
- * Every path here ends at a button the designer presses, exactly as `PhotoMeasureField` and
- * `IdentityCardReader` do. A machine-produced value is a PROPOSAL, and the reason is the same one
- * `services/measurement_provenance.py` opens with: `records.merge_field_provenance` stamps every
- * changed field with the `{by, byName, at}` of whoever pressed Save, so a number that filled itself
- * in is stored asserting that a named human measured it. Proposing is what makes that assertion true
- * again. The only calls out of this file are `onPropose` from a button's `onClick` and
- * `onPhotoChange` reporting the photograph up for the media batch.
- *
- * ── THE ASSUMPTION IS ON THE SCREEN, NOT ONLY IN THIS COMMENT ─────────────────────────────────
- * A ratio of pixel distances is the true length only when the reference and the object lie in one
- * flat plane square to the sensor. A grid sheet photographed from an angle is not that, and the
- * error is silent, plausible and proportional to the tilt. The amber card below says so every time
- * the two-mark method is selected, and the four-corner method — which corrects the tilt of that
- * plane exactly, using a block of the same grid squares as its known rectangle — sits beside it.
- *
- * ── WHY ZOOM IS PART OF THE MEASUREMENT ───────────────────────────────────────────────────────
- * Marks are stored in NATURAL IMAGE PIXELS, so zoom cannot move an answer. What zoom moves is how
- * precisely a fingertip can be aimed: a 4000 px photograph shown 400 px wide is displayed at 0.1, so
- * one screen pixel IS ten image pixels and the most careful mark is worth ±15 image px. Each mark
- * remembers the zoom it was placed at, the measurement takes the worst of them, and the error bar
- * visibly narrows as the designer zooms in — which is true, and is the only honest way to reward the
- * care. Without it this panel would report a wider error bar than the vision model claims confidence,
- * and would deserve to lose to it.
- *
- * ── NO NETWORK, NO CANVAS READBACK, NO RE-ENCODING ────────────────────────────────────────────
- * Nothing here reads a pixel. It reads the geometry of where a person pointed. That is why it works
- * on a photograph taken thirty seconds ago in a courtyard with no signal — which is the whole reason
- * for preferring it — and why `docs/MEDIA_PIPELINE.md`'s refusal to touch an original is not even in
- * tension with it.
- *
- * ── WHAT THIS DUPLICATES, WHY, AND THE EDIT THAT WOULD END IT ─────────────────────────────────
- * The marking viewport below — seeded marks, pinch/pan, per-mark sigma from the display scale,
- * arrow-key nudging — is the same mechanism as `components/designworkshop/PhotoMeasureField.tsx`,
- * which is the stage-form panel and remains the model this was written from. The two are not one
- * component because their REFERENCE VOCABULARIES differ: the stage panel offers scale cards and A4
- * sheets in millimetres and proposes into registry fields typed in centimetres, while this one leads
- * with "N grid squares" and proposes into `Decimal(10, 2)` inch columns. Collapsing them is worth
- * doing and is a single edit — give `PhotoMeasureField` a grid-squares reference alongside its
- * `SCALE_PRESETS` and let a caller pass the target unit — but that file is owned by other work in
- * flight, so the duplication is written down here rather than smuggled in. The GEOMETRY is not
- * duplicated: `lib/photoMeasure.ts` is the single authority and both panels call it.
- */
-
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Camera, Check, Crosshair, Grid3x3, Ruler, X, ZoomIn, ZoomOut } from "lucide-react";
 
@@ -93,22 +28,13 @@ import {
 } from "@/lib/photoMeasure";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
-/**
- * A dimension column this panel may propose into.
- *
- * `unit` is the unit the COLUMN is in, not the unit the reference was stated in — the conversion
- * between them is `proposalFor`'s job. `note` is for a column whose unit is not in its own name; see
- * the tool form's `height`, which is the only one today and the reason this field exists.
- */
 export type MeasureColumn = { key: string; label: string; unit: LengthUnit; note?: string };
 
 type MarkId = "refA" | "refB" | "c0" | "c1" | "c2" | "c3" | "tgtA" | "tgtB";
 
 type Mark = {
   point: Point;
-  /** The per-mark uncertainty in image pixels, from the zoom this mark was last positioned at. */
   sigma: number;
-  /** False while the mark is still sitting where it was seeded — see {@link SEEDS}. */
   placed: boolean;
 };
 
@@ -118,14 +44,6 @@ type ReferenceKind = "GRID" | "KNOWN";
 const SCALE_MARKS: MarkId[] = ["refA", "refB", "tgtA", "tgtB"];
 const RECTIFY_MARKS: MarkId[] = ["c0", "c1", "c2", "c3", "tgtA", "tgtB"];
 
-/**
- * The badge on each handle and the sentence a screen reader gets.
- *
- * EVERY HANDLE CARRIES ITS OWN NAME, so which mark is which never depends on where it happens to be
- * or on the colour it is drawn in. The wording is `PhotoMeasureField`'s, verbatim: a designer who
- * has measured a stage field must not have to learn a second vocabulary for the same gesture on the
- * record form the stage field points at.
- */
 const MARK_LABELS: Record<MarkId, { badge: string; name: string }> = {
   refA: { badge: "R1", name: "Reference, first end" },
   refB: { badge: "R2", name: "Reference, second end" },
@@ -137,15 +55,6 @@ const MARK_LABELS: Record<MarkId, { badge: string; name: string }> = {
   tgtB: { badge: "B", name: "The dimension, second end" }
 };
 
-/**
- * Where each mark starts, as a fraction of the photograph.
- *
- * SEEDED RATHER THAN EMPTY, because an empty viewport with an instruction to tap four times is a
- * state a designer can get wrong and cannot see the shape of. Seeded marks show what is being asked
- * for immediately. They are also flagged unplaced, and NO MEASUREMENT IS SHOWN until every mark has
- * been moved or tapped into position — a reading taken off the default layout would be a confident
- * number about nothing at all.
- */
 const SEEDS: Record<MarkId, Point> = {
   refA: { x: 0.14, y: 0.84 },
   refB: { x: 0.52, y: 0.84 },
@@ -157,13 +66,6 @@ const SEEDS: Record<MarkId, Point> = {
   tgtB: { x: 0.72, y: 0.44 }
 };
 
-/**
- * Things a designer has to hand when the photograph has no grid in it, with the sizes they are.
- *
- * The same four as the stage panel, in the same order and with the same wording. Nothing is
- * preselected: a reference the designer did not choose is a reference nobody checked was in the
- * photograph.
- */
 const LENGTH_PRESETS: { label: string; length: number; unit: LengthUnit }[] = [
   { label: "Scale card, 100 mm", length: 100, unit: "mm" },
   { label: "Steel rule, 300 mm", length: 300, unit: "mm" },
@@ -171,7 +73,6 @@ const LENGTH_PRESETS: { label: string; length: number; unit: LengthUnit }[] = [
   { label: "₹5 coin, 23 mm", length: 23, unit: "mm" }
 ];
 
-/** Known rectangles for the four-corner method when there is no grid to count squares of. */
 const RECT_PRESETS: { label: string; width: number; height: number; unit: LengthUnit }[] = [
   { label: "A4 sheet", width: 210, height: 297, unit: "mm" },
   { label: "A5 sheet", width: 148, height: 210, unit: "mm" },
@@ -185,23 +86,12 @@ const PITCH_OPTIONS = GRID_PITCHES.map((pitch) => ({ value: pitch.id, label: pit
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 40;
 
-/** A drag shorter than this is a tap — it places the active mark rather than panning the photograph. */
 const TAP_SLOP_PX = 4;
 
-/**
- * Claim a pointer, and survive a browser that will not give it up.
- *
- * `setPointerCapture` THROWS — `NotFoundError` — when the pointer id is no longer active, which
- * happens for real when a second finger lands in the same frame as the first one lifts. Unguarded,
- * that exception escapes a React event handler and unmounts the tree: a designer mid-pinch would
- * lose the whole record form, unsaved. Capture is an optimisation here anyway — it keeps a drag
- * alive when the finger leaves the element — so failing to get it costs a slightly worse drag.
- */
 function capturePointer(element: Element, pointerId: number): void {
   try {
     (element as HTMLElement).setPointerCapture(pointerId);
   } catch {
-    /* see above — a drag without capture still works while the pointer stays over the element */
   }
 }
 
@@ -212,31 +102,9 @@ export function RecordPhotoMeasure({
   onPhotoChange,
   disabled
 }: {
-  /** The dimension columns this form stores, in the order they appear on it. */
   columns: MeasureColumn[];
-  /** What each of those boxes holds right now, so "this replaces it" can be said before it does. */
   values: Record<string, string>;
-  /**
-   * Write one dimension box. Called ONLY from a button the designer pressed.
-   *
-   * THE THIRD ARGUMENT SAYS HOW THE NUMBER WAS ARRIVED AT, and it is not optional, because this panel
-   * always knows: everything it can propose is `PHOTO_GEOMETRY`, by one of two techniques. It is
-   * `lib/photoMeasure.ts`'s own {@link MeasurementMarker}, composed by `methodMarker` there rather
-   * than assembled here, so the record forms and the stage panel cannot spell `PHOTO_GEOMETRY`
-   * differently in a string a database keeps for the life of the record.
-   *
-   * The caller collects it into the save body's `measurementMethods` (see
-   * `components/forms/measurementMethods.ts`), where the marker is dropped again the moment the box
-   * stops holding the number this panel put in it — a `PHOTO_GEOMETRY` claim on a number somebody
-   * typed over is worse than no claim at all.
-   */
   onPropose: (key: string, text: string, method: MeasurementMarker) => void;
-  /**
-   * The measurement photograph, so the parent can put it in the save's media batch.
-   *
-   * `isGrid` decides whether the upload carries `MEASUREMENT_GRID_PURPOSE`; see the parent's comment
-   * at the batch for why that is the reference kind's business and not the panel's.
-   */
   onPhotoChange: (photo: { file: File; isGrid: boolean } | null) => void;
   disabled?: boolean;
 }) {
@@ -271,9 +139,6 @@ export function RecordPhotoMeasure({
   const pitch = gridPitchById(pitchId);
   const needed = mode === "SCALE" ? SCALE_MARKS : RECTIFY_MARKS;
 
-  // The object URL is created and revoked in ONE effect, which is what keeps the pair together: a
-  // URL revoked anywhere else is a URL somebody has to remember to revoke. Nothing reads the bytes,
-  // so this is only ever handed to an <img src>.
   useEffect(() => {
     if (!file) {
       setUrl(null);
@@ -284,19 +149,6 @@ export function RecordPhotoMeasure({
     return () => URL.revokeObjectURL(next);
   }, [file]);
 
-  /**
-   * Report the photograph up, THROUGH A REF, whenever it or the reference kind changes.
-   *
-   * The callback is an inline arrow at both call sites, so listing it as a dependency would re-run
-   * this on every render of the form — which on a form with a rich-text editor in it is every
-   * keystroke. Reading it through a ref is the treatment `useEditDeepLink` gives its callbacks and
-   * for the same reason.
-   *
-   * It fires once on mount with `null`, which is deliberate and harmless: the parent sets `null`
-   * over `null` (React bails out) and, critically, does NOT mark the form dirty, because a blank
-   * form announcing unsaved work before anybody has typed is what trains people to click through the
-   * guard. See the same rule on `acceptFix` in `LocationFields`.
-   */
   const reportPhoto = useRef(onPhotoChange);
   useEffect(() => {
     reportPhoto.current = onPhotoChange;
@@ -316,13 +168,11 @@ export function RecordPhotoMeasure({
     return () => observer.disconnect();
   }, [open, url]);
 
-  /** Screen pixels per image pixel at zoom 1 — the "fit the whole photograph in the box" scale. */
   const fit = useMemo(() => {
     if (!natural || !box.width || !box.height) return 0;
     return Math.min(box.width / natural.width, box.height / natural.height);
   }, [natural, box]);
 
-  /** Screen pixels per image pixel right now. This is what decides how precise a mark can be. */
   const displayScale = fit * zoom;
 
   const clampPan = useCallback(
@@ -337,8 +187,6 @@ export function RecordPhotoMeasure({
     [natural, fit, box]
   );
 
-  // Re-centre whenever the photograph, the box or the fit changes. Without this the marks and the
-  // image disagree the first time the panel is opened on a phone in landscape.
   useEffect(() => {
     setZoom(1);
     setPan(clampPan({ x: 0, y: 0 }, 1));
@@ -359,7 +207,6 @@ export function RecordPhotoMeasure({
     return { x: event.clientX - (rect?.left ?? 0), y: event.clientY - (rect?.top ?? 0) };
   }, []);
 
-  /** Seed any mark this mode needs that does not exist yet, once the photograph's size is known. */
   useEffect(() => {
     if (!natural) return;
     setMarks((current) => {
@@ -376,16 +223,12 @@ export function RecordPhotoMeasure({
       }
       return changed ? next : current;
     });
-    // `displayScale` is deliberately absent: it changes on every pinch frame, and listing it would
-    // re-seed marks mid-gesture. A seeded mark's sigma is replaced the instant it is actually placed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [natural, mode]);
 
   const setMark = useCallback(
     (id: MarkId, point: Point) => {
       if (!natural) return;
-      // Clamped to the photograph: a mark dragged off the edge is a coordinate outside the image, and
-      // a homography solved through one measures a plane that was never photographed.
       const clamped = {
         x: Math.min(natural.width, Math.max(0, point.x)),
         y: Math.min(natural.height, Math.max(0, point.y))
@@ -421,13 +264,9 @@ export function RecordPhotoMeasure({
   function choosePhoto(next: File | null) {
     setFile(next);
     setNatural(null);
-    // A mark is a position on ONE photograph. Carrying it to another would put the reference
-    // somewhere nobody chose, on an image of a different size.
     setMarks({});
     setActive(needed[0]);
   }
-
-  /* ── Gestures on the photograph ───────────────────────────────────────── */
 
   function onViewportPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (disabled) return;
@@ -468,9 +307,6 @@ export function RecordPhotoMeasure({
     const wasSingle = pointers.current.size === 1;
     pointers.current.delete(event.pointerId);
     if (pointers.current.size < 2) pinchDistance.current = null;
-    // A tap on the photograph places the mark the designer is currently working on and moves the
-    // cursor to the next — the four-corner case is six marks, and reaching for a chip between each
-    // would make it eleven actions instead of six.
     if (wasSingle && !gestureMoved.current && !dragging.current && natural) {
       setMark(active, viewToImage(localPoint(event)));
       const index = needed.indexOf(active);
@@ -478,8 +314,6 @@ export function RecordPhotoMeasure({
     }
     gestureMoved.current = false;
   }
-
-  /* ── One handle ───────────────────────────────────────────────────────── */
 
   function handleFor(id: MarkId) {
     const mark = marks[id];
@@ -506,8 +340,6 @@ export function RecordPhotoMeasure({
         style={{ left: `${view.x}px`, top: `${view.y}px` }}
         onPointerDown={(event) => {
           if (disabled) return;
-          // The viewport would otherwise read this as the start of a pan, and the photograph would
-          // slide out from under the mark being dragged.
           event.stopPropagation();
           capturePointer(event.currentTarget, event.pointerId);
           dragging.current = id;
@@ -527,10 +359,6 @@ export function RecordPhotoMeasure({
           if (dragging.current === id) dragging.current = null;
         }}
         onKeyDown={(event) => {
-          // THE KEYBOARD ROUTE, and it is not decoration: dragging is pointer-only, so without this a
-          // designer working from a laptop trackpad or an assistive device could see the marks and
-          // never move one. A step is one IMAGE pixel — finer than a pointer can manage — and Shift
-          // is ten, so crossing a 4000 px frame is possible without holding an arrow down.
           const step = event.shiftKey ? 10 : 1;
           const delta: Record<string, Point> = {
             ArrowLeft: { x: -step, y: 0 },
@@ -549,29 +377,13 @@ export function RecordPhotoMeasure({
     );
   }
 
-  /* ── The measurement ──────────────────────────────────────────────────── */
-
   const allPlaced = needed.every((id) => marks[id]?.placed);
 
-  /** The worst of the marks this measurement rests on — an error bar is only as good as its weakest. */
   const markSigmaPx = useMemo(() => {
     const sigmas = needed.map((id) => marks[id]?.sigma).filter((value): value is number => typeof value === "number");
     return sigmas.length ? Math.max(...sigmas) : undefined;
   }, [needed, marks]);
 
-  /**
-   * The reference for the two-mark method, and the reference for the four-corner one.
-   *
-   * TWO MEMOS AND NOT ONE UNION, deliberately. A single `reference` covering both methods would be a
-   * union of a length-shaped answer and a rectangle-shaped one, and every read of it downstream
-   * would need a cast the compiler could not check — which is precisely how a rectangle's `width`
-   * ends up passed as a scale bar's `length`, producing a confident measurement of the wrong thing.
-   * Two values, each with one shape, cost a few lines and make that unrepresentable.
-   *
-   * Kept out of {@link result} so a refusal ("Say how many grid squares…") can be printed even while
-   * the marks are unfinished — the two things a designer can be waiting on are different things and
-   * are said differently.
-   */
   const scaleReference = useMemo(
     () => (referenceKind === "GRID" ? gridSpan(squares, pitch) : statedLength(referenceLength, referenceUnit)),
     [referenceKind, squares, pitch, referenceLength, referenceUnit]
@@ -592,7 +404,6 @@ export function RecordPhotoMeasure({
     };
   }, [referenceKind, rectWidthSquares, rectHeightSquares, pitch, rectWidth, rectHeight, rectUnit]);
 
-  /** Whichever of the two the selected method is reading — for the sentences, not for the maths. */
   const reference = mode === "SCALE" ? scaleReference : rectReference;
   const referenceReason = reference.ok ? null : reference.reason;
 
@@ -610,11 +421,6 @@ export function RecordPhotoMeasure({
         },
         target,
         markSigmaPx
-        // `referenceLengthSigma` is deliberately left at its zero default. A printed grid sheet and a
-        // steel rule are exact to far better than a mark can be placed, and every preset offered here
-        // is a manufactured object. The moment this panel offers "about the width of a brick", that
-        // argument stops holding and the term has to be passed — `SameScaleInput`'s own comment says
-        // so, and it is the largest term the error bar would then be missing.
       });
     }
     if (!rectReference.ok) return null;
@@ -674,11 +480,6 @@ export function RecordPhotoMeasure({
         </button>
       </div>
 
-      {/* The photograph. Its own capture rather than a picker over the media attached lower down the
-          form, because the first thing a designer does on a blank record is measure the object in
-          their hands — a control that first asked them to attach something would be a control they
-          could not use yet. It is reported up and stored with the record either way, so the evidence
-          the number was read off is kept. */}
       <div className="grid gap-1">
         <span className="field-label">Photograph</span>
         <input
@@ -704,8 +505,6 @@ export function RecordPhotoMeasure({
 
       {!file ? null : (
         <>
-          {/* Method. Two real buttons rather than a dropdown, because the choice IS the explanation
-              and a designer has to read both to make it. */}
           <div className="grid gap-1">
             <span className="field-label">Method</span>
             <div className="flex flex-wrap gap-2">
@@ -736,7 +535,6 @@ export function RecordPhotoMeasure({
             </div>
           </div>
 
-          {/* THE ASSUMPTION, ON SCREEN. See the file header for why this is not a comment. */}
           {mode === "SCALE" ? (
             <p className="flex items-start gap-2 rounded-md border border-amber-500 bg-amber-100 px-2.5 py-2 text-xs leading-5 text-amber-800">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -755,7 +553,6 @@ export function RecordPhotoMeasure({
             </p>
           )}
 
-          {/* Which mark the next tap moves. */}
           <div className="grid gap-1">
             <span className="field-label">Marks — tap to place, drag to adjust</span>
             <div className="flex flex-wrap gap-1.5">
@@ -784,8 +581,6 @@ export function RecordPhotoMeasure({
           <div
             ref={viewportRef}
             className="relative h-72 w-full overflow-hidden rounded-md border border-line-200 bg-field-100 sm:h-96"
-            // Pointer events only arrive for pinch and pan if the browser is not already using the
-            // gesture to scroll the page; on a handset that is exactly what it would do otherwise.
             style={{ touchAction: "none" }}
             onPointerDown={onViewportPointerDown}
             onPointerMove={onViewportPointerMove}
@@ -822,9 +617,6 @@ export function RecordPhotoMeasure({
                   }}
                 />
 
-                {/* The lines between the marks, so a designer can see what is being measured rather
-                    than inferring it from six discs. Purely decorative — every mark is named on its
-                    own handle. */}
                 {natural && fit ? (
                   <svg aria-hidden className="pointer-events-none absolute inset-0 h-full w-full" role="presentation">
                     {mode === "SCALE" && marks.refA && marks.refB ? (
@@ -868,16 +660,6 @@ export function RecordPhotoMeasure({
               </>
             ) : null}
 
-            {/*
-              POINTER EVENTS STOP HERE, and without it these two buttons do nothing at all.
-
-              The viewport calls `setPointerCapture` on pointerdown so a pan or a pinch survives the
-              finger leaving the box. Capture also RETARGETS the click that follows — Chromium fires
-              it at the capturing element rather than at the button under the finger — so pressing
-              Zoom in silently placed a mark on the photograph instead of zooming. It looked like a
-              dead control. Stopping the event before the viewport sees it is the same guard each
-              mark handle already uses.
-            */}
             <ActionGroup className="absolute bottom-2 right-2" onPointerDown={(event) => event.stopPropagation()}>
               <button
                 type="button"
@@ -898,9 +680,6 @@ export function RecordPhotoMeasure({
             </ActionGroup>
           </div>
 
-          {/* The zoom readout is part of the measurement, not chrome — see the file header.
-              `role=status` rather than a bare paragraph so the narrowing error bar is available to a
-              reader who cannot see the marks move. */}
           <p role="status" className="text-xs leading-5 text-ink-500">
             Zoom {zoom.toFixed(1)}×.{" "}
             {displayScale > 0
@@ -908,8 +687,6 @@ export function RecordPhotoMeasure({
               : "Loading the photograph…"}
           </p>
 
-          {/* THE REFERENCE. The grid is first, and it is first because it is the one the programme's
-              own sheet gives away for free — see the file header. */}
           <div className="grid gap-2">
             <span className="field-label">What is the reference?</span>
             <div className="flex flex-wrap gap-2">
@@ -941,10 +718,6 @@ export function RecordPhotoMeasure({
               <div className="grid gap-2">
                 <div className="flex flex-wrap items-end gap-2">
                   <div className="grid gap-1">
-                    {/* A <span>, not a <label htmlFor>: `Dropdown` renders a <button>, and HTML-AAM
-                        computes a button's name from its own contents, so a label could only point
-                        at a control it cannot name. The question arrives through `ariaLabel` below
-                        instead. */}
                     <span className="field-label">The sheet</span>
                     <div className="w-44">
                       <Dropdown
@@ -953,9 +726,6 @@ export function RecordPhotoMeasure({
                         options={PITCH_OPTIONS}
                         disabled={disabled}
                         ariaLabel="How big one grid square is"
-                        // This dropdown changes the reading on the panel it sits in rather than
-                        // filling in a form field, so focus must stay where the designer is
-                        // adjusting.
                         advanceOnSelect={false}
                       />
                     </div>
@@ -1008,9 +778,6 @@ export function RecordPhotoMeasure({
                     </>
                   )}
                 </div>
-                {/* THE ARITHMETIC, READ BACK. The one mistake this path can make that nothing
-                    downstream could catch is miscounting the squares or picking the wrong sheet —
-                    both are visible the instant the multiplication is printed beside the paper. */}
                 <p role="status" className="text-xs leading-5 text-ink-500">
                   {reference.ok
                     ? `Reference: ${reference.sentence}. Longer references are more precise.`
@@ -1127,11 +894,6 @@ export function RecordPhotoMeasure({
             allPlaced={allPlaced}
             needed={needed}
             marks={marks}
-            // SAID ONCE, BESIDE THE BOX THAT FIXES IT. The grid branch already prints its own
-            // refusal next to the squares input — which is where a designer can act on it, and
-            // where it is visible before the marks are finished. Passing it here as well would
-            // print the same sentence twice on one panel, and a sentence a reader has learned to
-            // see duplicated is a sentence they stop reading.
             referenceReason={referenceKind === "GRID" ? null : referenceReason}
             columns={columns}
             values={values}
@@ -1143,10 +905,6 @@ export function RecordPhotoMeasure({
     </section>
   );
 }
-
-/* ────────────────────────────────────────────────────────────────────────────
- * The answer, its error bar, and the only place anything is written
- * ──────────────────────────────────────────────────────────────────────────── */
 
 function MeasurementReadout({
   result,
@@ -1167,7 +925,6 @@ function MeasurementReadout({
   columns: MeasureColumn[];
   values: Record<string, string>;
   disabled?: boolean;
-  /** See the same prop on {@link RecordPhotoMeasure} — this is the component that actually calls it. */
   onPropose: (key: string, text: string, method: MeasurementMarker) => void;
 }) {
   if (!allPlaced) {
@@ -1187,8 +944,6 @@ function MeasurementReadout({
   if (!result) return null;
 
   if (!result.ok) {
-    // A refusal, with its reason. It is not styled as an error because nothing has gone wrong with
-    // the designer's work — the marks simply do not support a number, and the sentence says which.
     return (
       <p
         role="status"
@@ -1228,8 +983,6 @@ function MeasurementReadout({
         <div className="flex flex-wrap gap-2">
           {columns.map((column) => {
             const proposal = proposalFor(result.value, result.uncertainty, result.unit, column.unit);
-            // A column this cannot reach must not become a destination. It is a refusal rather than a
-            // silent omission so nobody wonders where the button went.
             if (!proposal.ok) {
               return (
                 <span key={column.key} className="max-w-md text-xs leading-5 text-ink-500">
@@ -1244,11 +997,6 @@ function MeasurementReadout({
                   type="button"
                   className="field-button"
                   disabled={disabled}
-                  // THE MARKER IS COMPOSED FROM THE SAME `result` THE BUTTON'S FIGURE CAME OUT OF,
-                  // in the same expression, so the technique it names can never belong to a
-                  // different measurement than the number beside it. `methodMarker` takes a
-                  // `Measurement` and not a `MeasureResult` — a refusal has no method to describe —
-                  // and `result` is narrowed to one by the `!result.ok` branch above.
                   onClick={() => onPropose(column.key, proposal.text, methodMarker(result))}
                 >
                   <Check className="h-4 w-4" aria-hidden />

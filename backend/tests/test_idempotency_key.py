@@ -1,10 +1,3 @@
-"""``Idempotency-Key``: a create sent twice is written once, and everything without the header is
-untouched. See ``app/core/idempotency.py``.
-
-NO DATABASE. The middleware runs in front of a small route that counts the records it writes, with
-an in-memory store; the Prisma store is driven against a recording stub of its table.
-"""
-
 import asyncio
 import itertools
 from datetime import UTC, datetime, timedelta
@@ -133,7 +126,6 @@ def test_a_repeat_while_the_first_is_running_is_told_to_retry():
     app, records = _app(store)
     client = TestClient(app)
     asyncio.run(store.claim("user_1", "running-key-0001", "anything"))
-    # The fingerprint must match for the in-progress answer; take it from what the request will send.
     store.rows[("user_1", "running-key-0001")] = StoredAnswer(
         idempotency._fingerprint("POST", "/api/crafts", b"", b'{"name":"Ajrakh"}'), None, None, None, datetime.now(UTC)
     )
@@ -169,7 +161,6 @@ def test_malformed_keys_and_anonymous_callers():
     client = TestClient(app)
     bad = client.post("/api/crafts", json={"name": "x"}, headers={**_auth(), "Idempotency-Key": "short"})
     assert bad.status_code == 422
-    # No session: passed through untouched (a real route would answer 401 itself).
     anon = client.post("/api/crafts", json={"name": "x"}, headers={"Idempotency-Key": "anon-key-00001"})
     assert anon.status_code == 201
     assert len(records) == 1
@@ -195,8 +186,6 @@ def test_the_real_app_installs_it():
 
 
 class _Table:
-    """A recording stand-in for ``db.idempotencykey``."""
-
     def __init__(self) -> None:
         self.rows: dict[tuple[str, str], SimpleNamespace] = {}
 
@@ -290,11 +279,9 @@ def test_routes_off_the_create_allow_list_are_never_stored():
     assert len(calls) == 4
     assert idempotency.is_create_route("/api/artisans")
     assert idempotency.is_create_route("/api/questionnaires/q1/sections/s1/questions")
-    # A questionnaire copied as a template, queued offline on the handset (2026-10-17).
     assert idempotency.is_create_route("/api/questionnaires/q1/reuse")
     assert not idempotency.is_create_route("/api/auth/login")
     assert not idempotency.is_create_route("/api/users/me/password")
-    # Two-step verification (2026-10-16 merge): its setup answers a secret, its verify a token.
     for path in ("/api/auth/two-factor/setup", "/api/auth/two-factor/verify",
                  "/api/auth/two-factor/recovery-codes", "/api/auth/two-factor/enable"):
         assert not idempotency.is_create_route(path), path
@@ -343,7 +330,6 @@ def test_a_marker_whose_answer_could_not_be_stored_is_released():
     client = TestClient(app)
     headers = {**_auth(), "Idempotency-Key": "store-fails-0001"}
     assert client.post("/api/crafts", json={"name": "Ajrakh"}, headers=headers).status_code == 201
-    # Not left running: no 409 for fifteen minutes on the next attempt.
     assert store.rows == {}
 
 
@@ -366,7 +352,5 @@ def test_the_lookup_returns_only_the_callers_own_stored_answer():
 def test_the_lookup_route_is_mounted():
     from app.main import create_app
 
-    # Asked of the real app over HTTP: an unauthenticated call is refused (401) by the route, not
-    # answered "no such route" (404).
     answer = TestClient(create_app()).get("/api/idempotency-keys/some-key-0001")
     assert answer.status_code == 401

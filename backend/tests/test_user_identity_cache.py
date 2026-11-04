@@ -1,17 +1,3 @@
-"""The authenticated-identity cache, and the authorisation properties it must not break.
-
-``get_current_user`` reads the user row on every authenticated request, and that row is what says
-whether the caller is still a MASTER_ADMIN, still a RESEARCHER, or still an account at all. Caching
-it buys a cross-region round trip on every request and costs a window in which those answers can be
-out of date, so the tests here are almost all about the window rather than the saving: a demotion
-must land, a deletion must land, a rotation of authority must not survive in memory, and none of it
-may fall back on the role claim the token happens to carry.
-
-Nothing here touches a database. ``db.user`` is replaced by a counter that records every
-``find_unique`` it is asked for, which is what makes "one query, not N" a measurement rather than an
-assertion about code that looks right.
-"""
-
 import asyncio
 import re
 import time
@@ -29,8 +15,6 @@ BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
 
 class _CountingUsers:
-    """Stands in for ``db.user``: hands back rows and remembers every lookup it was asked for."""
-
     def __init__(self, rows: dict, delay: float = 0.0) -> None:
         self.rows = dict(rows)
         self.delay = delay
@@ -39,8 +23,6 @@ class _CountingUsers:
     async def find_unique(self, where: dict, **_: object):
         self.calls.append(where["id"])
         if self.delay:
-            # A cold window wide enough for several requests to arrive inside it; without this the
-            # "N concurrent" test would be measuring how fast a dict lookup returns, not dedupe.
             await asyncio.sleep(self.delay)
         return self.rows.get(where["id"])
 
@@ -54,8 +36,6 @@ def _row(user_id: str, role: str = "RESEARCHER", **extra):
 
 
 class _Identity:
-    """Everything a test needs to drive the dependency: the stub database, the knobs, the app."""
-
     def __init__(self, users: _CountingUsers, knobs: SimpleNamespace) -> None:
         self.users = users
         self.knobs = knobs
@@ -76,7 +56,6 @@ class _Identity:
             return await client.get(path, headers={"Authorization": f"Bearer {token}"})
 
     async def get_many(self, path: str, user_id: str, count: int):
-        """*count* requests issued together on one event loop, i.e. a page load's burst."""
         transport = httpx.ASGITransport(app=self.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://identity.test") as client:
             token = create_access_token(subject=user_id)
@@ -86,8 +65,6 @@ class _Identity:
 
 @pytest.fixture
 def identity(monkeypatch: pytest.MonkeyPatch):
-    """Build an isolated identity stack; the factory takes the rows and the cache knobs."""
-
     def build(rows: dict | None = None, *, delay: float = 0.0, enabled: bool = True,
               ttl: float = 5.0, max_entries: int = 512) -> _Identity:
         users = _CountingUsers(rows if rows is not None else {"u1": _row("u1")}, delay=delay)
@@ -96,8 +73,6 @@ def identity(monkeypatch: pytest.MonkeyPatch):
             auth_user_cache_ttl_seconds=ttl,
             auth_user_cache_max_entries=max_entries,
         )
-        # Only the cache's own settings are stubbed. Token signing still goes through the real
-        # settings, so these requests carry genuine HS256 bearer tokens.
         monkeypatch.setattr(deps, "db", SimpleNamespace(user=users))
         monkeypatch.setattr(deps, "get_settings", lambda: knobs)
         return _Identity(users, knobs)
@@ -106,8 +81,6 @@ def identity(monkeypatch: pytest.MonkeyPatch):
     yield build
     deps.clear_user_cache()
 
-
-# --- What it saves -------------------------------------------------------------------------------
 
 
 def test_an_authenticated_request_costs_one_query_cold_and_none_warm(identity) -> None:
@@ -142,18 +115,14 @@ def test_turning_the_cache_off_restores_a_query_per_request(identity) -> None:
     assert not deps._user_cache
 
 
-# --- What it must not break ----------------------------------------------------------------------
-
 
 def test_a_demotion_lands_on_the_next_request_once_the_write_invalidates(identity) -> None:
     stack = identity({"boss": _row("boss", role="ADMIN")})
 
     async def scenario():
         before = await stack.get("/admin-only", "boss")
-        # The write an admin route makes: the row is now RESEARCHER...
         stack.users.rows["boss"] = _row("boss", role="RESEARCHER")
         still_cached = await stack.get("/admin-only", "boss")
-        # ...and the write's invalidate_cached_user call is what makes it visible.
         deps.invalidate_cached_user("boss")
         after = await stack.get("/admin-only", "boss")
         return before, still_cached, after
@@ -161,14 +130,11 @@ def test_a_demotion_lands_on_the_next_request_once_the_write_invalidates(identit
     before, still_cached, after = asyncio.run(scenario())
 
     assert before.status_code == 200
-    # Proof the cache is genuinely holding the identity — otherwise the next assertion proves
-    # nothing about invalidation.
     assert still_cached.status_code == 200
     assert after.status_code == 403
 
 
 def test_a_demotion_lands_when_the_ttl_expires_even_with_no_invalidation(identity) -> None:
-    """The backstop for a role changed by psql, the seed script, or another worker."""
     stack = identity({"boss": _row("boss", role="ADMIN")}, ttl=0.05)
 
     async def scenario():
@@ -187,7 +153,7 @@ def test_a_deleted_account_stops_authenticating_immediately(identity) -> None:
 
     async def scenario():
         before = await stack.get("/whoami", "gone")
-        del stack.users.rows["gone"]  # what db.user.delete does
+        del stack.users.rows["gone"]
         deps.invalidate_cached_user("gone")
         return before, await stack.get("/whoami", "gone")
 
@@ -203,13 +169,11 @@ def test_a_missing_user_is_never_cached_so_it_401s_every_single_time(identity) -
     responses = [asyncio.run(stack.get("/whoami", "ghost")) for _ in range(3)]
 
     assert [r.status_code for r in responses] == [401, 401, 401]
-    # Three requests, three queries: a negative result is not an entry that can expire into a yes.
     assert stack.users.query_count == 3
     assert not deps._user_cache
 
 
 def test_the_role_claim_in_the_token_is_not_what_authorises_the_request(identity) -> None:
-    """A seven-day token minted before a demotion still says ADMIN; only the row decides."""
     stack = identity({"u1": _row("u1", role="RESEARCHER")})
 
     response = asyncio.run(
@@ -220,20 +184,17 @@ def test_the_role_claim_in_the_token_is_not_what_authorises_the_request(identity
 
 
 def test_a_revocation_during_an_in_flight_read_is_not_undone_by_it(identity) -> None:
-    """The write can commit while a slow read is already on the wire; the read must not win."""
     stack = identity({"u1": _row("u1", role="ADMIN")}, delay=0.1)
 
     async def scenario():
         request = asyncio.ensure_future(stack.get("/whoami", "u1"))
-        await asyncio.sleep(0.02)  # the query is out, the answer is not back
+        await asyncio.sleep(0.02)
         deps.invalidate_cached_user("u1")
         await request
         return len(deps._user_cache)
 
     assert asyncio.run(scenario()) == 0
 
-
-# --- What it costs -------------------------------------------------------------------------------
 
 
 def test_the_cache_is_capped_and_evicts_the_least_recently_used_identity(identity) -> None:
@@ -242,7 +203,7 @@ def test_the_cache_is_capped_and_evicts_the_least_recently_used_identity(identit
     async def scenario():
         for name in ("u1", "u2", "u3"):
             await stack.get("/whoami", name)
-        await stack.get("/whoami", "u1")  # u2 is now the least recently used
+        await stack.get("/whoami", "u1")
         await stack.get("/whoami", "u4")
 
     asyncio.run(scenario())
@@ -270,19 +231,8 @@ def test_no_future_outlives_the_request_that_created_it(identity) -> None:
     assert deps._user_cache_inflight == {}
 
 
-# --- Coverage of the invalidation contract itself -------------------------------------------------
-
 
 def test_every_module_that_writes_a_user_row_also_invalidates_the_identity_cache() -> None:
-    """The audit that keeps requirement "invalidate on every write" true as the code moves.
-
-    A cached identity is only as safe as the completeness of its invalidation, and completeness is
-    exactly the property a reviewer cannot see from any one diff. So it is checked mechanically:
-    any module that writes a User row must also name ``invalidate_cached_user``. Adding a new
-    promotion or deactivation path therefore fails here rather than in production.
-    """
-    # ``tx`` too (2026-10-17): a write inside ``async with db.tx() as tx`` is a User write all the same,
-    # and the one-step account create and the sanction register both write that way.
     writes = re.compile(r"\b(?:db|tx)\.user\.(update|create|delete|upsert|update_many|delete_many)\b")
     sources = [
         path
@@ -297,45 +247,23 @@ def test_every_module_that_writes_a_user_row_also_invalidates_the_identity_cache
         if writes.search(text):
             writers[path.relative_to(BACKEND_ROOT).as_posix()] = "invalidate_cached_user" in text
 
-    # The known set, so that a write path DISAPPEARING (moved into a helper the regex misses) is as
-    # visible as a new one arriving without invalidation.
     assert set(writers) == {
-        # Approving a platform-access request LIFTS an existing account to the tier the admin chose
-        # — a promotion, and therefore a User write, on a route whose whole job is admission. It is
-        # the newest member of this set and it is exactly the kind of path the audit exists for: an
-        # account whose cached identity still says CROWDSOURCE_VOLUNTEER for the next TTL after an
-        # admin approved it as a researcher would read as the approval silently not working.
         "app/api/routes/access.py",
         "app/api/routes/auth.py",
         "app/api/routes/users.py",
-        # Account creation moved here from routes/users on 2026-10-09 so the operator script
-        # (scripts/provision_account.py, which writes no User row of its own) and the route share one
-        # writer. It invalidates exactly as the route did.
         "app/services/account_provisioning.py",
-        # Aadhaar verification writes the verification columns on a User row (record, review,
-        # withdraw), each inside ``db.tx()``, and invalidates after the transaction commits.
         "app/services/aadhaar/records.py",
-        # The sanction register creates a designer's account inside its own transaction
-        # (``create_from_sanction``, through ``tx``) and invalidates after the commit.
         "app/services/sanction_orders.py",
-        # The two sign-in times (2026-10-17), moved out of routes/auth.open_session; it invalidates
-        # after its one write.
         "app/services/sign_in_stamps.py",
-        # Two-step verification (2026-10-16): the secret, the recovery codes, the last step and the
-        # failure budgets. Every budget write invalidates; the routes invalidate after the rest.
         "app/services/two_factor.py",
         "scripts/seed_admin.py",
         "scripts/seed_test_accounts.py",
-        # The sessionsValidFrom backfill (2026-09-03) writes User rows from OUTSIDE any serving
-        # process, so calling invalidate_cached_user there would empty the wrong process's cache
-        # and prove nothing. Its write site instead carries a written refusal that names the
-        # symbol and the real bound (AUTH_USER_CACHE_TTL_SECONDS) — which is exactly the answer
-        # this sweep wants from a writer that structurally cannot invalidate: an acknowledgement,
-        # not a ritual call.
         "scripts/backfill_sessions_valid_from.py",
-        # The two-step key backfill (2026-10-17), out of process for the same reason. It rewrites only a
-        # ciphertext under another key; a cached row holding the old one still opens while that key is
-        # configured, and the write site says so and names the bound.
         "scripts/reencrypt_two_factor_secrets.py",
     }
-    assert all(writers.values()), f"user writes with no cache invalidation: {writers}"
+    out_of_process = {
+        "scripts/backfill_sessions_valid_from.py",
+        "scripts/reencrypt_two_factor_secrets.py",
+    }
+    missing = {path for path, invalidates in writers.items() if not invalidates}
+    assert missing == out_of_process, f"user writes with no cache invalidation: {missing - out_of_process}"

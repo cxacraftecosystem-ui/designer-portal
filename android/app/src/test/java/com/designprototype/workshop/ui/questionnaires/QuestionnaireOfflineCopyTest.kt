@@ -4,7 +4,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** What a questionnaire's screen says about the connection — see `QuestionnaireOfflineCopy.kt`. */
 class QuestionnaireOfflineCopyTest {
 
     private val all = listOf(

@@ -1,26 +1,3 @@
-"""SECURITY REVIEW OF THE ACCOUNT-PARITY WORK (2026-10-17) — one test per finding.
-
-* D2 — a password change (and a first password) stamps ``sessionsValidFrom`` cut to the whole second,
-  so a token minted before the change — including one too old to carry a ``cred`` claim — dies, while
-  the ``X-Session-Token`` handed back survives.
-* B1 — the anonymous per-client limit keys on the RIGHT end of ``X-Forwarded-For``
-  (``FORWARDED_CLIENT_HOPS`` from the right), never the caller-typed left end; a whole-process cap
-  bounds "Forgot your password?"; an administrator's links and self-service links have separate
-  budgets.
-* B2 — "A password was added" / "Your password was changed" notices to the account's own address,
-  and a first password on an account with two-step on needs the second step.
-* B3 — nobody changes their OWN address through ``PATCH /users/{self}``.
-* B4 — a master admin cannot reset, sign out or turn off two-step for ANOTHER master admin (nor
-  demote or delete one: ``tests/test_master_admin_peers.py``).
-* N1 — an identifier that matches no account meets the same per-account budget as a real one: the
-  sign-in and the dataset-token door answer identical 401/429 sequences, and spend the same bcrypt.
-* N4 — an administrator who changes an address and a password in one request tells BOTH addresses.
-
-The pure tests (B1's key and caps, the notice wording) need nothing; the rest need Postgres and skip
-without it. Rows written by the app are read back through ``client.portal`` (``tests/test_stage_sync.py``
-carries the argument).
-"""
-
 import asyncio
 import functools
 import time
@@ -41,10 +18,6 @@ from app.services import credential_links, mailer, two_factor
 PASSWORD = "security-review-original-1"
 SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 
-# ==================================================================================================
-# B1 — which address the anonymous limit keys on, and the whole-process cap (no database)
-# ==================================================================================================
-
 
 def _scope(forwarded: str | None, peer: str = "10.0.0.9") -> dict[str, Any]:
     headers = [(b"x-forwarded-for", forwarded.encode("latin-1"))] if forwarded is not None else []
@@ -61,16 +34,13 @@ def hops(monkeypatch):
 
 def test_the_client_address_is_never_the_caller_typed_left_entry(hops):
     hops(1)
-    # nginx alone: the caller typed "1.1.1.1", nginx appended the real peer.
     assert rate_limit.client_address(_scope("1.1.1.1, 203.0.113.7")) == "ip:203.0.113.7"
     assert rate_limit.client_address(_scope("203.0.113.7")) == "ip:203.0.113.7"
 
 
 def test_behind_cloudfront_the_client_is_second_from_the_right(hops):
     hops(2)
-    # caller-typed, CloudFront's viewer, nginx's CloudFront edge
     assert rate_limit.client_address(_scope("1.1.1.1, 198.51.100.4, 130.176.0.1")) == "ip:198.51.100.4"
-    # Two headers are one list, in order.
     scope = _scope("1.1.1.1")
     scope["headers"].append((b"x-forwarded-for", b"198.51.100.4, 130.176.0.1"))
     assert rate_limit.client_address(scope) == "ip:198.51.100.4"
@@ -108,10 +78,6 @@ def test_the_whole_process_has_a_forgot_password_cap(hops):
         rate_limit.reset_account_credential_budget()
 
 
-# ==================================================================================================
-# B2 — the notice wording carries no secret (no database)
-# ==================================================================================================
-
 
 @pytest.mark.parametrize(
     ("kind", "by", "words"),
@@ -129,11 +95,6 @@ def test_password_notices_say_what_happened_and_what_to_do(kind, by, words):
     assert kind in mailer.KINDS
 
 
-# ==================================================================================================
-# The database half
-# ==================================================================================================
-
-#: slug -> (role, has a password, two-step on)
 ACCOUNTS: dict[str, tuple[str, bool, bool]] = {
     "admin": ("ADMIN", True, False),
     "changer": ("RESEARCHER", True, False),
@@ -205,7 +166,6 @@ def world():
 
 @pytest.fixture
 def mail_on(monkeypatch):
-    """Mail configured, without SES: messages are queued in the outbox and nothing is sent."""
     monkeypatch.setattr(mailer, "mail_configured", lambda settings=None: True)
 
 
@@ -223,7 +183,6 @@ def _read(client: Any, call: Any, **kwargs: Any) -> Any:
 
 
 def _fresh_google(monkeypatch: Any, email: str) -> dict[str, str]:
-    """A just-issued Google ID token for ``email``: the proof a first password now needs."""
     from app.api.routes import auth as auth_routes
 
     claims = {"email": email, "email_verified": True, "iat": int(time.time())}
@@ -236,18 +195,15 @@ def _notices(client: Any, email: str) -> list[str]:
     return [row.kind for row in rows]
 
 
-# ── D2 ─────────────────────────────────────────────────────────────────────────────────────────────
-
 
 @needs_db
 def test_a_password_change_ends_tokens_that_carry_no_fingerprint(world, mail_on):
     client = world["client"]
     person = world["people"]["changer"]
-    # A token from before 2026-10-09: no ``cred`` claim, so the fingerprint alone cannot retire it.
     legacy = create_access_token(subject=person.id)
     current = create_access_token(subject=person.id, credential=password_credential(person))
     assert client.get("/api/auth/me", headers=_bearer(legacy)).status_code == 200
-    time.sleep(1.1)  # the watermark is compared with a token's whole-second ``iat``
+    time.sleep(1.1)
 
     answer = client.post(
         "/api/auth/change-password",
@@ -263,7 +219,6 @@ def test_a_password_change_ends_tokens_that_carry_no_fingerprint(world, mail_on)
     row = _read(client, db.user.find_unique, where={"id": person.id})
     assert row.sessionsValidFrom is not None
     assert row.sessionsValidFrom.microsecond == 0
-    # B2: the owner hears about it.
     assert mailer.PASSWORD_CHANGED in _notices(client, world["address"]("changer"))
 
 
@@ -286,8 +241,6 @@ def test_a_first_password_ends_tokens_that_carry_no_fingerprint(world, mail_on, 
     assert client.get("/api/auth/me", headers=_bearer(fresh)).status_code == 200
     assert mailer.PASSWORD_ADDED in _notices(client, world["address"]("googler"))
 
-
-# ── B2 ─────────────────────────────────────────────────────────────────────────────────────────────
 
 
 @needs_db
@@ -358,7 +311,6 @@ def test_an_administrators_temporary_password_and_a_link_redemption_notify_the_o
 @needs_db
 def test_without_mail_a_change_still_succeeds(world):
     client = world["client"]
-    # The changer's password changed above; sign in with it to get a token bound to it.
     signed = client.post(
         "/api/auth/login",
         json={"email": world["address"]("changer"), "password": "security-review-new-1"},
@@ -371,8 +323,6 @@ def test_without_mail_a_change_still_succeeds(world):
     )
     assert answer.status_code == 200, answer.text
 
-
-# ── B1: separate budgets ───────────────────────────────────────────────────────────────────────────
 
 
 @needs_db
@@ -397,12 +347,9 @@ def test_administrator_links_do_not_spend_the_self_service_budget(world):
         assert made.status_code == 201, made.text
     spent = client.post("/api/auth/password-links", json={"userId": person.id}, headers=admin)
     assert spent.status_code == 429
-    # The person's own "Forgot your password?" link is still mintable.
     own = _read(client, credential_links.issue_link, user=person, purpose=credential_links.RESET)
     assert own.link
 
-
-# ── B3 ─────────────────────────────────────────────────────────────────────────────────────────────
 
 
 @needs_db
@@ -423,8 +370,6 @@ def test_nobody_changes_their_own_address(world):
     assert renamed.json()["email"] == world["address"]("admin")
 
 
-# ── B4 ─────────────────────────────────────────────────────────────────────────────────────────────
-
 
 @needs_db
 def test_a_master_admin_cannot_help_another_master_admin_back_in(world):
@@ -442,10 +387,6 @@ def test_a_master_admin_cannot_help_another_master_admin_back_in(world):
     row = _read(client, db.user.find_unique, where={"id": peer.id})
     assert row.twoFactorEnabled is True and row.sessionsValidFrom is None
 
-
-# ==================================================================================================
-# N1 — no enumeration through the per-account 429
-# ==================================================================================================
 
 
 def _eleven(client: Any, path: str, email: str) -> list[tuple[int, Any]]:
@@ -465,7 +406,6 @@ def test_an_unknown_address_answers_exactly_as_a_real_one_does(world, path, slug
     unknown = _eleven(client, path, f"nobody-{slug.lower()}-{world['stamp']}@example.org")
     assert known == unknown
     assert [code for code, _ in known] == [401] * 10 + [429]
-    # The typed identifier is normalised before it is a key: a new spelling is no fresh allowance.
     respelled = client.post(
         path,
         json={"email": f"  NoBody-{slug}-{world['stamp']}@Example.org ", "password": "another-guess"},
@@ -490,10 +430,6 @@ def test_one_identifier_typed_two_ways_is_one_key():
     assert identifier_key("someone@example.org") != identifier_key("other@example.org")
 
 
-# ==================================================================================================
-# N4 — an address and a password changed together tell both addresses
-# ==================================================================================================
-
 
 @needs_db
 def test_a_password_set_with_a_new_address_tells_the_old_address_too(world, mail_on):
@@ -509,7 +445,6 @@ def test_a_password_set_with_a_new_address_tells_the_old_address_too(world, mail
     assert answer.status_code == 200, answer.text
     assert _notices(client, old_address).count(mailer.PASSWORD_CHANGED) == 1
     assert _notices(client, new_address).count(mailer.PASSWORD_CHANGED) == 1
-    # A password alone still tells the one address it has.
     again = client.patch(
         f"/api/users/{person.id}", json={"password": "a-temporary-one-3"}, headers=_as(world, "admin")
     )

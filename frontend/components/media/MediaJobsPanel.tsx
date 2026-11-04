@@ -27,43 +27,8 @@ import {
 import { isAdmin } from "@/lib/permissions";
 import type { PageResult } from "@/lib/types";
 
-/**
- * THE MEDIA PROCESSING QUEUE, MADE VISIBLE AND RE-RUNNABLE.
- *
- * The queue has always drained itself (app/main.py starts the worker; app/worker.py ticks it), so
- * transcription worked and the missing half went unnoticed: a job that exhausted its attempts landed
- * in FAILED with the provider's reason in `MediaProcessingJob.error` — a column no screen on either
- * client read. The file's row just kept saying "Transcript FAILED" with nothing after the colon, and
- * nobody, at any rank, could ask for it again. "Failed", no reason, no retry, is what this panel
- * exists to end, so the reason is rendered in full (not truncated, not a tooltip) on its own line.
- *
- * PERMISSIONS, mirroring the three routes exactly (backend/app/api/routes/media.py):
- *   GET  /media/jobs            get_current_user — everyone; the SERVER narrows a non-admin to the
- *                               jobs they requested, so the panel itself is never hidden.
- *   POST /media/jobs/{id}/retry require_admin    — Retry renders only for `isAdmin(user)`.
- *   POST /media/jobs/process    require_admin    — so does "Run queue now".
- *
- * Admin VIEW is deliberately not ANDed into those two. This is not admin chrome — /media is an open
- * route and the list is owner-scoped — and an admin who turned the toggle off still needs to be able
- * to re-run a failed transcription, which is a repair, not a privileged surface.
- *
- * RETRY IS HELD FOR A POST HOLDER (2026-10-09). A re-queued transcription is written back onto the
- * file later — the write "Transcribe now" makes, deferred to the queue — so the server refuses the
- * retry to an admin who inspects or supervises a workshop the job's file belongs to. A row whose file
- * names such a workshop on its own row (`mediaWorkshopIds`) draws Retry disabled, with the word on the
- * row and the server's sentence once above the table — the media list's own treatment, so the two
- * tables on /media say one thing one way. A workshop the file belongs to some other way is left to the
- * server's 403, which prints in the red strip as written.
- */
-
-/** Statuses that mean the queue still has work in hand, so the list should keep refreshing itself. */
 const IN_FLIGHT = new Set(["QUEUED", "PROCESSING"]);
 
-/**
- * One tone + icon + word per status. Colour never carries the meaning alone: the icon and the label
- * survive colour-blindness, greyscale printing and forced-colours mode, and the PROCESSING spinner
- * is paired with its own word so a reduced-motion reader (who gets a still spinner) loses nothing.
- */
 const STATUS_TONE: Record<string, string> = {
   QUEUED: "border-line-200 bg-surface-50 text-ink-500",
   PROCESSING: "border-amber-500/30 bg-amber-100 text-amber-800",
@@ -85,7 +50,6 @@ const JOB_TYPE_LABEL: Record<string, string> = {
   MEASUREMENT: "Measurement"
 };
 
-/** SOME_STATUS -> "Some status", for anything the enum grows before this file hears about it. */
 function humanize(value: string): string {
   const words = value.replace(/_/g, " ").toLowerCase();
   return words.charAt(0).toUpperCase() + words.slice(1);
@@ -107,7 +71,6 @@ function StatusChip({ status }: { status: string }) {
   );
 }
 
-/** The five states plus "All", as filter pills. Empty value means "no statusFilter parameter". */
 const FILTERS: Array<{ value: string; label: string }> = [
   { value: "", label: "All" },
   { value: "FAILED", label: "Failed" },
@@ -129,23 +92,16 @@ export function MediaJobsPanel() {
   const [busyJobId, setBusyJobId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [draining, setDraining] = useState(false);
-  // Fetch generation, not an AbortController: listResource takes no signal, and what actually
-  // matters is ignoring the answer that arrives after a newer one (the filter pills and the poll
-  // both fire loads).
   const [loadToken, setLoadToken] = useState(0);
 
   const load = useCallback(async (pageToLoad: number, filter: string) => {
     try {
-      // With the Failed pill on, the list's own `total` IS the failed count, so it is not asked twice.
       if (filter === "FAILED") {
         const result = await listMediaProcessingJobs({ page: pageToLoad, pageSize: 20, statusFilter: filter });
         return { result, failedTotal: result.total };
       }
       const [result, failed] = await Promise.all([
         listMediaProcessingJobs({ page: pageToLoad, pageSize: 20, statusFilter: filter }),
-        // A failed job is ordered by createdAt like every other, so on a 12-page queue it can sit
-        // anywhere. Counting them separately is what lets the Failed pill say how many there are
-        // instead of leaving a reader to page through looking for one.
         listMediaProcessingJobs({ page: 1, pageSize: 1, statusFilter: "FAILED" })
       ]);
       return { result, failedTotal: failed.total };
@@ -165,8 +121,6 @@ export function MediaJobsPanel() {
       })
       .catch((err: Error) => {
         if (cancelled) return;
-        // Keep whatever is on screen; only an empty FIRST load should leave the panel blank, and
-        // then it says why rather than reading as "there are no jobs".
         setError(err.message);
       });
     return () => {
@@ -175,8 +129,6 @@ export function MediaJobsPanel() {
   }, [page, statusFilter, loadToken, load]);
 
   const items = data?.items ?? null;
-  // While the queue still has work in hand, re-read every 15s (the interval ExistingMedia uses for
-  // the same reason) so a job moving QUEUED -> PROCESSING -> COMPLETED does not need a page reload.
   const anyInFlight = (items ?? []).some((job) => IN_FLIGHT.has(String(job.status).toUpperCase()));
   useEffect(() => {
     if (!anyInFlight) return;
@@ -184,11 +136,6 @@ export function MediaJobsPanel() {
     return () => window.clearInterval(timer);
   }, [anyInFlight]);
 
-  /*
-    WHICH ROWS' RETRY A POST HOLDER MAY NOT PRESS. Only rows that draw Retry are asked about, and only
-    for an account that may appoint — which every admin, the only reader Retry is drawn for, is. One
-    staffing read per distinct workshop however many jobs name it; the 15-second poll asks nothing new.
-  */
   const offersRetry = (job: MediaProcessingJob) => {
     const status = String(job.status).toUpperCase();
     return canOperateQueue && (status === "FAILED" || status === "CANCELLED");
@@ -199,7 +146,6 @@ export function MediaJobsPanel() {
   const heldNoticeId = useId();
 
   async function retry(job: MediaProcessingJob) {
-    // A held Retry is disabled; this keeps the rule for any other way in.
     if (writesHeld(holdOf(job))) return;
     setBusyJobId(job.id);
     setError(null);
@@ -226,10 +172,7 @@ export function MediaJobsPanel() {
       const run = await runMediaProcessingQueue();
       setNotice(
         run.processed === 0
-          ? // Not "nothing to do": transcription only runs inside the off-peak window or while the
-            // server is idle, and never during a rate-limit cooldown, so an empty drain is usually a
-            // closed window rather than an empty queue. Saying "nothing to run" here would have an
-            // admin press it twice and conclude the button is broken.
+          ?
             "Nothing could run just now — transcription runs in quieter hours and pauses briefly when the transcription service is busy. Queued jobs stay queued."
           : `Ran ${run.processed} job${run.processed === 1 ? "" : "s"}: ${run.succeeded} succeeded, ${run.failed} failed.`
       );
@@ -293,8 +236,6 @@ export function MediaJobsPanel() {
 
       {error ? <div className="border-b border-line-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div> : null}
       {notice ? <div className="border-b border-line-200 bg-field-50 px-4 py-2 text-sm text-ink-700">{notice}</div> : null}
-      {/* Why some rows' Retry is held — said once, each row marked in words. The region is mounted from
-          the first paint (`sr-only` while empty); the padding is the panel's own rows'. */}
       <HeldPostNotice
         refusal={mediaListNotice((items ?? []).map(holdOf), "re-processed")}
         id={heldNoticeId}
@@ -304,18 +245,6 @@ export function MediaJobsPanel() {
       />
 
       {items === null && error ? (
-        // A FIRST LOAD THAT FAILED IS NOT A LOAD STILL IN PROGRESS, and this panel spent its whole
-        // life claiming otherwise. `GET /media/jobs` validated statusFilter against the RECORD
-        // status enum (backend media.py), so both requests in `load`'s Promise.all 422'd on every
-        // open, `data` stayed null, and the branch below rendered "Loading processing jobs..."
-        // forever under a red error bar — two contradictory statements at once, one of them a lie
-        // that reads as a slow network and invites waiting rather than reporting.
-        //
-        // The server bug is fixed; this stays because the null-data-plus-error state is reachable
-        // from any transport failure (offline, 500, expired token), and the honest rendering of it
-        // is "we asked and did not get an answer", never a spinner-word. Deliberately no retry
-        // button: every filter pill re-issues the request, and so does the 15s poll once anything
-        // is in flight, so a dedicated control would be a fourth way to do the same thing.
         <div className="p-4 text-sm text-ink-700">Could not load the processing queue — see the message above.</div>
       ) : items === null ? (
         <div className="p-4 text-sm text-ink-700">Loading processing jobs...</div>
@@ -344,9 +273,6 @@ export function MediaJobsPanel() {
             </thead>
             {items.map((job) => {
               const status = String(job.status).toUpperCase();
-              // A QUEUED job can carry the previous attempt's error while it waits out its backoff.
-              // Showing it (labelled as a retry in progress) is the difference between "stuck" and
-              // "already trying again" — two states that otherwise look identical from here.
               const reason = job.error?.trim();
               const retryable = status === "FAILED" || status === "CANCELLED";
               const hold = holdOf(job);
@@ -381,8 +307,6 @@ export function MediaJobsPanel() {
                             <RotateCcw className="h-3.5 w-3.5" aria-hidden />
                             {busyJobId === job.id ? "Re-queuing…" : "Retry"}
                           </button>
-                          {/* The word, so a held row is never told apart by a greyed button alone. The
-                              amber pair, not amber ink: the table's ground inverts and the pair does not. */}
                           {typeof hold === "string" ? (
                             <span className="self-center rounded-md bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">
                               {MEDIA_HELD_LABEL}
@@ -390,9 +314,6 @@ export function MediaJobsPanel() {
                           ) : null}
                         </RowActions>
                       ) : retryable ? (
-                        // Never a button that would 403: retry is require_admin while this list is
-                        // owner-scoped, so the person who uploaded the file can see the failure and
-                        // still not be the one who may re-run it. Say who can.
                         <span className="text-xs text-ink-500">An admin can re-run this</span>
                       ) : (
                         <span className="text-xs text-ink-500">-</span>

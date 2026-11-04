@@ -1,45 +1,3 @@
-"""Tier 3 consent and the per-designer daily cap, pinned: the gate, the boundary, and the two doors.
-
-Plan ``docs/PLAN-AI-TIERS-AND-CUSTOM-SECTIONS.md`` §6 answers 1 and 3. What is protected here is the
-half of this feature that would be wrong in the same way on every workshop and every designer.
-
-**NO DATABASE AND NO NETWORK. NOTHING IN THIS FILE SKIPS.** Every rule under test is decided by a pure
-function — ``dictation_consent`` returns *plans* instead of performing writes, and ``dictation_cap``'s
-whole ceiling is arithmetic over an :class:`Allowance` value — so the rules can be asserted on a laptop
-with no Postgres and no generated Prisma client. This repository's history says the untestable half is
-the half that is wrong.
-
-Two groups do run an event loop and neither reaches a database: the permission tests drive the real
-router over HTTP with ``db`` replaced by a tripwire, and the *wired* gate tests await the route
-functions directly with the workshop load, the provider call and the counter replaced — because wiring
-three correct pieces together in the wrong order is exactly how a gate ends up missing.
-
-WHAT EACH GROUP WOULD COST IN THE FIELD IF IT STOPPED HOLDING:
-
-1. **Consent is assumed by default and only a refusal stops a send** (owner decision, 19 Oct 2026:
-   "the consent should be assumed by default, people can revoke it if required"). No answer, and a
-   stored token nobody can read, both send; a recorded REFUSED stops every outside send.
-2. **The stored default is NOT_RECORDED and never GRANTED.** "Nobody answered" and "the artisan
-   agreed" stay different facts on the record, even though both send.
-3. **Consent carries who and when, and the two clocks stay apart.** A consent recorded in a courtyard
-   reaches the server on the next sync, a fortnight later; storing the sync moment would be a signature
-   dated to the day it was filed.
-4. **Consent can never be written into a stage row.** That is the registry temptation, refused by
-   construction: the plan constructor and the executor both have to be edited to open that door.
-5. **The day boundary is midnight IST.** A UTC day resets a designer's allowance at 05:30 IST,
-   mid-morning to this fleet.
-6. **The counter only counts what reached a provider.** A clip refused for size and a 503 for an
-   unconfigured server must not consume an allowance; an empty or failed transcription must.
-7. **Every refusal is a sentence naming a next move, never a code.** These strings are shown verbatim
-   to a designer standing in a courtyard with an artisan waiting.
-8. **The id-less door stays shut, and the probe stays answerable.** ``POST /design-workshops/dictate``
-   transcribed clips without consulting any workshop's consent; it now refuses, spending nothing to do
-   it. The GET at the same address is the browser's "does this deployment offer dictation at all"
-   probe, which has to answer before any workshop id exists — and which, until that literal route was
-   declared, was being answered 404 by ``GET /{workshop_id}`` looking up a workshop called "dictate".
-   That is a routing property, so it is asserted over HTTP against the real table.
-"""
-
 import asyncio
 import re
 from datetime import UTC, datetime, timedelta
@@ -85,13 +43,8 @@ MIGRATION = (
     / "migration.sql"
 )
 
-#: A fixed server clock, so nothing here depends on when the suite runs.
 AT = datetime(2026, 8, 12, 9, 14, 2, tzinfo=UTC)
 
-#: Every column ``workshop_summary`` reads off a workshop row, named one at a time rather than
-#: generated. A column it gains and this list does not gets an ``AttributeError`` out of
-#: ``SimpleNamespace`` — which is the point: a missing column must fail loudly here instead of arriving
-#: on the wire as a null that looks exactly like a column nothing ever writes.
 _SUMMARY_COLUMNS = (
     "title",
     "templateId",
@@ -117,9 +70,6 @@ _SUMMARY_COLUMNS = (
     "deletedAt",
     "dictationConsentAt",
     "dictationConsentById",
-    # THE PRE-SUBMISSION LOOP'S FOUR (2026-09-13). `submissionRound` is set to 0 below rather than
-    # left None, because it is the one column here that is NOT NULL in the schema and a None would
-    # be a row Postgres cannot produce.
     "reviewNotes",
     "reviewedById",
     "reviewedAt",
@@ -128,37 +78,20 @@ _SUMMARY_COLUMNS = (
 
 
 def _workshop_row(**overrides):
-    """A ``DesignWorkshop`` row as Prisma hands it back, with every column ``workshop_summary`` reads.
-
-    Built from a list of Nones rather than from a fixture factory so that a column added to
-    ``workshop_summary`` and forgotten here fails loudly instead of reading as None.
-    """
     columns = dict.fromkeys(_SUMMARY_COLUMNS)
     columns["id"] = "wsp_1"
     columns["dictationConsent"] = "NOT_RECORDED"
-    # Zero means "never handed in", which is what every workshop in the database said on the day
-    # the column landed and what the schema's own default says.
     columns["submissionRound"] = 0
     columns.update(overrides)
     return SimpleNamespace(**columns)
 
 
 def assert_sentence(text: str) -> None:
-    """Every refusal in this lane is field copy: a real sentence, no error code, and it ends.
-
-    Borrowed verbatim in spirit from ``DwDictationLadderTest.assertSentence`` on the handset, which
-    holds the same bar for the same strings' Kotlin siblings. The ">30 characters" is what catches a
-    later edit shortening one of these to "Not allowed."
-    """
     assert text and text.strip(), "a refusal must say something"
     assert len(text) > 30, f"too terse to be an explanation: {text!r}"
     assert text.rstrip().endswith("."), f"not a sentence: {text!r}"
     assert "code " not in text.lower(), f"names an error code: {text!r}"
 
-
-# --------------------------------------------------------------------------------------
-# Consent: reading a stored answer, and failing closed
-# --------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -169,9 +102,6 @@ def test_the_three_stored_answers_read_back_as_themselves(stored):
 
 
 def test_an_enum_member_reads_back_as_well_as_a_plain_string():
-    """Prisma hands enum columns back as either, depending on the client's generation, and a gate that
-    worked on one and not the other would fail closed on a correctly consented workshop — a capability
-    silently withdrawn, which nobody would report as a bug."""
     assert consent_of(_workshop_row(dictationConsent=DictationConsent.GRANTED)) is (
         DictationConsent.GRANTED
     )
@@ -179,33 +109,22 @@ def test_an_enum_member_reads_back_as_well_as_a_plain_string():
 
 @pytest.mark.parametrize("stored", [None, "", "granted", "YES", "TRUE", "NOT_A_TOKEN", 1])
 def test_anything_unreadable_reads_as_no_answer_which_is_consent_by_default(stored):
-    """Consent is assumed by default (19 Oct 2026), so a token nobody can read is no answer: it is
-    never read as GRANTED (the record stays honest) and it does not stop a send. Only a refusal does."""
     assert consent_of(_workshop_row(dictationConsent=stored)) is DictationConsent.NOT_RECORDED
     assert gate_refusal(consent_of(_workshop_row(dictationConsent=stored))) is None
 
 
 def test_a_row_with_no_consent_column_at_all_reads_as_no_answer():
-    """A record from a client, a test double, or a database restored from before the column existed."""
     assert consent_of(SimpleNamespace(id="wsp_1")) is DictationConsent.NOT_RECORDED
 
 
-# --------------------------------------------------------------------------------------
-# Consent: the gate's two sentences
-# --------------------------------------------------------------------------------------
-
 
 def test_only_a_refusal_stops_the_gate():
-    """Consent is assumed by default and can be revoked (owner decision, 19 Oct 2026)."""
     assert gate_refusal(DictationConsent.GRANTED) is None
     assert gate_refusal(DictationConsent.NOT_RECORDED) is None
     assert gate_refusal(DictationConsent.REFUSED) is not None
 
 
 def test_the_old_waiting_sentence_is_kept_only_to_recognise_stored_notes():
-    """Before 19 Oct 2026 an unanswered workshop was refused with "Nobody has recorded yet…"; that
-    note is still stored on older recordings, so the sentence is kept (for the clean-up script) and
-    is never the refusal for anything new."""
     unasked = legacy_waiting_sentence(DICTATION)
     refused = gate_refusal(DictationConsent.REFUSED)
     assert unasked != refused
@@ -215,32 +134,14 @@ def test_the_old_waiting_sentence_is_kept_only_to_recognise_stored_notes():
 
 
 def test_the_refusal_never_tells_a_designer_to_try_again():
-    """Trying again is incapable of a different outcome: what changes a consent is a person deciding.
-
-    The sentence instead names the keyboard as the move that works NOW — the same discipline
-    ``dwDictationNothingLeftSentence`` holds on the handset, where "type it in" is always the offer.
-    """
     sentence = gate_refusal(DictationConsent.REFUSED)
     assert_sentence(sentence)
     assert "try again" not in sentence.lower()
     assert "type the words in" in sentence.lower()
 
 
-# --------------------------------------------------------------------------------------
-# Consent: the sentence names what is ACTUALLY being sent, and where
-# --------------------------------------------------------------------------------------
-
 
 def test_the_two_dictation_sentences_survive_this_refactor_byte_for_byte():
-    """**PINNED CHARACTER FOR CHARACTER, AND THAT IS THE POINT OF PINNING THEM HERE.**
-
-    ``gate_refusal`` now composes its refusal from a :class:`Send`, because it is called by six routes
-    and was telling five of them a sentence about dictation. The composition had to be shaped around
-    reproducing THESE two strings exactly: ``POST /{id}/dictate`` depends on them, the handset's
-    ``DwDictationUpload`` prints them verbatim, and a designer who has read the dictation refusal a
-    hundred times should not find it reworded today. An assertion on a substring would not have caught
-    a comma moving, so these are the whole strings.
-    """
     assert gate_refusal(DictationConsent.REFUSED) == (
         "This workshop's recordings may not be sent to the transcription service — that is the "
         "answer on record — so this dictation cannot be written down there. Type the words in "
@@ -253,7 +154,6 @@ def test_the_two_dictation_sentences_survive_this_refactor_byte_for_byte():
         "instead. Open the workshop's own screen and record the artisan's answer to that question — "
         "until somebody does, this stays unavailable."
     )
-    # And the default really is that value rather than a copy of the same words.
     assert gate_refusal(DictationConsent.REFUSED, DICTATION) == gate_refusal(
         DictationConsent.REFUSED
     )
@@ -261,16 +161,6 @@ def test_the_two_dictation_sentences_survive_this_refactor_byte_for_byte():
 
 @pytest.mark.parametrize("compose", [lambda d: gate_refusal(DictationConsent.REFUSED, d), legacy_waiting_sentence])
 def test_no_verb_but_dictation_is_refused_with_a_sentence_about_dictation(compose):
-    """**THE DEFECT, IN THE FIELD, VERBATIM.** ``_verb_gate`` calls this for all five AI verbs, so a
-    designer pressing "describe this photograph" on a workshop nobody had asked about was told:
-    *"Nobody has recorded yet whether recordings from this workshop may be sent to the transcription
-    service, so this dictation cannot be written down there. Type the words in instead."*
-
-    There is no dictation. No transcription service is involved — a caption goes to Gemini. The
-    material is a photograph. And "type the words in instead" is not the alternative to describing an
-    image; there is nothing to type. Both clients print the server's detail verbatim, so that WAS the
-    field copy.
-    """
     for verb, described in SENDS.items():
         sentence = compose(described)
         assert "dictation" not in sentence.lower(), f"{verb} is still told about dictation"
@@ -278,9 +168,6 @@ def test_no_verb_but_dictation_is_refused_with_a_sentence_about_dictation(compos
 
 
 def test_each_verb_names_the_service_its_route_actually_posts_to():
-    """Written against the routes rather than against the plan: the three text verbs go to
-    ``_post_openai_chat``, a caption goes to ``_post_gemini_caption``, and only subtitles reach the
-    transcription chain. A sentence naming the wrong one is the same defect in a smaller font."""
     assert SENDS["PROOFREAD"].destination == "OpenAI's language model"
     assert SENDS["EXPAND"].destination == "OpenAI's language model"
     assert SENDS["TRANSLATE"].destination == "OpenAI's language model"
@@ -292,9 +179,6 @@ def test_each_verb_names_the_service_its_route_actually_posts_to():
 
 
 def test_each_verb_names_the_material_it_actually_sends():
-    """A caption's material is "a photograph or a video" and not "a photograph", because the gate runs
-    BEFORE the media row is resolved — at the moment this sentence is composed the server genuinely
-    does not know which, and ``_VERB_MEDIA_TYPES["CAPTION"]`` accepts both."""
     assert "photograph or a video" in SENDS["CAPTION"].consequence
     assert "recording" in SENDS["SUBTITLES"].consequence
     assert "passage" in SENDS["PROOFREAD"].consequence
@@ -303,19 +187,6 @@ def test_each_verb_names_the_material_it_actually_sends():
 
 
 def test_a_media_verb_names_every_kind_of_file_its_route_would_accept():
-    """**THE CONSENT REFUSAL AND THE WRONG-FILE REFUSAL MUST NOT HAVE TWO NAMES FOR ONE FILE.**
-
-    ``_verb_gate`` runs before ``_verb_source_media``, so when this sentence is composed the server
-    has not looked at the file and cannot know which kind it is. ``_VERB_MEDIA_TYPES`` already holds
-    the words its own refusal uses for the pair — "a photograph or a video", "a recording or a
-    video" — and the consent sentence has to use the same pair or it names material the verb does
-    not send.
-
-    CAPTION was written that way. SUBTITLES was not: it said "a recording", so a designer subtitling
-    a VIDEO was told a recording could not be subtitled, by the same server that would have called
-    that file a video one refusal later. Asserted against the route's own table rather than against
-    a literal, so the day a verb learns a third media type the sentence cannot silently stay behind.
-    """
     from app.api.routes.design_workshops import _VERB_MEDIA_TYPES
 
     for verb, (_tokens, in_words) in _VERB_MEDIA_TYPES.items():
@@ -325,26 +196,16 @@ def test_a_media_verb_names_every_kind_of_file_its_route_would_accept():
             f"{described.consequence!r} — one file, two names, one refusal apart"
         )
 
-    # And the alternative may not narrow it back again: "the recording is untouched" is a claim
-    # about an audio file, made to somebody who may have picked a video.
     assert "recording" not in SENDS["SUBTITLES"].alternative
 
 
 def test_only_the_dictation_answer_claims_the_artisan_was_asked_about_recordings():
-    """The question actually put to the artisan, and the one this column stores, is about RECORDINGS.
-    The server then reads that one answer as governing everything that leaves the device. So "this
-    workshop's photographs may not be sent — that is the answer on record" would assert that somebody
-    was asked about photographs, and nobody was."""
     assert DICTATION.material == "recordings"
     assert {described.material for described in SENDS.values()} == {"material"}
 
 
 @pytest.mark.parametrize("verb", sorted(SENDS))
 def test_both_consent_states_keep_their_distinct_next_moves_for_every_verb(verb):
-    """The reason those two differ is the whole point of the module: NOT_RECORDED is answered by
-    asking the artisan, and REFUSED has already been asked — telling somebody to go and ask again when
-    the answer is on record teaches them to stop reading these messages. A parameterised sentence
-    could easily have collapsed that distinction for the four verbs nobody was pinning."""
     assert gate_refusal(DictationConsent.NOT_RECORDED, SENDS[verb]) is None, "no answer sends"
     unasked = legacy_waiting_sentence(SENDS[verb])
     refused = gate_refusal(DictationConsent.REFUSED, SENDS[verb])
@@ -359,8 +220,6 @@ def test_both_consent_states_keep_their_distinct_next_moves_for_every_verb(verb)
 
 
 def test_every_verb_this_server_runs_has_a_sentence_written_for_it():
-    """A sixth verb added without copy would fall back to :data:`UNKNOWN_SEND`, which is vague — so
-    this fails at the point where the copy can still be written, rather than in a courtyard."""
     from app.services.ai_verbs import Verb
 
     assert {verb.value for verb in Verb} == set(SENDS)
@@ -370,8 +229,6 @@ def test_every_verb_this_server_runs_has_a_sentence_written_for_it():
 
 
 def test_an_unknown_verb_is_never_described_as_dictation():
-    """The fallback is vague and false about nothing. Falling back to the dictation description would
-    be exactly the defect this value was written to close, reappearing on the next verb."""
     unknown = send_for("EMBROIDER")
     assert unknown is not DICTATION
     sentence = gate_refusal(DictationConsent.REFUSED, unknown)
@@ -380,25 +237,15 @@ def test_an_unknown_verb_is_never_described_as_dictation():
 
 
 def test_a_send_description_with_a_hole_in_it_is_refused_at_construction():
-    """A refusal with a blank in it is a sentence a designer reads in a courtyard with a gap where the
-    fact was."""
     with pytest.raises(ConsentRuleViolation):
         Send(material="", destination="x", consequence="y")
     with pytest.raises(ConsentRuleViolation):
         Send(material="material", destination="x", consequence="")
     with pytest.raises(ConsentRuleViolation):
-        # Composed between two sentences: without the trailing space the next one runs into it.
         Send(material="material", destination="x", consequence="y", alternative="Do this instead.")
 
 
 def test_no_verbs_alternative_offers_something_this_app_cannot_do():
-    """Each alternative was checked against the app rather than imagined. EXPAND's is the one this
-    repository actively prefers (``ai_verbs.expand``: "A designer who wants those words in the field
-    types them"). CAPTION's names the caption box, which exists — the field registry carries eleven
-    ``caption_for`` fields — and says "where the stage has one", because it is not on every media
-    field and a designer sent to a box that is not on their screen stops reading these sentences.
-    PROOFREAD, TRANSLATE and SUBTITLES have no manual equivalent at all, and say what was NOT done
-    rather than inventing one."""
     from app.services.stage_schema import stages
 
     caption_fields = [
@@ -417,10 +264,6 @@ def test_no_verbs_alternative_offers_something_this_app_cannot_do():
         assert SENDS[verb].alternative.startswith("Nothing was sent")
 
 
-# --------------------------------------------------------------------------------------
-# Consent: the two writes, and the two clocks
-# --------------------------------------------------------------------------------------
-
 
 def test_one_decision_makes_exactly_two_writes_and_names_one_row():
     plans = decision_plans(
@@ -437,7 +280,6 @@ def test_one_decision_makes_exactly_two_writes_and_names_one_row():
         "dictationConsentById": "usr_2",
     }
 
-    # The one consent store (19 Oct 2026): the decision is a WORKSHOP row in the shared ledger.
     assert plans.decision.table == "Consent"
     assert plans.decision.operation is Operation.CREATE
     assert plans.decision.where is None
@@ -455,9 +297,6 @@ def test_one_decision_makes_exactly_two_writes_and_names_one_row():
 
 
 def test_the_workshop_write_touches_only_the_three_consent_columns():
-    """Enumerated rather than read, so a later change that "also bumps the status" or writes a stage key
-    fails here. This write is reachable from a route gated only on ``_require_designer``; anything else
-    it could set would be a field an artisan's consent form can edit by accident."""
     plans = decision_plans(
         workshop_id="wsp_1", decision=DictationConsent.REFUSED, actor_id="usr_2", at=AT
     )
@@ -469,12 +308,6 @@ def test_the_workshop_write_touches_only_the_three_consent_columns():
 
 
 def test_the_courtyard_moment_is_what_lands_on_the_workshop():
-    """**THE FORTNIGHT-OFFLINE CASE, which is the whole reason ``recordedAt`` exists.**
-
-    An artisan answers on the 1st; the phone reaches signal on the 12th. What the workshop must say is
-    the 1st — the moment somebody consented — and the server's own clock is left to the log row's
-    ``createdAt``, which is not set here at all.
-    """
     in_a_courtyard = datetime(2026, 7, 29, 11, 5, tzinfo=UTC)
     plans = decision_plans(
         workshop_id="wsp_1",
@@ -485,14 +318,10 @@ def test_the_courtyard_moment_is_what_lands_on_the_workshop():
     )
     assert plans.workshop.data["dictationConsentAt"] == in_a_courtyard
     assert plans.decision.data["recorded_at"] == in_a_courtyard
-    # The server's clock is NOT copied into the log row: `createdAt` is that table's own default, and a
-    # copy here would be a second place for it to be wrong.
     assert "createdAt" not in plans.decision.data
 
 
 def test_a_consent_recorded_against_the_server_is_dated_to_that_moment():
-    """The ledger's ``recordedAt`` is when the person answered, which for an answer taken straight
-    against the server is the server's moment; the row's own ``createdAt`` says when it was heard."""
     plans = decision_plans(
         workshop_id="wsp_1", decision=DictationConsent.GRANTED, actor_id="usr_2", at=AT
     )
@@ -524,10 +353,6 @@ def test_a_note_is_trimmed_to_nothing_rather_than_stored_blank():
 
 
 def test_not_recorded_cannot_be_recorded_as_a_decision():
-    """It is the absence of an answer, not an answer. "Somebody deliberately wrote down that nobody has
-    been asked" is not a state anybody is in, and storing it would leave the gate unable to tell a
-    withdrawn consent from a workshop nobody has opened. The refusal names REFUSED as the way to take a
-    consent back."""
     with pytest.raises(ConsentRuleViolation) as exc:
         decision_plans(
             workshop_id="wsp_1",
@@ -540,9 +365,6 @@ def test_not_recorded_cannot_be_recorded_as_a_decision():
 
 
 def test_an_unsigned_consent_is_refused():
-    """This is the row that says a NAMED PERSON cleared an artisan's voice to leave the device. The
-    log's actor is ``onDelete: Restrict`` for that reason, and a blank one would make the Restrict
-    guard nothing."""
     with pytest.raises(ConsentRuleViolation) as exc:
         decision_plans(
             workshop_id="wsp_1", decision=DictationConsent.GRANTED, actor_id="  ", at=AT
@@ -551,8 +373,6 @@ def test_an_unsigned_consent_is_refused():
 
 
 def test_a_consent_that_names_no_workshop_is_refused():
-    """Per WORKSHOP is the whole decision (plan §6 answer 3). A write with no workshop id would be the
-    account-level consent that was explicitly rejected, arrived at by accident."""
     with pytest.raises(ConsentRuleViolation) as exc:
         decision_plans(
             workshop_id="", decision=DictationConsent.GRANTED, actor_id="usr_2", at=AT
@@ -561,10 +381,6 @@ def test_a_consent_that_names_no_workshop_is_refused():
 
 
 def test_a_device_clock_in_the_future_is_refused_and_never_corrected():
-    """A phone whose date was set by hand would otherwise put a consent in the log that appears to have
-    been given after the report was submitted. It is REFUSED rather than silently replaced with now(),
-    because a substituted timestamp is a fabricated fact about when somebody consented — the same rule
-    ``AiLayerRegisterIn.producedAt`` holds one table over."""
     with pytest.raises(ConsentRuleViolation) as exc:
         decision_plans(
             workshop_id="wsp_1",
@@ -578,9 +394,6 @@ def test_a_device_clock_in_the_future_is_refused_and_never_corrected():
 
 
 def test_ordinary_handset_clock_drift_is_accepted():
-    """A mobile-network clock a few minutes ahead is ordinary, and refusing it would reject honest
-    consents recorded in a courtyard. The tolerance is a stated policy and not a measurement — nothing
-    here measures the fleet's clock skew."""
     drifted = AT + MAX_DEVICE_CLOCK_SKEW - timedelta(seconds=1)
     plans = decision_plans(
         workshop_id="wsp_1",
@@ -593,9 +406,6 @@ def test_ordinary_handset_clock_drift_is_accepted():
 
 
 def test_a_consent_recorded_before_the_server_heard_of_it_is_always_accepted():
-    """There is no lower bound and there must not be one. A workshop created in a courtyard reaches the
-    server after the consent does, so "before the workshop's createdAt" is a legitimate shape and a
-    guard against it would refuse exactly the offline case this column exists for."""
     long_ago = AT - timedelta(days=90)
     assert (
         decision_plans(
@@ -610,14 +420,6 @@ def test_a_consent_recorded_before_the_server_heard_of_it_is_always_accepted():
 
 
 def test_a_moment_with_no_offset_is_read_as_utc_rather_than_crashing():
-    """**AN ISO-8601 MOMENT WITH NO OFFSET IS A LEGITIMATE THING FOR A CLIENT TO SEND**, and comparing
-    one against the server's aware clock raises ``TypeError`` in Python — not a ``ConsentRuleViolation``,
-    so the route's except clause would not catch it and a designer recording an artisan's answer would
-    be handed "something went wrong on the server" for a consent they were entitled to file.
-
-    Read as UTC, which is what ``dictation_cap.ist_day`` and the route's ``_parse_datetime`` already do
-    with a naive moment, so the three of them cannot disagree about what a missing offset means.
-    """
     naive_past = datetime(2026, 8, 12, 6, 0, 0)  # noqa: DTZ001 - the missing offset is the subject
     plans = decision_plans(
         workshop_id="wsp_1",
@@ -641,8 +443,6 @@ def test_a_moment_with_no_offset_is_read_as_utc_rather_than_crashing():
 
 
 def test_a_naive_server_clock_does_not_crash_the_comparison_either():
-    """The route passes ``datetime.now(UTC)``, but this function is public and a caller that passed a
-    naive ``at`` would otherwise crash on the same comparison from the other side."""
     naive_now = datetime(2026, 8, 12, 9, 14, 2)  # noqa: DTZ001 - the missing offset is the subject
     plans = decision_plans(
         workshop_id="wsp_1", decision=DictationConsent.REFUSED, actor_id="usr_2", at=naive_now
@@ -650,29 +450,8 @@ def test_a_naive_server_clock_does_not_crash_the_comparison_either():
     assert plans.workshop.data["dictationConsentAt"] == naive_now.replace(tzinfo=UTC)
 
 
-# --------------------------------------------------------------------------------------
-# Consent: the registry door, held shut by construction
-# --------------------------------------------------------------------------------------
-
 
 def test_a_consent_can_never_be_written_into_a_stage_entry():
-    """**THE REGISTRY TEMPTATION, REFUSED BY CONSTRUCTION RATHER THAN BY A DOCSTRING.**
-
-    A consent question on stage 1 is the obvious-looking home and it cannot carry who and when:
-    ``save_stage``'s UPDATE writes only {data, ordinal, deletedAt, fieldProvenance}, ``createdById``
-    is set on CREATE alone, and a stage row's ``updatedAt`` moves whenever anything in that stage
-    changes. So there is no expressible write from that module into the stage table, and a later
-    change that wants one has to delete this check — a visible act in a diff and a failing test,
-    rather than a quiet new call site.
-
-    ``fieldProvenance`` JOINED THAT LIST AFTER THIS TEST WAS WRITTEN and does not weaken the
-    argument, which is why the sentence was corrected rather than the test. It answers "who last set
-    each field of ``data``" — see ``services/entry_provenance`` — so it is per-FIELD authorship of
-    workshop answers, not a consent decision by a person about a recording: it has no notion of
-    granting, no expiry, and is rewritten wholesale on every save from the values themselves. A
-    consent parked in it would be erased by the next save of the same stage, which is precisely the
-    failure this guard exists to make unreachable.
-    """
     from app.services import dictation_consent as module
 
     with pytest.raises(ConsentRuleViolation) as exc:
@@ -687,8 +466,6 @@ def test_a_consent_can_never_be_written_into_a_stage_entry():
 
 
 def test_the_executor_has_no_writer_for_the_stage_table_either():
-    """The second half of the same guard, and it is checked before the Prisma client is touched — so the
-    refusal is a sentence on any machine, with or without a generated client."""
     from app.services import dictation_consent as module
 
     with pytest.raises(ConsentRuleViolation):
@@ -714,10 +491,6 @@ def test_an_update_must_name_one_row_and_a_create_must_name_none():
         )
 
 
-# --------------------------------------------------------------------------------------
-# Consent: the wire
-# --------------------------------------------------------------------------------------
-
 
 def test_the_three_consent_keys_reach_the_clients():
     assert consent_keys(
@@ -732,10 +505,6 @@ def test_the_three_consent_keys_reach_the_clients():
 
 
 def test_the_consent_key_is_never_null_on_the_wire():
-    """A client must be able to render a state machine rather than infer one from an absence — the same
-    reason ``ai_layers.layer_payload`` carries an explicit ``accepted`` boolean beside a nullable
-    timestamp. An unreadable stored token arrives as NOT_RECORDED, which every client has a branch for,
-    rather than as a raw token none of them does."""
     assert consent_keys(_workshop_row(dictationConsent=None))["dictationConsent"] == (
         "NOT_RECORDED"
     )
@@ -745,16 +514,10 @@ def test_the_consent_key_is_never_null_on_the_wire():
 
 
 def test_the_display_name_is_not_in_the_summary_keys():
-    """Deliberately absent: this dict is serialised once per row by the paged LIST, and resolving a name
-    there would be a query per workshop to print something the list does not show. The single-record
-    read adds ``dictationConsentByName``."""
     assert "dictationConsentByName" not in consent_keys(_workshop_row())
 
 
 def test_the_workshop_header_carries_the_consent_and_not_the_name():
-    """The keys reach the clients through ``workshop_summary``, which is a hand-written dict — so a
-    column added to schema.prisma and not to that dict is invisible on every surface and looks exactly
-    like a column nothing writes."""
     from app.services.design_workshops import workshop_summary
 
     summary = workshop_summary(
@@ -767,8 +530,6 @@ def test_the_workshop_header_carries_the_consent_and_not_the_name():
 
 
 def test_a_recorded_decision_carries_both_moments():
-    """A fortnight of no signal makes them differ by a fortnight, and a reader who can see only one
-    cannot tell a consent given today from one given before the workshop was synced."""
     row = SimpleNamespace(
         id="dec_1",
         designWorkshopId="wsp_1",
@@ -789,16 +550,8 @@ def test_a_recorded_decision_carries_both_moments():
     }
 
 
-# --------------------------------------------------------------------------------------
-# Consent: the schema and the migration
-# --------------------------------------------------------------------------------------
-
 
 def test_the_python_vocabulary_and_the_postgres_enum_agree():
-    """Declared twice — once in Python, once in Postgres — and they must not drift. A value Python can
-    produce and Postgres refuses is a 500 on the write path; a value Postgres holds and Python cannot
-    name is a gate that cannot read a stored consent, which fails closed and silently withdraws a
-    capability."""
     schema = SCHEMA_PRISMA.read_text(encoding="utf-8")
     match = re.search(
         r"^enum DwDictationConsent \{(.*?)^\}", schema, re.DOTALL | re.MULTILINE
@@ -813,10 +566,6 @@ def test_the_python_vocabulary_and_the_postgres_enum_agree():
 
 
 def test_the_stored_default_is_not_recorded_and_never_granted():
-    """**THE ONE LINE IN THIS FEATURE THAT MUST NEVER CHANGE.** A default of GRANTED would silently
-    clear a third-party send for every workshop already in the database — precisely the failure the plan
-    rejects an account-level consent for, arrived at through a migration instead of a setting. Pinned in
-    both places it is written."""
     assert (
         "dictationConsent DwDictationConsent @default(NOT_RECORDED)"
         in SCHEMA_PRISMA.read_text(encoding="utf-8")
@@ -827,14 +576,6 @@ def test_the_stored_default_is_not_recorded_and_never_granted():
 
 
 def test_the_decision_log_actor_outlives_the_account():
-    """RESTRICT, exactly as ``DwAiLayerDecision.actor`` and ``ReviewLog.reviewer`` are. This row says a
-    named person took responsibility for an artisan's voice leaving the device; an account deleted out
-    from under it would leave the record saying somebody's recordings were cleared by nobody.
-
-    And the CACHE pointer on the workshop is SetNull, which is the other half of the split: if such an
-    account is ever removed by hand the workshop keeps its answer with an empty name, rather than the
-    consent reverting to NOT_RECORDED and re-opening a question that had been settled.
-    """
     schema = SCHEMA_PRISMA.read_text(encoding="utf-8")
     assert (
         'actor User @relation("DwWorkshopConsentDecisionActor", fields: [actorId], '
@@ -851,65 +592,35 @@ def test_the_decision_log_actor_outlives_the_account():
 
 
 def test_the_migration_is_additive_and_says_how_to_roll_back():
-    """Every migration in this lane's neighbourhood states its rollback in the SQL, because the person
-    who needs it will be reading this file at the time and not the plan."""
     sql = MIGRATION.read_text(encoding="utf-8")
     assert "DROP TABLE \"DwDictationDailyUsage\";" in sql
     assert "DROP TABLE \"DwWorkshopConsentDecision\";" in sql
     assert 'DROP TYPE "DwDictationConsent";' in sql
-    # Nothing is dropped or retyped on the way IN. A migration in this family that starts deleting
-    # columns is one somebody has to read very differently.
     body = sql.split("-- CreateEnum", 1)[1]
     assert "DROP COLUMN" not in body
     assert "DROP TABLE" not in body
 
 
-# --------------------------------------------------------------------------------------
-# The cap: the day boundary, which is the whole meaning of "daily"
-# --------------------------------------------------------------------------------------
-
 
 def test_the_day_turns_over_at_midnight_india_time():
-    """**THE BOUNDARY, ASSERTED ON BOTH SIDES OF ITSELF.** 18:29:59 UTC is 23:59:59 IST and still
-    yesterday; 18:30:00 UTC is 00:00:00 IST and a new allowance. A UTC day would instead reset at 05:30
-    IST — mid-morning to this fleet — which ``api/routes/public.py`` calls "visibly wrong to the people
-    it is for" about the same choice for the census."""
     assert ist_day(datetime(2026, 8, 11, 18, 29, 59, tzinfo=UTC)) == "2026-08-11"
     assert ist_day(datetime(2026, 8, 11, 18, 30, 0, tzinfo=UTC)) == "2026-08-12"
 
 
 def test_an_evening_in_india_is_still_today():
-    """21:00 IST is 15:30 UTC on the same date, so nothing here is a coincidence of the two calendars
-    agreeing: a designer refused at nine in the evening is refused against the day they are living in.
-    """
     assert ist_day(datetime(2026, 8, 12, 15, 30, tzinfo=UTC)) == "2026-08-12"
 
 
 def test_a_naive_clock_is_read_as_utc_rather_than_shifted_blindly():
-    """A naive datetime shifted by +05:30 is only right if it happened to be UTC, and the mistake would
-    be invisible for eighteen and a half hours out of every twenty-four — then wrong at exactly the
-    boundary this function exists to define."""
-    # DTZ001 is suppressed because the missing tzinfo IS THE SUBJECT of this test: the rule under test
-    # is what `ist_day` does with a naive datetime, and a linter-pleasing tzinfo here would delete the
-    # only assertion in the file that covers it.
     assert ist_day(datetime(2026, 8, 11, 18, 30, 0)) == "2026-08-12"  # noqa: DTZ001
 
 
 def test_the_day_is_a_plain_calendar_date_string():
-    """It is the second half of ``DwDictationDailyUsage``'s primary key and the ``dictationDay`` a phone
-    compares its cached mirror against, so its shape is a contract and not a formatting choice."""
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", ist_day(AT))
 
 
-# --------------------------------------------------------------------------------------
-# The cap: the arithmetic
-# --------------------------------------------------------------------------------------
-
 
 def test_an_uncapped_server_never_refuses_and_counts_down_from_nothing():
-    """NULL is the column's default, so this is what every deployment does on the day the migration
-    runs. ``remaining`` is None rather than a large number: "no limit" and "a big limit" are different
-    facts and only one of them can honestly be printed as a countdown."""
     allowance = Allowance(day="2026-08-12", limit=None, used=37)
     assert allowance.uncapped is True
     assert allowance.spent is False
@@ -923,9 +634,6 @@ def test_a_cap_refuses_only_once_it_is_reached():
 
 
 def test_a_cap_lowered_mid_day_still_refuses():
-    """``>=`` and not ``==``, which is why this is a property rather than a comparison at the call site:
-    a master admin who lowers the cap from 40 to 10 at noon must not hand every designer who has already
-    spent 12 an unbounded afternoon because no equality will ever hold again."""
     over = Allowance(day="2026-08-12", limit=10, used=12)
     assert over.spent is True
     assert over.remaining == 0
@@ -933,10 +641,6 @@ def test_a_cap_lowered_mid_day_still_refuses():
 
 
 def test_a_cap_of_zero_gets_its_own_sentence_and_never_blames_the_designer():
-    """"You have used all 0 of today's dictations" reads as a bug, and a designer who has recorded
-    nothing all morning being told they have used up their allowance would reasonably conclude the app
-    is broken and stop trusting the next message. A cap of 0 is a deliberate setting — server dictation
-    switched off — and the sentence says that instead."""
     refusal = cap_refusal(Allowance(day="2026-08-12", limit=0, used=0))
     assert_sentence(refusal)
     assert "all 0" not in refusal
@@ -945,10 +649,6 @@ def test_a_cap_of_zero_gets_its_own_sentence_and_never_blames_the_designer():
 
 
 def test_the_refusal_names_the_limit_and_when_the_allowance_returns():
-    """Plan §6.1 requires the cap be "named in words when it is hit", and naming a number requires
-    having it. The boundary is named too, because a designer refused at 21:00 otherwise has no idea
-    whether that means in three hours or in eleven — and it is the SERVER's India day, so the sentence
-    says India time rather than "tomorrow", which a phone in another timezone would make false."""
     refusal = cap_refusal(Allowance(day="2026-08-12", limit=40, used=40))
     assert_sentence(refusal)
     assert "40" in refusal
@@ -958,9 +658,6 @@ def test_the_refusal_names_the_limit_and_when_the_allowance_returns():
 
 
 def test_the_allowance_a_phone_caches_carries_the_day_it_belongs_to():
-    """``dictationDay`` is the load-bearing key of this payload. Without it a phone cannot tell a cached
-    "spent" that is still true from one that belongs to yesterday, and a mirror that guessed would
-    silently withhold a capability at the wrong midnight."""
     assert allowance_payload(Allowance(day="2026-08-12", limit=40, used=28)) == {
         "dictationsLimit": 40,
         "dictationsUsed": 28,
@@ -970,62 +667,34 @@ def test_the_allowance_a_phone_caches_carries_the_day_it_belongs_to():
 
 
 def test_an_uncapped_allowance_reports_nulls_and_not_zeroes():
-    """0 remaining and "there is no ceiling" must not look alike on the wire: one of them means the next
-    dictation will be refused."""
     payload = allowance_payload(Allowance(day="2026-08-12", limit=None, used=5))
     assert payload["dictationsLimit"] is None
     assert payload["dictationsRemaining"] is None
     assert payload["dictationsUsed"] == 5
 
 
-# --------------------------------------------------------------------------------------
-# The cap: reading the configured number
-# --------------------------------------------------------------------------------------
-
 
 def test_a_deployment_with_no_settings_row_is_uncapped():
-    """Matching ``app_settings``' own convention: a deployment whose singleton has never been written
-    behaves as the defaults."""
     assert configured_cap(None) is None
 
 
 def test_null_is_uncapped_and_zero_is_a_real_setting():
-    """**BOTH ARE REAL SETTINGS AND NEITHER IS A "NOT SET" SENTINEL**, which is why this is a function
-    rather than a ``getattr`` at three call sites. 0 must survive as 0 — a truthiness test here would
-    read it as "nothing configured" and quietly un-switch-off server dictation for the whole fleet."""
     assert configured_cap(SimpleNamespace(dwDictationDailyCap=None)) is None
     assert configured_cap(SimpleNamespace(dwDictationDailyCap=0)) == 0
     assert configured_cap(SimpleNamespace(dwDictationDailyCap=40)) == 40
 
 
 def test_a_settings_row_that_predates_the_column_is_uncapped():
-    """A stale generated client, or a row read before the migration ran. ``getattr`` finding nothing must
-    mean today's behaviour and not "cap of zero", which would take dictation away fleet-wide."""
     assert configured_cap(SimpleNamespace()) is None
 
 
 @pytest.mark.parametrize("stored", [-1, -40, "forty", object()])
 def test_a_cap_nobody_could_have_meant_leaves_the_server_uncapped(stored):
-    """The route refuses a negative, so one can only arrive by somebody editing the row by hand. Read as
-    a ceiling it would clamp to 0 and silently withdraw craft-aware dictation from every designer in the
-    fleet, with no message anywhere naming a mistyped number as the cause — the failure nobody would
-    think to look for. Read as uncapped it restores what the deployment had before anybody typed
-    anything, and the WARNING log makes the bad row findable."""
     assert configured_cap(SimpleNamespace(dwDictationDailyCap=stored)) is None
 
 
-# --------------------------------------------------------------------------------------
-# The cap: setting it, and being able to lift it again
-#
-# `configured_cap` above argues from a fact about the WRITE path — "the route refuses a negative, so one
-# can only arrive by somebody editing the row by hand" — and nothing pinned that fact. These do.
-# --------------------------------------------------------------------------------------
-
 
 def test_zero_may_be_typed_and_a_negative_may_not():
-    """0 is a real setting: server dictation off, with its own sentence. A negative is not a ceiling
-    anybody meant, and it is refused HERE rather than reinterpreted downstream — which is the whole
-    reason ``configured_cap`` is entitled to treat a stored negative as a hand-edited row."""
     from app.schemas.settings import MAX_DICTATION_DAILY_CAP, AppSettingUpdate
 
     assert AppSettingUpdate(dwDictationDailyCap=0).dwDictationDailyCap == 0
@@ -1039,17 +708,6 @@ def test_zero_may_be_typed_and_a_negative_may_not():
 
 
 def test_an_explicit_null_is_distinguishable_from_never_mentioning_the_cap():
-    """**THE ONLY WAY A CAP CAN EVER BE LIFTED AGAIN**, and it hangs on one line in
-    ``PUT /settings`` that reads ``model_fields_set`` instead of trusting ``exclude_none``.
-
-    Every other field on that body treats absent and null identically — "leave it alone" — which is
-    right for a mode or a time that always has a value. Here null IS the setting that means uncapped, so
-    under ``exclude_none`` alone a master admin who capped at 40 in the morning could never go back:
-    the request lifting the cap would be byte-identical to one that never mentioned it. This pins both
-    halves — that ``exclude_none`` really does drop it, and that ``model_fields_set`` really does tell
-    the two requests apart — so a later "simplification" of that route fails here rather than silently
-    making a ceiling permanent.
-    """
     from app.schemas.settings import AppSettingUpdate
 
     lifting = AppSettingUpdate(dwDictationDailyCap=None)
@@ -1057,36 +715,18 @@ def test_an_explicit_null_is_distinguishable_from_never_mentioning_the_cap():
 
     assert "dwDictationDailyCap" in lifting.model_fields_set
     assert "dwDictationDailyCap" not in silent.model_fields_set
-    # …and this is why the route cannot just read the dump: the instruction is invisible in it.
     assert "dwDictationDailyCap" not in lifting.model_dump(exclude_none=True)
 
 
 def test_the_settings_route_reads_model_fields_set_for_the_cap_and_not_the_dump():
-    """The assertion above is about pydantic; this one is about the route actually using it. Cheap, and
-    it is the difference between "the mechanism exists" and "the mechanism is wired"."""
     source = (
         Path(__file__).resolve().parents[1] / "app" / "api" / "routes" / "settings.py"
     ).read_text(encoding="utf-8")
     assert '"dwDictationDailyCap" in payload.model_fields_set' in source
 
 
-# --------------------------------------------------------------------------------------
-# The gates, WIRED UP — the half that is usually wrong
-#
-# The route functions are awaited directly with the workshop load, the provider call and the counter
-# replaced, so what is under test is what the pure tests above cannot reach: that the consent check,
-# the ceiling check, the provider call and the increment are joined to each other in the right ORDER.
-# --------------------------------------------------------------------------------------
-
 
 class _Clip:
-    """A dictated clip, as ``UploadFile`` presents one to the handler.
-
-    ``reads`` is counted because "the refusal costs nothing" has to include the bytes: a handler that
-    reads a six-megabyte upload into memory before refusing it has spent something, even if it never
-    reaches a provider.
-    """
-
     def __init__(self, size: int = 4096):
         self._bytes = b"\x00" * size
         self.filename = "dictation.webm"
@@ -1095,30 +735,16 @@ class _Clip:
         self._spent = False
 
     async def read(self, size: int = -1) -> bytes:
-        # The bounded reader (2026-09-03) consumes uploads in chunks — ``read(CHUNK_BYTES)`` until
-        # an empty answer — so this fake must behave like the stream ``UploadFile`` actually is:
-        # hand over the buffer once, then answer empty. ``reads`` keeps its original meaning ("were
-        # the BYTES spent?") by counting only answers that carried bytes; the empty tail read the
-        # chunk loop needs to see the end is bookkeeping, not spend.
         if self._spent:
             return b""
         self._spent = True
         self.reads += 1
         if size is None or size < 0 or size >= len(self._bytes):
             return self._bytes
-        # A clip larger than one chunk still arrives whole here, deliberately: the accumulator sums
-        # what it RECEIVED, so an oversize clip crosses the cap inside one loop pass and `reads`
-        # stays 1 for it — exactly what the pre-chunking fake reported for the same refusal.
         return self._bytes
 
 
 def _plain_request():
-    """A bare ``Request`` stand-in for direct route calls (added 2026-09-03, with the parameter).
-
-    ``read_upload_bounded`` asks the request for one thing only — a Content-Length header — and a
-    stand-in that answers none exercises the bounded chunk-read path, which is the half of the
-    guard these tests care about. The header pre-check has its own tests in test_upload_bounds.py.
-    """
     return SimpleNamespace(headers={})
 
 
@@ -1128,17 +754,11 @@ def _person(role: str):
 
 @pytest.fixture
 def dictation(monkeypatch):
-    """The dictation routes with the workshop, the provider, the allowance and the counter replaced.
-
-    Returns a recorder so each test can assert what was NOT done — which is most of what matters here:
-    a refusal that still called the provider has spent the credit it was refusing.
-    """
     from app.api.routes import design_workshops as routes
 
     async def _unpaused() -> bool:
         return False
 
-    # Transcription ships PAUSED (owner hold, 18 Oct 2026); these tests are about what happens once on.
     monkeypatch.setattr(routes.app_settings, "load_transcription_paused", _unpaused)
 
     seen = SimpleNamespace(provider_calls=[], spends=[], allowance=None, transcribed_for=[])
@@ -1147,10 +767,6 @@ def dictation(monkeypatch):
         return _workshop_row(id=workshop_id, dictationConsent=state.consent)
 
     async def _transcribe(content, filename, mime, settings, *, user_id=None):
-        # `user_id` IS RECORDED, NOT MERELY TOLERATED. It is what routes a dictation onto the
-        # speaker's own provider key rather than the organisation's, so a stub that quietly swallowed
-        # it would let the route stop passing it and every test here would still pass — while every
-        # designer who had supplied a key silently went back to being billed to the deployment.
         seen.provider_calls.append((len(content), filename, mime))
         seen.transcribed_for.append(user_id)
         return dict(state.result)
@@ -1171,13 +787,11 @@ def dictation(monkeypatch):
     monkeypatch.setattr(routes, "load_workshop_or_404", _workshop)
 
     async def _no_ledger_rows(*_a, **_k):
-        """The consent ledger holds no row yet, so the workshop answers from its cached column."""
         return {}
 
     monkeypatch.setattr(routes.dictation_consent.ledger, "current_states", _no_ledger_rows)
 
     async def _no_linked_artisans(_workshop_ids):
-        """No artisan is linked to the workshop, so its own answer decides (one consent store)."""
         return []
 
     monkeypatch.setattr(routes.dictation_consent, "workshop_artisan_ids", _no_linked_artisans)
@@ -1187,7 +801,6 @@ def dictation(monkeypatch):
     monkeypatch.setattr(routes.dictation_cap, "spend", _spend)
 
     async def _keep(content, file, result, user, record):
-        # The clip's storage is tested on its own below; here it only records that it was asked.
         seen.kept.append((len(content), result.get("status"), getattr(record, "id", None)))
         return "med_1" if result.get("status") == "COMPLETED" else None
 
@@ -1198,7 +811,6 @@ def dictation(monkeypatch):
 
 @pytest.mark.parametrize("consent", ["NOT_RECORDED", None, "granted"])
 def test_a_workshop_with_no_answer_dictates_because_consent_is_assumed_by_default(dictation, consent):
-    """Owner decision, 19 Oct 2026: no answer on record (or a token nobody can read) is consent."""
     dictation.state.consent = consent
     payload = asyncio.run(
         dictation.routes.dictate_for_workshop(
@@ -1213,9 +825,6 @@ def test_a_workshop_with_no_answer_dictates_because_consent_is_assumed_by_defaul
 def test_the_workshop_scoped_route_refuses_a_revoked_send_before_touching_a_provider(
     dictation, consent
 ):
-    """**THE GATE, WIRED.** A 409 is not enough on its own: what makes this a gate rather than a
-    message is that the provider was never called, so no credit was spent and no audio left this
-    server. A recorded refusal (the switch turned off) is the only answer that stops it."""
     dictation.state.consent = consent
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
@@ -1239,17 +848,10 @@ def test_a_consented_workshop_reaches_the_provider_and_gets_its_words_back(dicta
     assert payload["languageHint"] == "or"
     assert len(dictation.seen.provider_calls) == 1
     assert dictation.seen.spends == [("usr_1", "2026-08-12")]
-    # THE SPEAKER IS NAMED TO THE TRANSCRIBER, which is what lets their own provider key run this
-    # dictation and take the charge. The route reads it off the token, so passing anything else — or
-    # nothing — would bill the deployment for work a designer chose to pay for themselves.
     assert dictation.seen.transcribed_for == ["usr_1"]
 
 
 def test_the_consent_gate_is_checked_before_the_cap(dictation):
-    """A workshop whose consent was refused is refused whatever the allowance says. Telling a designer
-    their daily allowance is spent when the real blocker is a refusal would send them off to wait for
-    midnight for nothing — the cap's refusal clears by itself, this one clears only when somebody
-    records a new answer."""
     dictation.state.consent = "REFUSED"
     dictation.state.allowance = Allowance(day="2026-08-12", limit=10, used=10)
     with pytest.raises(HTTPException) as exc:
@@ -1262,9 +864,6 @@ def test_the_consent_gate_is_checked_before_the_cap(dictation):
 
 
 def test_a_spent_allowance_refuses_with_a_429_and_uploads_nothing_to_a_provider(dictation):
-    """A 429 AND NOT A 403, because this clears itself at midnight India time and the sentence says so.
-    A 403 would tell a client this account may never do this, which is what the consent gate means and
-    this does not."""
     dictation.state.allowance = Allowance(day="2026-08-12", limit=40, used=40)
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
@@ -1279,9 +878,6 @@ def test_a_spent_allowance_refuses_with_a_429_and_uploads_nothing_to_a_provider(
 
 
 def test_the_refusal_detail_is_a_sentence_and_not_a_dictionary(dictation):
-    """The Android control prints ``detail`` verbatim for every answer that is not the route's own 503,
-    so a dict here would put a Python repr in front of somebody in a village. The machine-readable copy
-    of the same facts is on the 200 path and on ``GET /dictation-allowance``."""
     dictation.state.allowance = Allowance(day="2026-08-12", limit=40, used=41)
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
@@ -1293,9 +889,6 @@ def test_the_refusal_detail_is_a_sentence_and_not_a_dictionary(dictation):
 
 
 def test_a_clip_refused_for_size_does_not_consume_an_allowance(dictation):
-    """It never reached a provider, so nothing was spent. Charging for it would make the ceiling arrive
-    early for a reason the designer cannot see, and their next move — a shorter recording — would cost
-    them twice."""
     dictation.state.allowance = Allowance(day="2026-08-12", limit=40, used=0)
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
@@ -1324,9 +917,6 @@ def test_an_empty_upload_does_not_consume_an_allowance(dictation):
 
 
 def test_a_server_with_no_provider_configured_does_not_consume_an_allowance(dictation):
-    """**THE ONE REFUSAL A DESIGNER CAN DO NOTHING WHATEVER ABOUT.** A deployment with no API key would
-    otherwise silently exhaust every designer's day, and the 503 they were shown would be replaced
-    tomorrow morning by a cap message about dictations they never got."""
     dictation.state.result = {"status": "UNAVAILABLE", "message": "Transcription unavailable: …"}
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
@@ -1341,9 +931,6 @@ def test_a_server_with_no_provider_configured_does_not_consume_an_allowance(dict
 
 @pytest.mark.parametrize("provider_status", ["COMPLETED", "EMPTY", "FAILED", "RATE_LIMITED"])
 def test_every_upload_that_reached_a_provider_is_counted(dictation, provider_status):
-    """**NOT ONLY ON SUCCESS.** The credit is spent by the call, so a run of empty clips still spends it
-    — and counting only successes would leave the ceiling uncapped for exactly the failure mode that
-    produces the most retries."""
     dictation.state.result = {"status": provider_status, "text": "", "provider": "deepgram"}
     asyncio.run(
         dictation.routes.dictate_for_workshop(
@@ -1356,11 +943,6 @@ def test_every_upload_that_reached_a_provider_is_counted(dictation, provider_sta
 def test_the_two_hundred_carries_the_allowance_so_a_phone_need_never_be_refused_to_learn_it(
     dictation,
 ):
-    """**THIS IS WHY THE CAP IS NOT JUST A 429.** A phone that can learn the ceiling only by being
-    refused has to spend a six-megabyte upload to learn it, and then another one tomorrow — the failure
-    ``DwDictationUpload.kt`` already records for the 503. With these four keys on every successful
-    dictation the handset knows from the last one whether the next is worth attempting, and can fall
-    back to its own recogniser with zero bytes uploaded."""
     dictation.state.allowance = Allowance(day="2026-08-12", limit=40, used=27)
     payload = asyncio.run(
         dictation.routes.dictate_for_workshop(
@@ -1376,10 +958,6 @@ def test_the_two_hundred_carries_the_allowance_so_a_phone_need_never_be_refused_
 def test_a_counter_that_could_not_be_written_reports_the_count_it_can_stand_behind(
     dictation, monkeypatch
 ):
-    """The transcription has already happened and the words are already in the response, so a failed
-    increment must not become a 500 for text the designer can see. What it must also not do is report an
-    invented number: the response carries the count before the attempt rather than an optimistic one."""
-
     async def _failed_spend(user_id, day):
         return None
 
@@ -1395,21 +973,6 @@ def test_a_counter_that_could_not_be_written_reports_the_count_it_can_stand_behi
 
 
 def test_the_id_less_route_transcribes_nothing_and_charges_nothing(dictation, monkeypatch):
-    """**THE DOOR BESIDE THE GATE, SHUT — AND SHUT BEFORE ANYTHING IS SPENT.**
-
-    ``POST /dictate`` carries no workshop id, so no artisan's ``dictationConsent`` could ever be
-    consulted on it: for as long as it accepted a recording, a designer refused on the gated URL was
-    transcribed on this one. Both clients have moved (Android's ``@POST("design-workshops/{id}/dictate")``
-    and the browser's required ``workshopId``), so it refuses.
-
-    A status code alone would not prove much. What makes this a retirement rather than a message is
-    everything the three tripwires assert did NOT happen: no workshop was loaded, no allowance was read,
-    no counter moved, no provider was called, and the upload was never even read into memory. A retired
-    route that still charged a designer's daily allowance would be billing for a capability it no longer
-    provides — and the designer would spend their afternoon watching the ceiling fall for dictations
-    they never got.
-    """
-
     async def _must_not_load_a_workshop(*args, **kwargs):
         raise AssertionError("the retired route has no workshop to load, and must not grow one")
 
@@ -1435,17 +998,6 @@ def test_the_id_less_route_transcribes_nothing_and_charges_nothing(dictation, mo
 
 
 def test_the_retirement_names_the_url_that_replaced_it(dictation):
-    """410 GONE, and a sentence rather than a code, because two people read this one string.
-
-    A developer whose build still posts here needs the URL and the reason; the designer holding that
-    build in a courtyard needs a next move that works this afternoon, and the Android control prints the
-    server's ``detail`` verbatim to them. It must not say "try again": no retry of this request can
-    succeed, and the thing that changes the outcome is a new build.
-
-    404 would say "this server has never had dictation" — false, and it would send an operator hunting a
-    deployment problem. 403 would say "not you" — false in the other direction, since every caller is
-    refused identically.
-    """
     with pytest.raises(HTTPException) as exc:
         asyncio.run(
             dictation.routes.dictate(
@@ -1454,7 +1006,6 @@ def test_the_retirement_names_the_url_that_replaced_it(dictation):
         )
     detail = str(exc.value.detail)
     assert_sentence(detail)
-    # The designer is told the next move in plain words; the replacement URL is not field copy.
     assert "/design-workshops/{workshop_id}/dictate" not in detail
     assert "update the app to use dictation" in detail.lower()
     assert "try again" not in detail.lower()
@@ -1462,15 +1013,6 @@ def test_the_retirement_names_the_url_that_replaced_it(dictation):
 
 
 def test_the_probe_answers_without_a_workshop_and_names_where_a_clip_goes(dictation):
-    """**THE QUESTION THE PER-WORKSHOP URL CANNOT BE ASKED**: does this deployment offer dictation?
-
-    The browser asks it before any workshop is known — the microphone is drawn on fields a designer
-    dictates into before the stage has ever been saved — so the answer cannot depend on a workshop id,
-    and this route takes none. It also spends nothing: no allowance, no provider, no database.
-
-    The payload names the gated URL because a route that says "yes, and it is over there" is the only
-    honest shape for this answer now that the URL being probed is not the URL being posted to.
-    """
     payload = asyncio.run(dictation.routes.dictation_probe(_person("DESIGNER")))
     assert payload["dictatePath"] == "/design-workshops/{workshop_id}/dictate"
     assert payload["allowancePath"] == "/design-workshops/dictation-allowance"
@@ -1480,20 +1022,9 @@ def test_the_probe_answers_without_a_workshop_and_names_where_a_clip_goes(dictat
     assert dictation.seen.spends == []
 
 
-# --------------------------------------------------------------------------------------
-# The gates: the existing ones, on the new routes
-#
-# Borrowed wholesale from tests/test_ai_layers.py, including its reasoning: the real router is mounted
-# and driven over HTTP with ``db`` replaced by a tripwire that raises the moment anything reads a
-# delegate off it. That makes the two outcomes unambiguous with no schema and no database — a refusal is
-# a 403 with the tripwire never touched (so the gate fired before any work), and an authorisation is the
-# tripwire raising (so every guard passed and the handler body began). "Not a 403" would also pass for a
-# route that 404s for an unrelated reason; these two cannot.
-# --------------------------------------------------------------------------------------
-
 
 class _DatabaseTouched(Exception):
-    """The route's guards all passed and its body started working."""
+    pass
 
 
 class _Tripwire:
@@ -1506,12 +1037,6 @@ _CALLER: dict[str, object] = {"user": None}
 
 @pytest.fixture
 def api(monkeypatch):
-    """The design-workshop router, mounted with every module's ``db`` rebound to the tripwire.
-
-    The modules do ``from app.core.db import db``, so each holds its OWN reference and patching the
-    source alone would miss all of them — including ``app.services.dictation_cap`` and
-    ``app.services.dictation_consent``. Rebinding by identity finds every one already imported.
-    """
     import sys
 
     import httpx
@@ -1565,9 +1090,6 @@ def api(monkeypatch):
     _CALLER["user"] = None
 
 
-#: A real multipart body, because FastAPI validates the form parts BEFORE the handler runs — a JSON
-#: body would 422 on the missing ``file`` and the designer gate would never be reached at all, so the
-#: test would pass for the wrong reason.
 CLIP = {"file": ("dictation.webm", b"\x00" * 32, "audio/webm")}
 
 CONSENT_AND_DICTATION = [
@@ -1575,9 +1097,6 @@ CONSENT_AND_DICTATION = [
     ("POST", "/design-workshops/wsp_1/dictate", None, CLIP),
     ("GET", "/design-workshops/dictation-allowance", None, None),
 ]
-# ``POST /design-workshops/dictate`` is deliberately NOT in that list any more. It is retired, so it
-# neither refuses by rank nor reaches a handler that works — it answers every caller identically, which
-# is what the two tests at the end of this file assert instead.
 
 
 @pytest.mark.parametrize(("method", "path", "body", "files"), CONSENT_AND_DICTATION)
@@ -1585,15 +1104,6 @@ CONSENT_AND_DICTATION = [
 def test_only_the_designer_set_may_record_a_consent_or_spend_a_dictation(
     api, role, method, path, body, files
 ):
-    """``_require_designer``, on every one of them, and PROFESSOR is the account that proves it is a SET.
-
-    ``DESIGN_WORKSHOP_ROLES`` is {DESIGNER, ADMIN, MASTER_ADMIN}. A PROFESSOR sits at rank 40, ABOVE
-    DESIGNER's 35, so every "this tier and above" spelling of the rule lets them in and the set does
-    not — a researcher alone cannot prove the distinction, because the ladder refuses them too.
-
-    The tripwire proves the refusal came from the gate rather than from a stray 403 later on: the
-    handler never read a delegate off the database.
-    """
     outcome = api(role, method, path, body, files=files)
     assert outcome.reached is False
     assert outcome.status_code == 403
@@ -1601,17 +1111,10 @@ def test_only_the_designer_set_may_record_a_consent_or_spend_a_dictation(
 
 @pytest.mark.parametrize(("method", "path", "body", "files"), CONSENT_AND_DICTATION)
 def test_a_designer_reaches_the_handler_and_then_the_database(api, method, path, body, files):
-    """Past ``_require_designer``, the consent write and the workshop-scoped dictation both meet
-    ``load_workshop_or_404`` — the workshop's own access check, where being the creator, an admin or a
-    granted viewer is decided. No new gate is invented for either. The one id-less route left in the
-    list has no workshop to load and meets the allowance read instead, which is its first act."""
     assert api("DESIGNER", method, path, body, files=files).reached is True
 
 
 def test_the_consent_route_refuses_a_decision_nobody_can_record(api):
-    """NOT_RECORDED is refused by the request body itself, so the tripwire is never touched: the
-    workshop is not even loaded for a decision that could not be stored. It is the absence of an answer,
-    and the message names REFUSED as the way to take a consent back."""
     outcome = api(
         "DESIGNER",
         "POST",
@@ -1625,16 +1128,6 @@ def test_the_consent_route_refuses_a_decision_nobody_can_record(api):
 
 @pytest.mark.parametrize("decision", ["MAYBE", "granted", "", "yes"])
 def test_the_consent_route_refuses_a_token_postgres_would_have_rejected(api, decision):
-    """The token reaches a Postgres enum column, so anything outside the three values was not merely
-    stored wrong — Prisma refuses it and the route answered a bare 500, which reads to a client as "the
-    server is broken" rather than "that is not an answer". The same failure
-    ``DesignWorkshopUpdate._known_status_and_template`` was written for, one column over.
-
-    Note ``"granted"``: the body normalises case before deciding, so a lower-case token from a client is
-    accepted as GRANTED rather than refused — which is the opposite of :func:`consent_of`'s rule on the
-    READ side, and deliberately so. A client typing a decision has somebody watching the response; a
-    stored token nobody can read has to gate.
-    """
     outcome = api(
         "DESIGNER", "POST", "/design-workshops/wsp_1/dictation-consent", {"decision": decision}
     )
@@ -1646,10 +1139,6 @@ def test_the_consent_route_refuses_a_token_postgres_would_have_rejected(api, dec
 
 
 def test_the_consent_route_refuses_an_unparseable_moment(api):
-    """``ExportRecordIn.generatedAt`` falls back to now() on a malformed value, which is right there —
-    an export's time is approximately now by definition. It is wrong here: a client that SAYS when the
-    artisan answered and is silently recorded as having said nothing produces a consent dated to the
-    sync."""
     outcome = api(
         "DESIGNER",
         "POST",
@@ -1661,10 +1150,6 @@ def test_the_consent_route_refuses_an_unparseable_moment(api):
 
 
 def test_the_consent_route_is_not_patch(api):
-    """PATCH's writable set is a hand-written tuple copied in a loop that records neither the actor nor
-    the moment, and its schema documents itself as the route for "an admin correcting a list entry
-    without opening the stage". A value whose entire point is who set it and when cannot ride it — so
-    the field is not accepted there, and a client that tries is told rather than silently ignored."""
     outcome = api(
         "DESIGNER",
         "PATCH",
@@ -1675,28 +1160,9 @@ def test_the_consent_route_is_not_patch(api):
     assert outcome.status_code == 422
 
 
-# --------------------------------------------------------------------------------------
-# The retired door, and the probe that has to survive it
-#
-# These run over HTTP rather than against the functions, because what they are about is ROUTING: which
-# route object answers a request, which is a property of the table and not of any handler. The tripwire
-# is what makes the answer unambiguous — a route that reads the database has, by definition, not been
-# answered by either of the two id-less routes, neither of which touches it.
-# --------------------------------------------------------------------------------------
-
 
 @pytest.mark.parametrize("role", ["DESIGNER", "RESEARCHER", "PROFESSOR"])
 def test_the_retired_url_refuses_every_caller_identically(api, role):
-    """410 for all three ranks, and NOT 403 for the two that ``_require_designer`` turns away.
-
-    The rank gate is deliberately not consulted here. "Running a design workshop requires Designer
-    access or above" is a true sentence about a route that works and a misleading one about a route that
-    is gone: it names getting access as the next move, and getting access to this URL would achieve
-    nothing. What every caller needs to be told is the same thing — the address moved.
-
-    The tripwire proves the refusal is the route's own and not a 410 from somewhere further in: nothing
-    read a delegate off the database, so no workshop was loaded and no allowance was counted.
-    """
     outcome = api(role, "POST", "/design-workshops/dictate", None, files=CLIP)
     assert outcome.reached is False
     assert outcome.status_code == 410
@@ -1704,20 +1170,6 @@ def test_the_retired_url_refuses_every_caller_identically(api, role):
 
 
 def test_the_capability_probe_is_answered_by_its_own_route_and_never_by_the_wildcard(api):
-    """**THE REGRESSION THIS WHOLE PAIR OF ROUTES EXISTS FOR, AND IT COST A FEATURE ONCE.**
-
-    ``serverOffersRoute`` in ``frontend/lib/designWorkshops.ts`` GETs ``/design-workshops/dictate`` and
-    reads only the status: 404 means "this deployment has no dictation" and anything else means it has.
-    A POST-only ``/dictate`` cannot answer a GET, and ``{workshop_id}`` matches any single segment — so
-    the probe used to full-match ``GET /{workshop_id}``, look up a workshop whose id is "dictate", and
-    get a 404 out of ``load_workshop_or_404``. The browser concluded there was no dictation on the
-    server and rendered NO MICROPHONE AT ALL wherever the browser has no ``SpeechRecognition`` of its
-    own — Firefox ships none, which is precisely the case the server fallback was built for.
-
-    ``reached is False`` is the whole assertion: the literal route answers, so nothing looks up a
-    workshop called "dictate". A 200 alone would not catch a regression here, because a deployment that
-    happened to hold such a row would also answer 200 — from the wrong route.
-    """
     outcome = api("DESIGNER", "GET", "/design-workshops/dictate")
     assert outcome.reached is False, "the wildcard workshop route swallowed the probe again"
     assert outcome.status_code == 200
@@ -1725,45 +1177,15 @@ def test_the_capability_probe_is_answered_by_its_own_route_and_never_by_the_wild
 
 
 def test_the_probe_never_answers_404_for_a_rank(api):
-    """A researcher's probe must not read as "this deployment has no dictation".
-
-    The probe cannot tell a 403 from a 200 — both mean "offered" — so gating this route by rank would
-    change no client's behaviour. What would be a real defect is a 404 for anybody, because that is the
-    one status the browser acts on by hiding the control.
-    """
     for role in ("DESIGNER", "RESEARCHER", "PROFESSOR"):
         assert api(role, "GET", "/design-workshops/dictate").status_code != 404
 
-
-# --------------------------------------------------------------------------------------
-# …and the same two questions asked of the WHOLE API
-#
-# **THE FIXTURE ABOVE MOUNTS THIS ROUTER ALONE, AND THAT IS PRECISELY THE COLLISION IT CANNOT SEE.**
-# Route order decides which handler answers, and order is a property of the assembled application — two
-# routers can share the ``/design-workshops`` prefix, and the one mounted FIRST wins. ``app/api/router.py``
-# carries a note recording that exact failure in production: ``design_workshops``' ``GET /{workshop_id}``
-# swallowed ``/design-workshops/eligible-viewers``, answered 404 "Record not found", and left the admin's
-# designer picker empty on a server that had the route. A future router mounted above this one would
-# swallow the probe again and every test above would still pass.
-#
-# The only other assertion against a fully mounted application lives in ``tests/test_workshop_audio.py``,
-# which SKIPS ITSELF without a local Postgres — so on a laptop with no database, and in any CI job
-# without one, nothing executed it at all. These two need no database: the tripwire proves the answer
-# came from a route that reads none.
-# --------------------------------------------------------------------------------------
 
 
 _WHOLE_API: list = []
 
 
 def _whole_api():
-    """Every router in ``app/api/router.py``, in its own mounting order, assembled once.
-
-    Once and not per test: twenty-eight routers with their response models cost a couple of seconds to
-    build, which is the same reason ``tests/test_permission_matrix.py`` holds its application at module
-    level. Nothing request-scoped lives on it — the caller comes from ``_CALLER`` and the database from
-    the fixture below.
-    """
     if not _WHOLE_API:
         from fastapi import FastAPI
 
@@ -1779,22 +1201,12 @@ def _whole_api():
 
 @pytest.fixture
 def mounted(monkeypatch):
-    """The whole API, driven over HTTP, with every module's ``db`` rebound to the tripwire.
-
-    The same rebinding as the ``api`` fixture and for its reason: modules do ``from app.core.db import
-    db`` and each holds its own reference, so patching the source alone would miss all of them.
-    """
     import sys
 
     import httpx
 
     import app.core.db as core_db
 
-    # BUILT BEFORE THE TRIPWIRE IS INSTALLED, AND THE ORDER IS NOT COSMETIC. Assembling the whole API
-    # imports every route module for the first time, and at least one of them reads a delegate off ``db``
-    # while it is being imported — with the tripwire already in place that raises during fixture SETUP,
-    # which pytest reports as an ERROR in a test that never ran. Building first also means the rebinding
-    # loop below sees the modules this import has just added.
     application = _whole_api()
 
     tripwire = _Tripwire()
@@ -1832,13 +1244,6 @@ def mounted(monkeypatch):
 
 
 def test_the_probe_is_answered_by_its_own_route_on_the_whole_api(mounted):
-    """The microphone's existence, asserted against the application a deployment actually serves.
-
-    ``reached is False`` is again the whole assertion: the literal route answers, so nothing looked up a
-    workshop called "dictate". If any router mounted before this one grows a ``GET /{something}`` at the
-    ``/design-workshops`` prefix, this is the test that fails — and the alternative is Firefox users
-    finding no microphone on a build where every unit test passed.
-    """
     outcome = mounted("DESIGNER", "GET", "/design-workshops/dictate")
     assert outcome.reached is False, "something ahead of the probe swallowed it"
     assert outcome.status_code == 200
@@ -1846,57 +1251,29 @@ def test_the_probe_is_answered_by_its_own_route_on_the_whole_api(mounted):
 
 
 def test_the_retired_url_is_still_retired_on_the_whole_api(mounted):
-    """The other half: nothing mounted elsewhere has put a working handler back at the shut door."""
     outcome = mounted("DESIGNER", "POST", "/design-workshops/dictate", files=CLIP)
     assert outcome.reached is False
     assert outcome.status_code == 410
     assert "Update the app to use dictation" in outcome.detail
 
 
-# --------------------------------------------------------------------------------------
-# 9. The gate for STORED recordings: whose workshop is this file, and may it be sent
-#
-# The half of this feature that was missing entirely. Consent gated the thirty-second dictation and
-# not the eleven-minute interview, so an artisan who said no had their recording sent anyway — by
-# `media_queue.enqueue_media_processing_jobs`, which is where every transcription job in this system
-# is created and which read no consent column.
-#
-# ALL PURE. The classification is a function of two columns on a row, and the verdict is a function of
-# a consent already read, so both are asserted here with no database — which is the point, because the
-# defect they close was invisible to 2,344 passing tests.
-# --------------------------------------------------------------------------------------
-
 
 def _media(**columns):
-    """A media row as the gate reads it. A dict, because ``tagged_workshop_id`` accepts either."""
     return {"id": "media-1", **columns}
 
 
 def test_a_design_workshop_upload_names_its_workshop_in_the_columns_it_already_sends():
-    """The lookup that was called impossible. Both clients have always sent these two values.
-
-    The recorded reason the queue was not gated is that ``MediaFile`` has no foreign key to
-    ``DesignWorkshop``. True, and it does not follow that the workshop is unknowable: every
-    design-workshop upload arrives tagged, and the tag carries the id.
-    """
     row = _media(linkedRecordType="designWorkshop", linkedRecordId="ws-7")
     assert dictation_consent.tagged_workshop_id(row) == "ws-7"
 
 
 def test_the_tag_is_read_whatever_case_a_client_spelled_it_in():
-    """``linkedRecordType`` is a free string that nothing on the server normalises — the handset
-    constant's own docstring says two spellings would file one workshop's photographs in two buckets.
-    Matching loosely can only ever ADD a consent check, so it is the safe direction to be lax in."""
     assert dictation_consent.tagged_workshop_id(
         _media(linkedRecordType="  DesignWorkshop  ", linkedRecordId=" ws-7 ")
     ) == "ws-7"
 
 
 def test_a_recording_that_belongs_to_no_design_workshop_is_left_alone():
-    """RULE 4, AND IT IS THE ONE A FAIL-CLOSED CHANGE IS MOST LIKELY TO BREAK. A questionnaire
-    interview clip has been transcribed automatically since long before this consent existed, and no
-    answer about a design workshop says anything about it. Refusing it would stop the repository's
-    oldest working pipeline in the name of a permission nobody was asked for."""
     for row in (
         _media(linkedRecordType="questionnaireInterview", linkedRecordId="int-1"),
         _media(linkedRecordType=None, linkedRecordId=None),
@@ -1919,8 +1296,6 @@ def test_an_unanswered_workshop_sends_because_consent_is_assumed_by_default():
 
 
 def test_a_refused_recording_says_the_audio_is_still_kept():
-    # The alternative is true of THIS send and of no other: a refused transcription still leaves the
-    # audio, because the consent question tells the artisan the recording is kept to be listened to.
     verdict = dictation_consent.verdict_for(
         dictation_consent.DictationConsent.REFUSED, workshop_id="ws-7"
     )
@@ -1937,8 +1312,6 @@ def test_a_refusal_on_record_gets_the_other_sentence_and_never_says_ask_again():
 
 
 def test_a_workshop_whose_consent_could_not_be_read_refuses():
-    """A FAILED READ STILL FAILS CLOSED: ``None`` is not "no answer" — it is "I cannot tell", and the
-    store that failed may hold a refusal. Nothing is sent and the sentence says to ask again."""
     verdict = dictation_consent.verdict_for(None, workshop_id="ws-gone")
     assert verdict.may_send is False
     assert verdict.refusal == dictation_consent.UNREADABLE
@@ -1954,8 +1327,6 @@ def test_a_granted_workshop_may_send_and_carries_no_sentence():
 
 
 def test_a_verdict_cannot_refuse_without_a_sentence_to_show():
-    """A refusal with nothing to say reaches a designer as a blank dialog. Refused by construction,
-    in the shape ``Send.__post_init__`` already uses for the same failure."""
     with pytest.raises(dictation_consent.ConsentRuleViolation):
         dictation_consent.SendVerdict(dictation_consent.SendDecision.REFUSED)
     with pytest.raises(dictation_consent.ConsentRuleViolation):
@@ -1965,10 +1336,6 @@ def test_a_verdict_cannot_refuse_without_a_sentence_to_show():
 
 
 def test_the_recording_refusal_never_mentions_dictation_or_typing_the_words_in():
-    """The defect ``Send`` was parameterised to end, in its newest form. An eleven-minute interview
-    is not a dictation and there is nothing to type instead of one — telling a designer to "type the
-    words in" about an artisan's recorded explanation is the same wrong sentence that was being shown
-    for captions."""
     refusal = dictation_consent.verdict_for(
         dictation_consent.DictationConsent.REFUSED, workshop_id="ws-7"
     ).refusal
@@ -1977,9 +1344,6 @@ def test_the_recording_refusal_never_mentions_dictation_or_typing_the_words_in()
 
 
 def test_a_transcript_on_its_way_to_openai_names_openai_and_not_the_transcription_service():
-    """``POST /media/{id}/refine-transcript`` posts the artisan's words to a DIFFERENT company than
-    the one that produced them. A refusal naming the wrong recipient is the same defect in a smaller
-    font — see ``dictation_consent.Send``."""
     refusal = dictation_consent.verdict_for(
         dictation_consent.DictationConsent.REFUSED,
         workshop_id="ws-7",
@@ -1990,28 +1354,6 @@ def test_a_transcript_on_its_way_to_openai_names_openai_and_not_the_transcriptio
 
 
 def test_the_queue_reads_consent_again_before_it_fetches_a_single_byte():
-    """THE SECOND DEFENCE, AND THE ORDER INSIDE IT IS THE ASSERTION.
-
-    ``media_queue._process_job`` re-reads consent at the moment of sending, because the enqueue check
-    alone cannot see a withdrawal: a job queued under a grant sits in the table until the off-peak
-    window opens, and ``dictation_consent``'s own docstring names that artisan — agrees on the 3rd,
-    changes their mind on the 9th.
-
-    What is pinned here is that the refusal happens BEFORE ANY OF THE OBJECT READS. A gate placed
-    after one would still not send, but it would pull the whole recording out of object storage
-    first, on every refused clip, every pass — and on a fleet whose recordings run past an hour that
-    is the difference between a cheap refusal and a bandwidth bill. The tripwire is the fetch, so
-    this test fails both if the send happens and if the ordering is reversed.
-
-    THREE TRIPWIRES, NOT ONE, AND THAT IS DELIBERATE. The transcription path no longer calls
-    ``get_object_bytes`` at all — it streams the object to a temp file through
-    ``s3.download_to_temp`` after sizing it with ``s3.head_object`` — so a test that armed only the
-    old name would have gone on passing while asserting nothing whatsoever. All three are armed, and
-    ``head_object`` is armed too because a HEAD is still a round trip spent on a recording nobody may
-    send.
-
-    No database and no network: the verdict, the two writers and every fetch are replaced.
-    """
     import asyncio
 
     from app.services import media_queue
@@ -2083,20 +1425,6 @@ def test_the_queue_reads_consent_again_before_it_fetches_a_single_byte():
 
 
 def test_a_measurement_job_is_not_touched_by_the_consent_gate():
-    """MEASUREMENT sends a photograph of an object on a grid sheet to a vision model. No consent
-    question in this repository asks about that, and gating it on an answer about recordings would be
-    the overreach this module's own ``Send.material`` note argues against — in the other direction.
-
-    Asserted by letting the byte fetch run: if the gate had claimed this job, the fetch would never be
-    reached and the recorded call list would be empty.
-
-    MEASUREMENT IS ALSO THE ONE PATH THAT STILL READS THE WHOLE OBJECT, and deliberately: a vision
-    model is sent base64 of the entire image inside a JSON body, so there is nothing to stream into.
-    What it gained is a size gate in front of that read (``media_queue.MAX_MEASUREMENT_BYTES``,
-    lowered by what the box says is free), and ``head_object`` is stubbed here to answer "storage
-    will not say" so this test stays about the consent gate and does not become a test of the
-    ceiling.
-    """
     import asyncio
 
     from app.services import media_queue
@@ -2104,12 +1432,6 @@ def test_a_measurement_job_is_not_touched_by_the_consent_gate():
     reached: list[str] = []
 
     def _fetch(key, **_kwargs):
-        # ``**_kwargs`` IS THE CEILING, NOT SLOPPINESS (2026-09-03). The MEASUREMENT arm now calls
-        # ``get_object_bytes(objectKey, max_bytes=ceiling)``, so a stub pinned to the old
-        # one-positional-argument signature raises TypeError inside the worker and this test fails
-        # for a reason that has nothing to do with the consent gate it is about. The bound itself is
-        # not this file's subject — ``head_object`` is stubbed to "storage will not say" exactly so
-        # this case stays off it; ``tests/test_media_convert_bound`` is where the ceilings live.
         reached.append(key)
         return b"jpegbytes"
 
@@ -2162,10 +1484,6 @@ def test_a_measurement_job_is_not_touched_by_the_consent_gate():
     assert reached == ["media/u/2/grid.jpg", "applied"], reached
 
 
-# --------------------------------------------------------------------------------------
-# The kept clip (0.0.4): a dictation answers with `mediaId`, so its transcript opens under the field
-# --------------------------------------------------------------------------------------
-
 
 def test_a_dictation_answers_with_the_kept_clips_media_id(dictation):
     payload = asyncio.run(
@@ -2190,7 +1508,6 @@ def test_a_dictation_nobody_heard_answers_with_no_media_id(dictation):
 
 @pytest.fixture
 def keeping(monkeypatch):
-    """`_keep_dictation` with S3, the MediaFile table, the turn store and the queue replaced."""
     from app.api.routes import design_workshops as routes
     from app.services import s3, transcript_insights, transcript_pipeline
 

@@ -1,8 +1,3 @@
-/**
- * "Log today" on a prototype (owner, A15, 2026-10-17) — the pure half, ported by Android's
- * `dwLastStageName`.
- */
-
 import { blankRow, type DwRow } from "@/lib/designWorkshops";
 
 export const PROTOTYPE_STAGE = "PROTOTYPE_DEVELOPMENT";
@@ -14,7 +9,6 @@ export function localToday(now: Date = new Date()): string {
 
 export const prototypeRefOf = (row: DwRow): string => String(row._entryId ?? row._clientKey ?? "");
 
-/** The stage name logged most recently for `prototype`, by log date then position. */
 export function lastStageName(prototype: DwRow, logs: readonly DwRow[]): string {
   const keys = new Set([prototype._entryId, prototype._clientKey].filter(Boolean).map(String));
   let best: { date: string; index: number; name: string } | null = null;

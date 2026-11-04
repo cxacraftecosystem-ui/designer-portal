@@ -1,23 +1,3 @@
-"""An interview's ``updatedAt`` is its version, answers included, and the precondition is race-free.
-
-WHY THIS EXISTS
-================
-
-The handset queues an interview correction with the ``updatedAt`` it was composed against, and the
-server refuses it with a 409 when the interview has moved. That check was only as good as the
-version it read, and it was blind in two ways:
-
-* answers live in ``QuestionnaireResponse``, so a second interviewer adding or changing answers
-  never moved the interview's ``updatedAt`` — a correction composed before their answers passed the
-  precondition and replaced what they had written;
-* the check compared against a row read before the transaction, so two corrections composed against
-  one version and replayed together could both pass.
-
-``upsert_responses`` now bumps the interview whenever it writes an answer, and the route claims the
-version with a compare-and-set inside its transaction. No database: the delegates are fakes, which
-answer the questions of ORDER and of "was a bump written" more directly than Postgres can.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -35,8 +15,6 @@ STORED_AT = datetime(2026, 1, 5, 9, 0, 0, tzinfo=UTC)
 
 
 class _Delegate:
-    """Records every call; ``update_many`` answers how many rows matched."""
-
     def __init__(self, *, matched: int = 1, rows: list[Any] | None = None, current: Any = None):
         self.matched = matched
         self.rows = rows or []
@@ -64,10 +42,6 @@ class _Delegate:
         return None
 
 
-# --------------------------------------------------------------------------------------
-# The compare-and-set
-# --------------------------------------------------------------------------------------
-
 
 async def test_no_precondition_claims_nothing():
     delegate = _Delegate()
@@ -89,7 +63,6 @@ async def test_a_claim_moves_the_version_only_while_it_still_holds_the_value_rea
 
 
 async def test_a_lost_claim_is_the_same_409_as_a_stale_precondition():
-    """Two corrections composed against one version: the second finds the row already moved."""
     moved = datetime(2026, 1, 5, 9, 0, 5, tzinfo=UTC)
     delegate = _Delegate(matched=0, current=SimpleNamespace(id="iv-1", updatedAt=moved))
     with pytest.raises(HTTPException) as refused:
@@ -102,11 +75,9 @@ async def test_a_lost_claim_is_the_same_409_as_a_stale_precondition():
 
 
 async def test_a_version_half_a_second_off_is_refused_although_the_assert_would_pass_it():
-    """The assert's one-second slack would let a correction composed against the version BEFORE
-    another interviewer's quick save through; the claim is exact to the millisecond."""
     stored = datetime(2026, 1, 5, 9, 0, 0, 500_000, tzinfo=UTC)
     record = SimpleNamespace(id="iv-1", updatedAt=stored)
-    records_service.assert_expected_updated_at(record, STORED_AT)  # passes: within a second
+    records_service.assert_expected_updated_at(record, STORED_AT)
     delegate = _Delegate(matched=1)
     with pytest.raises(HTTPException) as refused:
         await records_service.claim_expected_updated_at(delegate, record, STORED_AT)
@@ -116,7 +87,6 @@ async def test_a_version_half_a_second_off_is_refused_although_the_assert_would_
 
 
 async def test_the_claim_compares_to_the_millisecond_the_column_stores():
-    """A naive value, or one carrying microseconds the column drops, still matches its own version."""
     record = SimpleNamespace(id="iv-1", updatedAt=datetime(2026, 1, 5, 9, 0, 0, 123_000, tzinfo=UTC))
     delegate = _Delegate(matched=1)
     await records_service.claim_expected_updated_at(
@@ -143,10 +113,6 @@ def test_the_interview_route_asks_then_claims_before_any_other_write():
     wrote = body.index("guard_record_edit(")
     assert asked < claimed < wrote
 
-
-# --------------------------------------------------------------------------------------
-# Answers move the interview's version
-# --------------------------------------------------------------------------------------
 
 
 def _client(existing: list[Any], question_ids: list[str]) -> SimpleNamespace:
@@ -183,7 +149,6 @@ async def test_a_changed_answer_moves_the_interview_version():
 
 
 async def test_resending_identical_answers_leaves_the_version_alone():
-    """A save that changed nothing must not make every queued correction on other phones conflict."""
     stored = SimpleNamespace(id="r-1", questionId="q-1", answerText="same", notes=None, answeredById="u-2")
     client = _client([stored], ["q-1"])
     await questionnaire_routes.upsert_responses(

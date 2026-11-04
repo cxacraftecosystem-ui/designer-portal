@@ -5,26 +5,6 @@ import android.content.ContextWrapper
 import android.content.SharedPreferences
 import java.io.File
 
-/**
- * A `Context` with just enough of the platform under it for a [TokenStore] to remember a profile and
- * a token, and for the outbox to find its files directory — and nothing else.
- *
- * WHY THIS EXISTS. The unit-test `android.jar` answers every framework call with a default
- * (`isReturnDefaultValues = true`), so `ContextWrapper(null).getSharedPreferences(…)` is null and a
- * [TokenStore] built on it throws on its first read. That was fine while the password gate's tests
- * only asked a failure how to classify itself; the three behaviours pinned beside this file —
- * `syncOutbox` holding back, the join-card flusher holding and resuming, and the change-password
- * answer's token being adopted — are all decisions taken by READING the stored profile or token, so
- * they need a store that actually stores.
- *
- * [getFilesDir] is a real directory for the same reason in the other direction: left to the stub it
- * is null, and `File(null, "outbox")` is a RELATIVE path — the outbox would create its folders in
- * whatever directory Gradle ran the tests from.
- *
- * Everything else still answers the stub's default, deliberately. In particular there is no
- * `ConnectivityManager`, so `ConnectivityObserver.isOnline` is false here and no pass can reach for a
- * network that a JVM test does not have.
- */
 internal class InMemoryContext(private val files: File) : ContextWrapper(null) {
 
     private val stores = HashMap<String, InMemoryPreferences>()
@@ -37,7 +17,6 @@ internal class InMemoryContext(private val files: File) : ContextWrapper(null) {
         synchronized(stores) { stores.getOrPut(name.orEmpty()) { InMemoryPreferences() } }
 }
 
-/** `SharedPreferences` as a map. An edit lands when it is applied, as on a handset. */
 internal class InMemoryPreferences : SharedPreferences {
 
     private val values = HashMap<String, Any?>()
@@ -81,7 +60,6 @@ internal class InMemoryPreferences : SharedPreferences {
 
         private fun stage(key: String?, value: Any?): SharedPreferences.Editor {
             if (key != null) {
-                // A null value is a removal, as the platform reads it.
                 if (value == null) removed += key else staged[key] = value
             }
             return this

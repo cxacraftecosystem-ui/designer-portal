@@ -1,16 +1,3 @@
-"""Aadhaar ONLINE authentication (AUA through an ASA), against a fake ASA and TEST keys.
-
-No database: the OTP throttle is replaced by a no-op here and exercised for real in
-``test_aadhaar_api.py``. What is proved:
-
-* the Auth XML is signed by the AUA key and the signature verifies;
-* the PID block is encrypted as Auth API 2.5 §4.1 says — the TEST UIDAI private key recovers the
-  session key from ``Skey``, and with it the PID (holding the OTP) from ``Data`` and its SHA-256
-  from ``Hmac``;
-* success, OTP failure, UIDAI error codes mapped to plain words, a timeout, an unsigned or
-  wrongly signed answer, e-KYC, and the boot check refusing incomplete configuration.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -31,7 +18,6 @@ from app.services.aadhaar.identity import AadhaarError
 from app.services.aadhaar.online import config as online_config, messages, service, throttle
 from app.services.aadhaar.online.errors import OPERATOR_PROBLEM, message_for
 
-#: A syntactically valid Aadhaar number (Verhoeff) made up for the tests, and a valid 16-digit VID.
 TEST_UID = "234123412346"
 TEST_VID = "9999123412341234"
 
@@ -116,8 +102,6 @@ def _verify(issued, uid=TEST_UID, otp="123456", **kwargs):
     )
 
 
-# ── the request on the wire ──────────────────────────────────────────────────────────────────
-
 
 def test_auth_request_is_signed_and_its_pid_decrypts_with_the_uidai_key(keys):
     fake = FakeAsa(aua=keys["aua"], uidai_encryption=keys["enc"], uidai_signing=keys["sig"])
@@ -132,7 +116,7 @@ def test_auth_request_is_signed_and_its_pid_decrypts_with_the_uidai_key(keys):
     assert root.find("Uses").get("pi") == "y"
     assert root.find("Skey").get("ci") == keys["enc"].certificate.not_valid_after_utc.strftime("%Y%m%d")
     data = base64.b64decode(root.find("Data").text)
-    assert data[:19] == ts.encode()  # ts travels in front of the ciphertext
+    assert data[:19] == ts.encode()
     pid, mac = fake.decrypt_pid(root)
     assert mac == hashlib.sha256(pid).digest()
     pid_root = etree.fromstring(pid)
@@ -140,7 +124,6 @@ def test_auth_request_is_signed_and_its_pid_decrypts_with_the_uidai_key(keys):
     assert pid_root.find("Pv").get("otp") == "654321"
     assert pid_root.find("Demo/Pi").get("name") == "Kamla Devi"
     assert pid_root.find("Demo/Pi").get("mv") == "100"
-    # Neither the OTP nor the name is anywhere in the clear on the wire.
     assert b"654321" not in signed and b"Kamla" not in signed
 
 
@@ -159,8 +142,6 @@ def test_otp_request_routes_on_the_first_two_digits_of_an_aadhaar(asa):
     assert issued.last4 == TEST_UID[-4:]
     assert TEST_UID not in str(issued.as_payload())
 
-
-# ── outcomes ─────────────────────────────────────────────────────────────────────────────────
 
 
 def test_correct_otp_authenticates(asa):
@@ -247,12 +228,10 @@ def test_ekyc_returns_uidais_name_year_and_gender(asa, keys, monkeypatch):
     identity = _verify(issued)
     assert identity.method == "ONLINE_EKYC"
     assert identity.name == TEST_NAME and identity.birth_year == 1987 and identity.gender == "F"
-    assert identity.last4 == TEST_LAST4  # from UIDAI's masked uid, not from what was typed
+    assert identity.last4 == TEST_LAST4
     kyc = etree.fromstring(asa.seen[-1][1])
     assert kyc.tag == "Kyc" and kyc.get("de") == "Y" and kyc.get("rc") == "Y"
 
-
-# ── the boot check ───────────────────────────────────────────────────────────────────────────
 
 
 def _settings(**overrides) -> Settings:

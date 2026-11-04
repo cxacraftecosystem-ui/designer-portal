@@ -1,47 +1,5 @@
 "use client";
 
-/**
- * One design workshop: its header, and the 22-stage index with completeness against each stage.
- *
- * THE LIST OF STAGES IS NOT WRITTEN HERE. It is `registry.stages`, fetched once per tab from
- * `GET /design-workshops/schema` and cached by version. A twenty-third stage, or a renamed one,
- * appears on this page — and on Android — with no client change, which is the entire reason the
- * field registry is served rather than duplicated.
- *
- * WHAT "COMPLETE" MEANS, and why the page says it out loud. `stage_completeness` scores BASIC-tier
- * fields only, because BASIC is the tier the report actually needs and the tiers exist so a
- * workshop held in a village without mains power can still produce one. A stage with no required
- * fields at all therefore reads 100%, not 0% — dividing by zero to decide whether a designer may
- * submit is how a stage becomes permanently unsubmittable. Nobody reading a progress bar guesses
- * that rule, so the legend under the list states it.
- *
- * THE LOCAL DRAFT IS READ FIRST. `lib/designWorkshopStore` holds the whole workshop in IndexedDB, so
- * this index renders — with real per-stage progress — on a laptop that has had no signal since the
- * tab was opened, and the server read that follows only refreshes it. Progress shown offline is
- * computed by `localStageCompleteness`, which mirrors the server's `stage_completeness` exactly: a
- * progress figure that needs a server to be honest is a progress figure that lies at the one moment
- * a designer uses it, which is deciding in a courtyard whether they can pack up.
- *
- * AND THIS IS WHERE THE WORKSHOP IS FINISHED. {@link SubmissionCard} is the deliberate final act —
- * "Mark complete", "Hand in for inspection" and, after a send-back, "Hand it back in", each writing
- * its own status through `PATCH /design-workshops/{id}` (this line said "Submit" until 2026-09-14,
- * naming a control the review loop had already renamed in this same file) —
- * and it is the ONE thing on this page that is not offline-first, for a reason its own header sets
- * out. It is never gated on completeness: requirement 12 asks for partial submission in as many
- * words, so the control is offered with required fields outstanding and NAMES how many.
- *
- * TWO THINGS THAT ACT NOW SAYS AND DID NOT, both because a reviewer found the card claiming coverage
- * it did not have:
- *
- * * WHICH ACT THE OUTSTANDING COUNT IS ABOUT. There are two refusable-sounding acts in this app and
- *   they are not the same one; {@link STAGE_CHECK_IS} and {@link WORKSHOP_STATUS_IS} name them, and
- *   this page and `/readiness` print those same two sentences rather than each paraphrasing them.
- * * WHAT THE REPOSITORY HAS NOT HEARD. The count is computed from the LOCAL draft, so it can read
- *   "No required field is outstanding" about answers only this browser holds. `unsentStages` — the
- *   figure the amber banner above already draws — is threaded into the card so the confirmation says
- *   so before the act, not after it.
- */
-
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -90,29 +48,8 @@ import { decisionKindLabel, signOffLines, type DwSignOffFacts } from "@/lib/desi
 import { readinessSummary, workshopReadiness, type WorkshopReadiness } from "@/lib/submissionReadiness";
 import { neverReconciled } from "@/lib/workshopOpenability";
 import { buildWorkshopSearchIndex, emptyWorkshopSearchIndex } from "@/lib/workshopSearch";
-/*
-  THE ONE IMPORT ON THIS PAGE THAT IS NOT A LIBRARY, AND IT IS DELIBERATE RATHER THAN LAZY.
-
-  These two sentences are the shared vocabulary for the two acts a designer can confuse for each
-  other, and the whole point of the repair that introduced them is that ONE definition serves both
-  screens — two paraphrases of "a submit is refused"/"submitting is not blocked" is the defect. A
-  `lib/` module is the right home; the lane that wrote this was allowed two files, so the definition
-  sits on the readiness screen and this page reads it. The direction is not arbitrary: that module's
-  imports are a subset of this one's, so nothing new lands in either route's bundle, whereas defining
-  them here would drag `lib/workshopSearch` and two panels into a screen that renders none of them.
-  Read the docstring above `STAGE_CHECK_IS` before changing either string — it carries the evidence
-  that the per-stage refusal is REAL, which is what stops the wording drifting back to "a submit".
-*/
 import { WORKSHOP_STATUS_IS } from "./readiness/page";
 
-/**
- * The progress bar for one stage.
- *
- * Colour never carries the meaning on its own: the percentage is printed beside the bar and the
- * state is worded ("Complete", "3 of 7 required"), so the judgement survives colour-blindness,
- * greyscale printing and forced-colours mode. `success`/`amber` are the palette's two LITERAL
- * status colours and deliberately do not invert — "done" must read identically in both themes.
- */
 function StageProgress({ score }: { score: DwStageCompleteness | undefined }) {
   const percent = score?.percent ?? 0;
   const complete = score?.isComplete ?? false;
@@ -130,7 +67,6 @@ function StageProgress({ score }: { score: DwStageCompleteness | undefined }) {
   );
 }
 
-/** One row of the stage index. */
 function StageRow({
   workshopId,
   stage,
@@ -159,8 +95,6 @@ function StageRow({
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-ink-900">{stage.title}</span>
-            {/* The source document's reviewer marked some stages as possibly droppable. Saying so
-                is what lets a designer skip one on purpose rather than worry about the gap. */}
             {stage.optionalStage ? (
               <span className="rounded-full bg-field-200 px-2 py-0.5 text-xs font-medium text-ink-700">Optional stage</span>
             ) : null}
@@ -183,11 +117,6 @@ function StageRow({
   );
 }
 
-/**
- * The draft's header in the shape this page already draws — everything except the id, which the
- * caller supplies because a workshop created offline has a local one and a synced one has the
- * server's.
- */
 function draftHeader(draft: DwDraft): Omit<DwSummary, "id"> {
   return {
     title: draft.header.title,
@@ -208,12 +137,7 @@ function draftHeader(draft: DwDraft): Omit<DwSummary, "id"> {
     sponsor: null,
     notes: draft.header.notes,
     workshopId: draft.header.workshopId,
-    // When it was handed on to the office, as the last server read said — what tells a report that is
-    // final from a SUBMITTED row written before approvals existed.
     handedOnAt: draft.header.handedOnAt ?? null,
-    // The artisan's answer as THIS DEVICE holds it, so the consent row states what is on record with
-    // no connection. See `DwDraft.consent` — a local answer is what the screen reads and is NOT what
-    // the server's gate reads, which is why the row says whether it has been sent.
     dictationConsent: draft.consent?.decision ?? "NOT_RECORDED",
     dictationConsentAt: draft.consent?.recordedAt ?? null,
     dictationConsentById: draft.consent?.recordedById ?? null,
@@ -224,63 +148,16 @@ function draftHeader(draft: DwDraft): Omit<DwSummary, "id"> {
   };
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Where this workshop came from
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * The ministry instrument that opened this workshop, as the single-record read hands it back.
- *
- * ── THREE STATES, AND THE TWO THAT LOOK ALIKE ARE THE POINT ──────────────────────────────────
- *
- * Per register, the server answers one of three things, and this type says so in the type system:
- *
- *   * the key is **absent** — this reader does not keep that register and is told nothing about it;
- *   * the key is **null**   — this reader keeps it, and no row in it names this workshop;
- *   * the key is an object  — this reader keeps it, and here is the row.
- *
- * So `undefined` and `null` are NOT interchangeable here and `?? null` would destroy the
- * distinction: absent means "say nothing", null means "say there is none". A screen that collapsed
- * the two would print "No sanction order" to a designer who was never allowed to look in the
- * register — a confident claim about a table the caller cannot read, which is rule 10 wearing the
- * opposite hat. `api/routes/design_workshops._register_provenance` is the other half of this and
- * carries the same three states in its docstring.
- *
- * ── WHY THE SHAPE IS A MAP OF HALVES AND NOT TWO NAMED FIELDS ON A PANEL ─────────────────────
- *
- * One register reaches this client today. The plan directory's half — which planned row was
- * promoted into this workshop — is the same fact from the other register and needs the same line;
- * it is missing because the module that would have to read it is fenced off from that table by
- * `backend/tests/test_annual_plan_is_not_a_workshop.py`, not because anything here is undecided.
- * Rendering "whichever halves arrived" rather than "the halves I expect" is what makes that a
- * server-side change with no client change at all — and it is the same code path that already has
- * to handle a reader who keeps only one of the two.
- *
- * ── DECLARED HERE, NOT IN `lib/designWorkshops.ts` ───────────────────────────────────────────
- *
- * `DwDetail` is where this belongs, beside `dictationConsentByName` — the key already on that type
- * for exactly this reason (a single-read-only key, optional so that a server predating it reads as
- * absent rather than as a type error). `lib/designWorkshops.ts` is outside this pass's ownership,
- * so the page narrows the payload itself rather than editing a shared type it does not own; moving
- * these two lines onto `DwDetail` and deleting the local type is the follow-up, and nothing else on
- * this screen changes when it happens.
- *
- * THE NARROWING BELOW IS A REAL CHECK AND NOT A CAST. `getDesignWorkshop` is typed, so `as` would
- * have compiled and lied about a key no declaration mentions — which is the whole failure this
- * screen exists to stop, committed against its own payload.
- */
 type DwRegisterProvenance = {
   sanctionOrder?: { sanctionOrderNo: string; sanctionOrderDate: string | null } | null;
 };
 
-/** Read the register keys off a detail payload, keeping absent and null apart. */
 function readRegisterProvenance(payload: unknown): DwRegisterProvenance {
   const found: DwRegisterProvenance = {};
   if (!payload || typeof payload !== "object") return found;
   if (!("sanctionOrder" in payload)) return found;
   const value = (payload as { sanctionOrder: unknown }).sanctionOrder;
   if (value === null) {
-    // PRESENT AND EMPTY — the reader keeps the register and it holds nothing about this workshop.
     found.sanctionOrder = null;
     return found;
   }
@@ -296,51 +173,6 @@ function readRegisterProvenance(payload: unknown): DwRegisterProvenance {
   return found;
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * The final submission
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * WHAT SUBMITTING ACTUALLY DOES, AND EVERY CLAUSE OF IT WAS READ OUT OF THE SERVER RATHER THAN
- * ASSUMED.
- *
- * This sentence is the most dangerous thing on the card, because a designer who believes a submitted
- * workshop is sealed will stop correcting it, and a designer who believes it was sent will stop
- * chasing the officer who never received it. So each clause names where it comes from:
- *
- * * **It does not lock anything.** The tokens `COMPLETE`, `SUBMITTED` and `ARCHIVED` appear in
- *   exactly two places in the whole of `backend/app` — the `DESIGN_WORKSHOP_STATUSES` frozenset that
- *   validates the PATCH body, and one comment. There is no gate anywhere that reads them.
- * * **Stages stay editable, and saving one does not un-submit it.** `save_stage` reads the status for
- *   one purpose only — `if workshop_status == "DRAFT": header["status"] = "IN_PROGRESS"` — and its own
- *   comment gives the reason in as many words: *"Correcting a typo in a submitted report should not
- *   un-submit it."* The permission helper every stage write goes through, `load_workshop_or_404`,
- *   tests `deletedAt` and the three ways in, and never the status.
- * * **Nothing is produced and nothing is sent.** `POST /{id}/report` is what makes the .docx or .pdf
- *   and it does not consult the status; no route, queue or notification in this repository reacts to
- *   a status change at all.
- *
- * What is left is a word on a record and a filter on a list — which is worth doing, and is worth
- * being honest about the size of. Stated in full here rather than summarised, because a designer only
- * reads this once and the confirmation dialog repeats the same string.
- */
-/*
-  THE STAGE COUNT IS READ, NEVER WRITTEN, and that is the whole of this function over the constant it
-  replaces.
-
-  It used to say "All 22 stages stay editable afterwards" as a literal. The list of stages is
-  `registry.stages`, served from `GET /design-workshops/schema` precisely so a twenty-third stage
-  needs no client change — and this sentence is printed inside the confirmation of every forward act
-  and again at the foot of the card, which made it the one place a registry change would turn into a
-  false promise to a designer at the moment they submit to a ministry. `readiness.stagesTotal` is
-  `registry.stages.length` (`lib/submissionReadiness.ts:473`) and the readiness screen already prints
-  it; the card is now a second reader of the same figure.
-
-  NULL IS NOT ZERO. When the registry or the local draft could not be read there is no readiness
-  object and therefore no count, and "All 0 stages stay editable" would be an absurd sentence in the
-  one dialog that must not be absurd. The claim degrades to the form that needs no number and is
-  exactly as true.
-*/
 function submissionScope(stagesTotal: number | null): string {
   const stages =
     stagesTotal === null
@@ -351,29 +183,9 @@ function submissionScope(stagesTotal: number | null): string {
   );
 }
 
-/**
- * WHAT CAN STILL BE UNDONE FROM THIS CARD, AND WHAT HAS STOPPED BEING THIS CARD'S TO UNDO.
- *
- * **REWRITTEN 2026-09-13, AND ITS PREVIOUS TEXT IS THE REASON IT HAD TO BE.** It read: *"This can be
- * undone. Reopen for editing, on this same card, puts the workshop back to In progress — the
- * repository lets any status follow any other, so nothing here is a one-way door."* That was true of
- * a server with no transition table, and its own docstring said in so many words that *"if a future
- * deploy makes SUBMITTED one-way on the server, this string is the thing that has to change first"*.
- * That deploy is this one. An irreversible act presented as reversible is the worse error.
- *
- * WHAT IS STILL TRUE: reopening is offered from Submitted and from Archived, and handing a report in
- * for inspection can be withdrawn from this card while nobody has acted on it.
- *
- * WHAT IS NOT: approving, sending back, withdrawing an approval and handing the approved report on
- * are DECISIONS. Each is taken on its own route by the office that takes it, each writes an audit
- * entry in the same transaction as the status, and none of them is undone from here. A workshop
- * under review cannot be archived — that would hide it from the officers holding it — and an
- * approved report cannot be archived either until it has been handed on or the approval withdrawn.
- */
 const SUBMISSION_IS_REVERSIBLE =
   "You can withdraw it until someone acts on it.";
 
-/** The eight members of `DesignWorkshopStatus`, in the order a workshop travels through them. */
 const DW_STATUSES: DwStatus[] = [
   "DRAFT",
   "IN_PROGRESS",
@@ -385,23 +197,11 @@ const DW_STATUSES: DwStatus[] = [
   "ARCHIVED"
 ];
 
-/**
- * One forward or backward step this card offers, and the exact status it writes.
- *
- * **ONE BUTTON PER STATUS, NEVER ONE BUTTON PER INTENTION.** `DesignWorkshopStatus` models COMPLETE
- * and SUBMITTED as two separate members and the workshops list filters on them separately, so a
- * single "Finish" control would have to pick one of them on the designer's behalf and never tell them
- * which — and the designer who later filtered the list by Submitted and could not find their workshop
- * would have no way to discover why. Each button names its status and writes that status and nothing
- * else.
- */
 type SubmissionAction = {
   status: DwStatus;
   label: string;
   icon: typeof Send;
-  /** What this act means in the designer's terms, printed under the button row. */
   meaning: string;
-  /** Primary styling for the act this card exists for; secondary for the rest. */
   primary: boolean;
 };
 
@@ -413,17 +213,6 @@ const MARK_COMPLETE: SubmissionAction = {
   primary: false
 };
 
-/**
- * THE DESIGNER'S FORWARD ACT, AND IT IS NO LONGER `SUBMITTED`.
- *
- * `SUBMIT` used to write `SUBMITTED` with the sentence *"This is the version being handed on"*. That
- * word now means THE APPROVED REPORT HAS GONE TO THE OFFICE, and it is reachable only through the
- * sanctioning authority's own route — so this control writes `PRE_SUBMISSION`, which is the same act
- * a designer was always performing: handing the work in and waiting to be told about it.
- *
- * IT IS STILL NOT GATED ON COMPLETENESS. Requirement 12 is explicit that a report may be handed in
- * part-filled, and the server consults no scorer on this transition either.
- */
 const SEND_FOR_REVIEW: SubmissionAction = {
   status: "PRE_SUBMISSION",
   label: "Hand in for inspection",
@@ -432,15 +221,6 @@ const SEND_FOR_REVIEW: SubmissionAction = {
   primary: true
 };
 
-/**
- * THE WAY BACK IN AFTER A SEND-BACK, FOR THE CASE THE STAGE SAVE CANNOT COVER.
- *
- * Ordinarily the designer does not press anything: a stage save that CHANGES something on a report
- * that was sent back hands it back in by itself — the edit IS the resubmission. This button is for
- * the correction that was not a stage edit at all (an artisan's phone number on the linked record, a
- * photograph replaced elsewhere), and it goes through the same server function, so the round counter
- * moves once either way.
- */
 const HAND_BACK_IN: SubmissionAction = {
   status: "PRE_SUBMISSION",
   label: "Hand it back in",
@@ -449,12 +229,6 @@ const HAND_BACK_IN: SubmissionAction = {
   primary: true
 };
 
-/**
- * WITHDRAWING A REPORT THE OFFICERS ARE STILL HOLDING.
- *
- * Back to In progress, which is the only way out of Pre-submission a header edit has: archiving a
- * report while officers are reading it would hide it from the people who were asked to read it.
- */
 const WITHDRAW: SubmissionAction = {
   status: "IN_PROGRESS",
   label: "Withdraw from inspection",
@@ -471,50 +245,6 @@ const REOPEN: SubmissionAction = {
   primary: false
 };
 
-/**
- * Which steps to offer from where — the CANDIDATES, before the server's graph has had its say.
- *
- * Callers want {@link actionsFor}, immediately below, which is this list filtered by
- * `dwPatchableFrom`. The two are separate functions because {@link noActionsReason} has to tell the
- * difference between a status with nothing to offer and a status whose offers were all struck out.
- *
- * NEITHER FORWARD ACT IS A PREREQUISITE FOR THE OTHER, because the server does not make it one — and
- * that is why DRAFT and IN_PROGRESS offer both rather than making a designer press Mark complete to
- * reach Hand in for inspection. From SUBMITTED only the way back is offered: demoting a submitted
- * workshop to *complete* is a distinction nobody has ever asked for, whereas reopening it is the
- * thing somebody needs the afternoon they spot an error.
- *
- * **EVERY BUTTON HERE IS CHECKED AGAINST THE SERVER'S OWN GRAPH BY `dwPatchableFrom`**, and that is
- * new on 2026-09-13. Until then any status could follow any other and this table could not be wrong;
- * now a control offering a status `update_design_workshop` refuses is a button that 422s, and the
- * mirror is what makes that impossible to write by accident. The four DECISION edges — send back,
- * approve, withdraw an approval, hand on — are not here and cannot be: each is taken on its own
- * route, by the office that takes it, with an audit row written in the same transaction.
- *
- * **AND THE SENTENCE ABOVE WAS NOT TRUE UNTIL 2026-09-14.** `dwPatchableFrom`, `DW_LEGAL_TRANSITIONS`
- * and `DW_DECISION_EDGES` were added to `lib/designWorkshops.ts` in the same change as that claim,
- * for exactly this purpose, and then nothing called them: `grep -rn dwPatchableFrom frontend/`
- * matched their definitions and this paragraph and nothing else. {@link candidatesFor} was a
- * hand-written table that happened to agree with the server, so no button 422'd — and the trap was
- * laid for the next person, who would read three separate comments promising a derivation (here,
- * `lib/designWorkshops.ts:552-555`, and `backend/app/schemas/design_workshop_review_loop.py:247-249`
- * — "impossible by construction"), tighten `LEGAL_TRANSITIONS` and its mirror together, and ship a
- * button nobody had told them was hand-maintained. {@link actionsFor} now really does filter, so the
- * derivation is a fact about the code rather than a promise in a comment.
- *
- * WHAT THE FILTER CAN AND CANNOT DO. It can only REMOVE a button the graph forbids; it cannot invent
- * one for an edge the graph allows and this table forgot. That other half stays a human
- * responsibility, and one case is deliberate rather than forgotten — ARCHIVED, below.
- *
- * ARCHIVED IS DELIBERATELY NOT OFFERED AS A DESTINATION, and it is reachable from the statuses whose
- * graph row still contains it. Archiving is not part of submitting, so a button for it here would be
- * a second, unasked-for feature whose only effect is a word. A workshop that ARRIVES archived still
- * gets the way out.
- *
- * APPROVED RETURNS AN EMPTY LIST DELIBERATELY, which is why {@link noActionsReason} exists: without
- * a sentence, the deliberate empty case and a build that does not recognise the status render
- * identically, and both read as a broken page.
- */
 function candidatesFor(status: string): SubmissionAction[] {
   switch (status) {
     case "DRAFT":
@@ -532,52 +262,21 @@ function candidatesFor(status: string): SubmissionAction[] {
     case "ARCHIVED":
       return [REOPEN, SEND_FOR_REVIEW];
     default:
-      // A status this build has never heard of, sent by a newer server. Offering a step from it would
-      // be guessing at a ladder we do not have; RULE 10 says the screen must say that rather than
-      // draw nothing and read as a workshop with no controls. `dwPatchableFrom` answers [] for the
-      // same input, so the filter below would empty this list anyway — both halves agree, and
-      // {@link noActionsReason} is what turns the empty row into a sentence.
       return [];
   }
 }
 
-/**
- * The buttons this card actually draws: {@link candidatesFor} ∩ the statuses a HEADER EDIT may set.
- *
- * `dwPatchableFrom` is `DW_LEGAL_TRANSITIONS` less `DW_DECISION_EDGES` — the server's own two tables,
- * mirrored in `lib/designWorkshops.ts`, and `update_design_workshop` enforces the same subtraction.
- * So a button that survives this filter is one the PATCH will accept, and the docstring above is a
- * statement about the code rather than about a table somebody has to remember to keep in step.
- */
 function actionsFor(status: string): SubmissionAction[] {
   const patchable = dwPatchableFrom(status);
   return candidatesFor(status).filter((action) => patchable.includes(action.status));
 }
 
-/**
- * WHY THERE IS NO BUTTON, when there is no button. Null whenever there is one.
- *
- * **AN EMPTY CONTROL ROW IS INDISTINGUISHABLE FROM A BROKEN PAGE**, and since 2026-09-13 there are
- * two entirely different reasons this card can have nothing to offer: a report whose every remaining
- * move belongs to somebody else (APPROVED), and a status this build has never heard of. The first is
- * the product working; the second is a client one deploy behind. They must not look the same.
- */
 function noActionsReason(status: string, signOff: string[] = [], handedOn = false): string | null {
-  // A REPORT HANDED ON TO THE OFFICE IS FINAL: no header edit moves it, so the card has nothing to
-  // offer and says who signed it off and what to do if it is wrong.
   if (handedOn && status === "SUBMITTED") {
     const said = signOff.length ? `${signOff.join(" ")} ` : "Handed on to the office. ";
     return `${said}To change it, ask the Ministry Admin to return it.`;
   }
   if (actionsFor(status).length > 0) return null;
-  // A THIRD reason exists since the mirror started filtering (2026-09-14) and it must not be read as
-  // either of the two below: a status this build DOES know, whose every candidate the graph now
-  // forbids. That is a client and a server disagreeing about the ladder, not a deliberate empty case
-  // and not an unknown word — and the unknown-status sentence, offered about a status the badge
-  // directly above is rendering by name, would send a designer to reload a browser that is already
-  // current. The three tests are mutually exclusive: APPROVED is the ONLY status whose candidate list
-  // is empty by design, so this one cannot steal its sentence, and an unrecognised status has an
-  // empty candidate list too.
   if (candidatesFor(status).length > 0) {
     return (
       "No next step from this status. Reload and try again."
@@ -592,29 +291,6 @@ function noActionsReason(status: string, signOff: string[] = [], handedOn = fals
   );
 }
 
-/**
- * WHAT THE INSPECTING OFFICERS ASKED FOR, ROUND BY ROUND.
- *
- * ── IT IS BUILT FROM THE REGISTER AND NEVER FROM `reviewNotes` ────────────────────────────────
- *
- * `reviewNotes` is ONE column holding the LATEST sentence, and the server CLEARS it the moment the
- * report is handed back in — so a panel built from it would show one line during a review and
- * nothing at all afterwards, which is precisely when the designer is working through the
- * corrections. `inspectionFeedback` is the register: every suggestion ever filed, in order, each
- * carrying the cycle it was filed against and the officer who wrote it. Clearing the cache costs
- * nothing because of this panel, and this panel is what makes the clearing safe.
- *
- * ── GROUPED BY ROUND BECAUSE THE ROUND IS THE ANSWER ──────────────────────────────────────────
- *
- * "What was asked for last time" is the question a designer opens this with, and a flat list newest
- * first cannot answer it once there have been three hand-ins. `round` is copied onto each row when
- * it is written and never recomputed, so round 2's suggestions stay in round 2 for ever.
- *
- * ── THE COUNT IT IS DRAWN WITH IS THE COUNT THE SERVER SENT ───────────────────────────────────
- *
- * `truncated` is said out loud rather than swallowed: a bounded read that quietly cut the history
- * makes a long correspondence look like a short one, which is the one wrong answer here.
- */
 function InspectionFeedbackPanel({
   rows,
   truncated,
@@ -635,9 +311,6 @@ function InspectionFeedbackPanel({
         </span>
       </div>
       {status === "NEEDS_REVISION" ? (
-        /* THE ONE SENTENCE THAT SAVES A SUPPORT CALL. Nothing on this card hands the report back
-           in, because the EDIT is the resubmission — a stage save that changes something does it.
-           Without this, a designer who has fixed everything sits looking for a button. */
         <p className="text-sm leading-6 text-ink-700">
           Sent back. Fix and save the stages named below — that hands it back in.
         </p>
@@ -650,10 +323,6 @@ function InspectionFeedbackPanel({
               <li className="rounded-md border border-line-200 bg-field-50 px-3 py-2" key={row.id}>
                 <p className="whitespace-pre-wrap text-sm leading-6 text-ink-900">{row.note}</p>
                 <p className="mt-1 text-xs leading-5 text-ink-500">
-                  {/* A NULL NAME IS A REAL STATE AND NEVER THE WORKSHOP'S OWN DESIGNER. The account
-                      relation is Restrict so the officer cannot have been deleted; the name column
-                      can simply be blank, and guessing would attribute an instruction to somebody
-                      who did not write it. */}
                   {row.actorName?.trim() || "An officer no longer named"}
                   {row.byApprovingAuthority ? " · the Ministry Admin" : ""}
                   {row.stageKey ? ` · about ${row.stageKey}` : " · about the report as a whole"}
@@ -673,38 +342,6 @@ function InspectionFeedbackPanel({
   );
 }
 
-/**
- * THE DELIBERATE FINAL SUBMISSION — requirement 12/13's second half, which had no client at all.
- *
- * ── THE DEFECT THIS CLOSES ──────────────────────────────────────────────────────────────────────
- *
- * Progressive saving already worked end to end: every stage saves independently, the local draft
- * lives in IndexedDB, and a stage save advances DRAFT → IN_PROGRESS exactly once. `save_stage`'s own
- * comment then says the later statuses *"are the designer's to set, through PATCH, and only theirs"*
- * — and no client offered it. `patchDesignWorkshop` had exactly one caller in the whole web app, the
- * outbox in `lib/designWorkshopStore.ts`, and that call sends a fixed list of header fields which
- * does not include `status`; the Android data layer writes no status either. So COMPLETE, SUBMITTED
- * and ARCHIVED were three statuses **the workshops list offered a filter for and nothing on any
- * surface could ever produce** — a filter that always returns nothing, over a submission act that
- * existed on the server and nowhere else.
- *
- * ── IT IS NOT GATED ON COMPLETENESS, AND THAT IS THE POINT OF REQUIREMENT 12 ─────────────────────
- *
- * *"Designers should be able to progressively fill and submit information as the workshop progresses
- * rather than being forced to complete the entire report in a single submission."* Partial submission
- * is the asked-for behaviour, not a loophole, and the server agrees — the PATCH consults no scorer.
- * So every button here is live with required fields outstanding. What the card does instead is COUNT
- * them, name the count in the confirmation, and link to `/readiness`, which already lists them field
- * by field with a link to each box.
- *
- * ── IT COUNTS NOTHING ITSELF ────────────────────────────────────────────────────────────────────
- *
- * The count is `workshopReadiness(...).blocking.length` and the sentence is `readinessSummary(...)`,
- * both from `lib/submissionReadiness`, whose header forbids a second opinion about whether a field is
- * filled in: *"the day it disagreed the designer would be told to go and fill in a field the Save
- * button was perfectly happy with."* This card is a reader of that module, exactly as the readiness
- * screen is.
- */
 function SubmissionCard({
   workshopId,
   status,
@@ -718,55 +355,20 @@ function SubmissionCard({
   signOff = [],
   handedOn = false
 }: {
-  /** The id to PATCH — the server's, never a local draft id. */
   workshopId: string;
-  /** The status as this screen currently believes it to be. */
   status: string;
-  /** Null when the field registry or the local draft could not be read, so nothing can be counted. */
   readiness: WorkshopReadiness | null;
-  /** True while this workshop exists only in this browser and has no server row to PATCH. */
   neverSent: boolean;
-  /** True when this device holds header edits the repository has not heard, so the status may be stale. */
   headerUnsent: boolean;
-  /**
-   * How many stages hold answers or deletions the repository has never heard.
-   *
-   * THE CARD WAS BLIND TO THIS WHILE QUOTING A COUNT COMPUTED FROM IT. `readiness` comes from
-   * `workshopReadiness(registry, draft, id)` — the LOCAL IndexedDB draft, which is the right source,
-   * because the server's score reads lower than the stage a designer just filled in. The consequence
-   * nobody had drawn out: type into stage 12, do not press Save stage (the stage form writes only to
-   * IndexedDB until it is pressed), come back here, press Submit. The card truthfully printed "No
-   * required field is outstanding" and truthfully reported success — about answers the repository has
-   * never seen. The workshop then reads SUBMITTED to every other account while the fieldwork sits on
-   * one laptop, which is the exact failure mode this repository's offline rules exist against.
-   *
-   * HANDED DOWN, NEVER RECOUNTED. The page computes this from `draft.stages` for the amber banner
-   * above, with the same predicate `DraftSyncBanner`'s `outstanding()` uses, and a second count in
-   * here would be a second opinion about what is unsent — the same mistake `lib/submissionReadiness`
-   * exists to avoid about what is unfilled.
-   *
-   * IT DOES NOT BLOCK THE ACT. Requirement 12 is that submission is never blocked; this is a
-   * disclosure at the decision point, not a gate.
-   */
   unsentStages: number;
-  /** The page's own verdict from its last read: the repository did not answer. */
   offline: boolean;
-  /** The status the server confirmed, handed up so the page can render it. */
   onStatusChanged: (status: string) => void;
-  /**
-   * Why this reader may not move THIS workshop's status although their role may, or null — today, a
-   * post they hold on it (`useHeldPostRefusal`). A status is a write to the workshop, and the server
-   * refuses it to whoever inspects or supervises the workshop through the admin routes as well.
-   */
   readOnlyReason?: string | null;
-  /** "Approved by … on …" and "Handed on to … by … on …", from the single read. See `signOffLines`. */
   signOff?: string[];
-  /** The row records a hand-on to the office, so no header edit may move it. */
   handedOn?: boolean;
 }) {
   const { user } = useAuth();
   const confirm = useConfirm();
-  /** The status being written, so exactly one button spins and the rest disable. */
   const [busy, setBusy] = useState<DwStatus | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<string | null>(null);
@@ -774,38 +376,13 @@ function SubmissionCard({
   const mayDecide = canRunDesignWorkshops(user) && !readOnlyReason;
   const token = (status ?? "").trim().toUpperCase();
   const known = (DW_STATUSES as string[]).includes(token);
-  // A HANDED-ON REPORT OFFERS NOTHING. `actionsFor` reads the status alone and would offer a legacy
-  // SUBMITTED row's Reopen; the row's own hand-on is what the server refuses every header edit for.
   const actions = handedOn && token === "SUBMITTED" ? [] : actionsFor(token);
   const outstanding = readiness ? readiness.blocking.length : null;
-  /* One sentence, printed in two places — the dialog body and the card's footer — and they must not
-     be able to disagree about how many stages there are. See {@link submissionScope}. */
   const scope = submissionScope(readiness ? readiness.stagesTotal : null);
 
   async function move(action: SubmissionAction) {
     const goingBack = action.status === "IN_PROGRESS";
-    /*
-      WITHDRAWING AND REOPENING BOTH WRITE `IN_PROGRESS` AND THEY ARE NOT THE SAME SENTENCE. One
-      takes a report off the officers' list while they are holding it; the other brings a finished
-      or archived workshop back for editing. `goingBack` is right about both — neither needs the
-      outstanding-field count — but a dialog that said "Reopen this workshop for editing?" over a
-      report somebody is inspecting would be describing a different act from the one being taken.
-    */
     const withdrawing = action === WITHDRAW;
-    /*
-      THE OUTSTANDING COUNT IS IN THE TITLE, NOT BURIED IN THE BODY, and it is the whole reason this
-      confirmation exists. A designer submitting on the last afternoon of a fortnight is not asking
-      "am I sure" — they are asking "how much of this is still blank", and a dialog that answers that
-      in its first line is the difference between a considered part-submission and a surprise.
-
-      IT NEVER REFUSES. There is no branch below that returns early on an incomplete workshop; the
-      count changes the wording and nothing else.
-
-      A COUNT THAT COULD NOT BE TAKEN IS SAID OUT LOUD rather than rendered as zero, which is the one
-      answer that would be wrong in the dangerous direction: "no required field is outstanding" is
-      exactly what a designer would want to hear and exactly what nobody here can promise when the
-      field registry or this browser's copy of the workshop could not be read.
-    */
     const shortfall =
       outstanding === null
         ? "Couldn't count outstanding required fields."
@@ -813,22 +390,6 @@ function SubmissionCard({
           ? "No required field is outstanding."
           : `${outstanding} required field${outstanding === 1 ? " is" : "s are"} still empty. That's allowed.`;
 
-    /*
-      SUBMITTING OVER WORK THE REPOSITORY HAS NEVER SEEN IS ALLOWED AND MUST NOT BE SILENT.
-
-      This sentence exists because the one above it can read "No required field is outstanding" about
-      a stage that has never left this browser — the count is scored on the local draft, which is the
-      union of what the server holds and what has not been sent. The dialog is the last place a
-      designer can be told; the amber banner at the top of the page is not enough, because a card that
-      goes to the trouble of naming the unsent-HEADER case immediately below reads as having covered
-      the unsent-STAGE case too.
-
-      IT DOES NOT REFUSE, and there is no branch below that returns early on it. Requirement 12 is
-      that submission is never blocked; being told what you are submitting over is not a block.
-
-      Null for the way back, which sends nothing and claims nothing: reopening a workshop with unsent
-      stages is the correct thing to do with unsent stages.
-    */
     const unsent =
       goingBack || unsentStages === 0
         ? null
@@ -843,23 +404,10 @@ function SubmissionCard({
         ? "Reopen this workshop for editing?"
         : outstanding && outstanding > 0
           ? `${action.label} with ${outstanding} required field${outstanding === 1 ? "" : "s"} outstanding?`
-          : // THE UNSENT COUNT TAKES THE TITLE ONLY WHEN NOTHING IS OUTSTANDING, AND THAT IS THE EXACT
-            // CASE THE DEFECT WAS FOUND IN. With required fields outstanding, that count keeps the
-            // headline — it is the reason this confirmation exists — and `unsent` names the stages in
-            // the body. With NOTHING outstanding the old title was the blandest string this dialog can
-            // produce, "Submit?", over the most misleading state it can be in: a workshop that reads
-            // complete because the answers proving otherwise have never left this browser. Two counts
-            // will not fit in one title, so the title carries whichever one is the surprise.
+          :
             unsentStages > 0
             ? `${action.label} with ${unsentStages} stage${unsentStages === 1 ? "" : "s"} unsent?`
             : `${action.label}?`,
-      // `warning` for the two forward acts and never `danger`: `ConfirmDialog`'s own docstring
-      // reserves amber for "decisions that are consequential but recoverable (denying a request, a
-      // late submission)" — which is this act, named — and reserves danger for the destructive ones,
-      // where initial focus moves to Cancel so no reflex Enter can delete anything. Nothing here
-      // deletes anything and every step is reversible on the server, so putting the keyboard on
-      // Cancel would be theatre; the danger rule stays where it belongs, on the workshop's soft
-      // delete. `neutral` for the way back, which is the plain "are you sure" it looks like.
       tone: goingBack ? "neutral" : "warning",
       confirmLabel: action.label,
       body: withdrawing ? (
@@ -869,10 +417,6 @@ function SubmissionCard({
       ) : (
         <>
           <span className="block">{shortfall}</span>
-          {/* Between the count and the scope, and in the emphasised weight, because it is the clause
-              that changes what the count MEANS. A designer who skims this dialog must not be able to
-              skim past the one sentence saying the repository has not heard half of what is being
-              recorded as finished. */}
           {unsent ? <span className="mt-2 block font-medium text-ink-900">{unsent}</span> : null}
           <span className="mt-2 block">{scope}</span>
         </>
@@ -885,21 +429,8 @@ function SubmissionCard({
     setProblem(null);
     setOutcome(null);
     try {
-      /*
-        THE SERVER'S ANSWER IS WHAT GOES ON SCREEN, NOT THE STATUS WE ASKED FOR. `PATCH` returns the
-        updated `workshop_summary`, so `updated.status` is the row as it now stands — and reporting
-        our own request back would be the "success for an act that did not happen" failure this
-        repository's offline rules exist against, for the one case where a future server starts
-        rewriting or refusing a transition.
-      */
       const updated = await patchDesignWorkshop(workshopId, { status: action.status });
       onStatusChanged(updated.status);
-      /*
-        AND THE SUCCESS SENTENCE CARRIES IT TOO, because "Recorded on the repository" is precisely the
-        sentence a designer stops reading after. The status genuinely did land; the stages did not, and
-        this act sent none of them. Appended rather than replacing the confirmation of what DID happen:
-        both halves are true and a designer needs both.
-      */
       const stillHere =
         unsentStages === 0
           ? ""
@@ -914,27 +445,11 @@ function SubmissionCard({
               .toLowerCase()}.`) + stillHere
       );
     } catch (err) {
-      /*
-        NO OUTBOX FOR THIS ONE, AND THE FAILURE SENTENCE HAS TO SAY SO.
-
-        Every other act on this screen survives a dead connection because the local draft holds it —
-        stages, the artisan's consent, photographs. A status change does not: the only writer of the
-        draft header is `patchDraftHeader`, which stamps `headerDirtyAt` and arms the outbox's PATCH,
-        and that PATCH sends a FIXED list of header fields with no `status` key in it. Routing a
-        status through it would therefore never send the status AND would leave `headerDirtyAt` set,
-        which makes `adoptServerDetail` refuse to refresh this workshop's header from the server for
-        as long as it stands — freezing the chip on this device's guess and hiding every later status
-        change. So this act is online-only by construction, and a designer who presses it in a
-        courtyard is told that plainly rather than being shown a success they did not get.
-      */
       if (isUnreachable(err)) {
         setProblem(
           "No connection — status unchanged. Your work is saved on this device."
         );
       } else {
-        // `apiFetch` has already run FastAPI's `detail` through `describeApiDetail`, so `message` is a
-        // sentence and not "[object Object]" — a 403 from `_require_designer`, or the 409 from
-        // `load_workshop_or_404` on a workshop an admin has soft-deleted, both arrive readable.
         setProblem(
           err instanceof Error && err.message.trim()
             ? `The status was not changed: ${err.message}`
@@ -950,50 +465,18 @@ function SubmissionCard({
     <section className="panel mb-5 grid gap-4 p-4">
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-sm font-medium text-ink-900">Submission</h2>
-        {/* THE ONE STATUS CHIP ON THIS PAGE, AND IT IS HERE RATHER THAN IN THE DETAIL PANEL ABOVE
-            ON PURPOSE. It used to sit in that panel's first row, which was fine while nothing could
-            change it; now that a button can, the chip has to be beside the button. A designer who
-            presses Submit and has to scroll to find out whether it took has not been confirmed
-            anything — and had both chips stayed, they would have been able to DISAGREE, because this
-            one reads the status the server just returned while the panel's read the local draft
-            header, which `adoptServerDetail` deliberately declines to refresh while header edits are
-            unsent. Two chips on one screen disagreeing about one record is the worse of the two. */}
         <StatusBadge status={known ? token : status} />
       </div>
 
       {readiness ? (
         <p className="text-sm leading-6 text-ink-700">{readinessSummary(readiness)}</p>
       ) : (
-        // RULE 10: the count is missing, so the screen says the count is missing. Rendering nothing
-        // here would read as "there is nothing outstanding", which is the one wrong answer.
         <p className="text-sm leading-6 text-amber-800 dark:text-amber-100">
           Couldn&rsquo;t count what&rsquo;s outstanding. Reload to try again.
         </p>
       )}
 
       {outstanding && outstanding > 0 ? (
-        /*
-          TWO ACTS, TWO NAMES, AND THE SAME TWO SENTENCES THE READINESS SCREEN PRINTS.
-
-          This block used to open "Submitting is not blocked by this." while `/readiness` said of the
-          identical count "A submit is refused while any of these is empty". Both were true. They are
-          about DIFFERENT ACTS — a `PATCH` of the workshop's status, which consults no scorer, and a
-          `PUT` of one stage with `submit: true`, which 422s that stage — and neither sentence said
-          which, so the two screens contradicted each other about the only number a designer uses to
-          decide whether they can pack up. The definitions live in one place now, on the readiness
-          screen, and both screens render them verbatim; see {@link STAGE_CHECK_IS}.
-
-          THIS SIDE LEADS WITH THE WORKSHOP'S STATUS because the reader is standing at those
-          buttons asking "does this stop me?" — and the answer, still, is no. ("those TWO buttons"
-          until 2026-09-14: `actionsFor` returns two from DRAFT, IN_PROGRESS, COMPLETE and
-          NEEDS_REVISION, ONE from PRE_SUBMISSION, and NONE from APPROVED, so the count was wrong on
-          two of the eight statuses and the sentence is written to survive all eight.)
-
-          THE LINK IS STILL THE POINT. The count on its own sends a designer back through the stage
-          index to find what it is counting; `/readiness` names every field and links to the box.
-        */
-        // ONE LINE since 2026-10-17 (DW-14): the card said what its buttons mean four times. The
-        // stage-check sentence (`STAGE_CHECK_IS`) stays on `/readiness`, one tap away.
         <p className="text-sm leading-6 text-ink-700">
           {WORKSHOP_STATUS_IS}{" "}
           <Link href={`/design-workshops/${workshopId}/readiness`} className="font-medium text-purple-700 dark:text-purple-300 underline">
@@ -1003,28 +486,16 @@ function SubmissionCard({
       ) : null}
 
       {!known ? (
-        // A status from a newer server. Say what is on the record, and that this build has no step to
-        // offer from it — a card with no buttons and no sentence reads as broken.
         <p className="text-sm leading-6 text-amber-800 dark:text-amber-100">
           No next step from this status. Reload and try again.
         </p>
       ) : neverSent ? (
-        // A workshop created offline that has never reached the repository. There is no row to PATCH,
-        // so a button here would be a button that cannot work — and a SENTENCE, not a disabled
-        // control, for the reason `DictationConsentCard` gives: a greyed control refuses a press
-        // without saying why, which is how somebody concludes the app is broken.
         <p className="text-sm leading-6 text-ink-700">
           Not uploaded yet. Sync it from the workshops list to change its status.
         </p>
       ) : readOnlyReason ? (
-        // THE POST, NOT THE ROLE, AND IT GETS ITS OWN SENTENCE. The one below says "or an
-        // administrator", which is exactly what an admin who supervises this workshop is — so it
-        // would tell them a thing they can do is somebody else's for a reason that is not theirs.
-        // The server's own words instead, as the notice at the top of the page draws them.
         <p className="text-sm leading-6 text-ink-700">{readOnlyReason}</p>
       ) : !mayDecide ? (
-        // The affordance, matching the server's own `_require_designer` set. Not the boundary: the
-        // route refuses this account whether or not this button is drawn.
         <p className="text-sm leading-6 text-ink-700">
           Only this workshop&rsquo;s designers or an admin can change its status.
         </p>
@@ -1039,8 +510,6 @@ function SubmissionCard({
                   key={action.status}
                   type="button"
                   className={action.primary ? "field-button" : "field-button-secondary"}
-                  // Disabled only while a write is in flight, and never on incompleteness — see this
-                  // component's header. Two statuses cannot be written at once.
                   disabled={busy !== null}
                   onClick={() => void move(action)}
                 >
@@ -1054,17 +523,12 @@ function SubmissionCard({
               );
             })}
           </ActionGroup>
-          {/* THE DELIBERATE EMPTY CASE, SAID OUT LOUD. `actionsFor` returns nothing for an approved
-              report because both of its remaining moves are the sanctioning authority's, and a row
-              of no buttons with no sentence is what a broken page looks like. */}
           {actions.length === 0 ? (
             <p className="text-sm leading-6 text-ink-700">{noActionsReason(token, signOff, handedOn)}</p>
           ) : null}
           <dl className="grid gap-1">
             {actions.map((action) => (
               <div key={action.status} className="text-xs leading-5">
-                {/* What each button MEANS, in the designer's terms, because two adjacent verbs the
-                    server treats identically are otherwise indistinguishable from each other. */}
                 <dt className="inline font-medium text-ink-700">{action.label}: </dt>
                 <dd className="inline text-ink-500">{action.meaning}</dd>
               </div>
@@ -1074,26 +538,12 @@ function SubmissionCard({
       )}
 
       {offline && mayDecide && known && !neverSent ? (
-        // Stated BEFORE the press rather than only in the failure, because the press costs the
-        // designer a confirmation dialog they can already be told is going to fail.
         <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
           You&rsquo;re offline. Status changes need a connection.
         </p>
       ) : null}
 
       {unsentStages > 0 && mayDecide && known && !neverSent ? (
-        /*
-          STATED BEFORE THE PRESS, beside the offline warning above and for the same reason: a
-          designer is owed the fact that changes what the act means before they spend a confirmation
-          on it. Gated on there being an act to press at all — with no button on this card the
-          page-level banner above has already said the same number and this would be noise.
-
-          AMBER AND A FULL PANEL, not the quiet grey of the header line below it, because §12.11
-          chooses the treatment by MEANING and these two facts do not mean the same thing: an unsent
-          header makes the CHIP stale, which is recoverable by waiting, while unsent stages make a
-          submission a claim about work nobody else can see. Not red: nothing has gone wrong and
-          nothing here is refused.
-        */
         <p className="rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm leading-6 text-amber-800">
           {unsentStages} stage{unsentStages === 1 ? " is" : "s are"} not uploaded yet — others would see the workshop as
           finished without {unsentStages === 1 ? "it" : "them"}. Sync from the banner above first.
@@ -1101,40 +551,11 @@ function SubmissionCard({
       ) : null}
 
       {headerUnsent ? (
-        // The status shown can genuinely lag the repository here, and only this flag reveals it —
-        // `adoptServerDetail` keeps the LOCAL header while `headerDirtyAt` is set, precisely so a
-        // background read cannot overwrite an unsent edit, which also means it does not refresh the
-        // status. Silence would let the chip quietly contradict the repository.
         <p className="text-xs leading-5 text-ink-500">
           Title or notes not uploaded yet — the status may be out of date.
         </p>
       ) : null}
 
-      {/*
-        BOTH REGIONS ARE MOUNTED FROM FIRST PAINT, AND THAT IS THE WHOLE FIX.
-
-        Assistive technology only announces mutations inside a region THAT ALREADY EXISTED; a live
-        region created together with its first message is silently dropped by most screen readers.
-        `Toast`'s viewport is the precedent and its own header says so in as many words — it renders
-        the region with an empty queue for exactly this reason. Here, `problem` had no live role at
-        all and `outcome` had `role="status"` on an element that did not exist until it had something
-        to say, so pressing Submit with no connection put a red sentence on screen that was never
-        spoken to anybody, and the success that a sighted designer reads as their receipt was
-        announced only by luck.
-
-        THE TWO TREATMENTS ARE CHOSEN BY MEANING (§12.11), NOT BY SYMMETRY. `problem` is a failure the
-        designer has to act on — the status was NOT changed and nothing is queued to retry it — so it
-        is `role="alert"`, assertive, and worth interrupting a reader for. `outcome` is a notice that
-        something they asked for happened, so it is `role="status"`, polite, and must not interrupt.
-
-        `sr-only` RATHER THAN AN EMPTY BOX. The element is always rendered; when it has nothing to say
-        it is absolutely positioned and 1×1, so it is in the accessibility tree and contributes no row
-        to this `grid gap-4` panel — an always-visible empty `<p>` would add two gaps of dead space
-        under the card. `design-review/page.tsx:936` and `CustomSectionsEditor.tsx:801` use the same
-        idiom. It must stay a class swap on ONE element: swapping in `hidden` (`display: none`) or
-        remounting the node would take the region out of the accessibility tree and put this defect
-        straight back.
-      */}
       <p
         role="alert"
         aria-live="assertive"
@@ -1163,90 +584,20 @@ function SubmissionCard({
 }
 
 export default function DesignWorkshopStagesPage({ params }: { params: Promise<{ id: string }> }) {
-  // Next 16 hands route params over as a promise; `use` unwraps it in a client component.
   const { id } = use(params);
-  // Only to decide whether the admin-only provenance link is offered. The route and the
-  // endpoint are both gated independently; this is the affordance, not the boundary.
   const { user } = useAuth();
 
   const [registry, setRegistry] = useState<DwRegistry | null>(null);
   const [draft, setDraft] = useState<DwDraft | null>(null);
-  /** The server's own schema digest for this record, when it could be read. */
   const [serverSchemaVersion, setServerSchemaVersion] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
-  /**
-   * The repository refused to hand this workshop over, and this browser has never held a copy of it.
-   *
-   * WHY IT IS A SEPARATE STATE FROM `error`, AND WHY IT GATES THE WHOLE PAGE. Audit 2026-08-15
-   * (MAJOR, frontend). `ensureDraft(id)` below FABRICATES a local draft for any id it is handed —
-   * no server call, no ownership check — so `draft` is non-null within milliseconds of mount and
-   * every render gate on this page keys on `draft`, not on `error`. A designer forwarded a
-   * colleague's link, or one who mistyped a cuid, got a 404 from the API and then a complete,
-   * convincing workshop: "Untitled design workshop", 0%, a status badge, twenty-two clickable stage
-   * rows and the Cards & tags / Import photographs / Report buttons, with one red line above it.
-   * Reading 0% as "not started yet" she opened stage 4 — where the same fabricated draft makes the
-   * stage form seed itself, clear `loading` and render fully editable — and typed a day's interview
-   * into a record that will never be accepted. Nor is it recoverable by browsing: the list page
-   * prepends a local draft only when it has no `remoteId`, and this one has the route's.
-   *
-   * The 404 is the ONLY status that raises this. `isUnreachable` and 5xx both mean "the repository
-   * did not answer about this workshop", where the local copy is the right thing to show and the
-   * amber offline banner is the right thing to say. A 404 means the repository answered, and
-   * `load_workshop_or_404` deliberately gives the same 404 for "no such record" and "not one this
-   * account may open" — so the sentence below must stay ambiguous between them, exactly as the
-   * server is.
-   *
-   * The second half of the test is what keeps a genuine offline-created workshop safe: a draft that
-   * has ever been reconciled (`lastSyncedAt`, or any stage with `serverLoadedAt`) holds real
-   * fieldwork read from the repository, and a later 404 — an admin soft-deleted it — must not blank
-   * a screen that is the designer's only copy of it.
-   */
   const [unopenable, setUnopenable] = useState(false);
-  /** Who recorded the consent, as the server resolved it. Null = this screen cannot name them. */
   const [consentByName, setConsentByName] = useState<string | null>(null);
-  /**
-   * The correction suggestions, held beside the draft rather than in it.
-   *
-   * THE DRAFT IS THIS DEVICE'S COPY OF THE WORKSHOP and these are not this device's to hold: they are
-   * written by other accounts, they arrive only on the single-record read, and a designer who is
-   * offline is reading a report nobody can have sent back since they last synced. Putting them in the
-   * offline store would mean deciding what a STALE suggestion list means, which is a question nothing
-   * on this screen needs to ask. Empty and "not read yet" are deliberately the same state here: the
-   * panel simply does not draw.
-   */
   const [inspectionFeedback, setInspectionFeedback] = useState<DwInspectionFeedback[]>([]);
   const [feedbackTruncated, setFeedbackTruncated] = useState(false);
-  /**
-   * Which ministry instrument opened this workshop, held beside the draft for the reason the
-   * suggestions above are: it is a row in another office's register, not this device's copy of the
-   * workshop, and an offline reader is looking at a register they cannot have re-read.
-   *
-   * `{}` IS THE HONEST START AND THE HONEST END OF A FAILED READ. It means "no register answered",
-   * which is what a designer, an offline session and a 500 all have in common — and it renders as
-   * silence rather than as "there is no sanction order", which none of the three can support. It is
-   * deliberately NOT written into the draft store: a stale copy of somebody else's register is a
-   * question nothing on this screen needs to ask.
-   */
   const [registerProvenance, setRegisterProvenance] = useState<DwRegisterProvenance>({});
-  /**
-   * The status the SERVER confirmed on this page's own PATCH, held apart from the draft.
-   *
-   * HELD APART FOR THE SAME REASON `consentByName` IS: the draft is this device's copy, and this is a
-   * fact only the server can state. It is not written back into the draft header on purpose —
-   * `patchDraftHeader` is the only writer of that header, it stamps `headerDirtyAt`, and the outbox
-   * PATCH it arms sends a fixed list of header fields that has no `status` key. So a status pushed
-   * through it would never reach the server AND would make `adoptServerDetail` decline to refresh
-   * this workshop's header from the repository for as long as the flag stood — freezing the chip and
-   * hiding every later status change. Null until this session changes one, after which it wins over
-   * the draft's copy, which is by then knowingly stale.
-   */
   const [confirmedStatus, setConfirmedStatus] = useState<string | null>(null);
-  /**
-   * WHO SIGNED THIS REPORT OFF, AND EVERY DECISION TAKEN ON IT — off the single read, held apart from
-   * the draft for the reason the suggestions above are: they are other accounts' acts, and a stale copy
-   * on this device would be a question nothing here needs to ask. Null and `[]` until the read answers.
-   */
   const [signOff, setSignOff] = useState<DwSignOffFacts | null>(null);
   const [decisions, setDecisions] = useState<DwDecision[]>([]);
 
@@ -1261,9 +612,6 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         setRegistry(loaded.registry);
       } catch (err) {
         if (cancelled) return;
-        // With no registry there is no stage list at all, so this one IS fatal — but say what it is
-        // rather than rendering twenty-two empty rows and letting a designer conclude the workshop
-        // is empty.
         setError(
           err instanceof Error
             ? `Couldn't load the stages: ${err.message}`
@@ -1272,15 +620,11 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         return;
       }
 
-      // THE LOCAL COPY FIRST. It renders the whole index with no network, and it renders faster than
-      // a request when there is one.
       const local = isLocalWorkshopId(id) ? await loadDraft(id) : await ensureDraft(id);
       if (cancelled) return;
       if (local) setDraft(local);
 
       if (isLocalWorkshopId(id) && local && !local.remoteId) {
-        // Nothing to reconcile against: this workshop has never been to the server. That is a
-        // legitimate state for the whole of a fortnight, not an error.
         return;
       }
 
@@ -1288,15 +632,9 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         const detail = await getDesignWorkshop(local?.remoteId ?? id);
         if (cancelled) return;
         setServerSchemaVersion(detail.schemaVersion);
-        // The single-record read is the ONLY place the acceptor's name is resolved — `consent_keys`
-        // leaves it out of the list because it would be a name lookup per row in a paged endpoint.
-        // Held apart from the draft because the draft is this device's copy and a name is not on it.
         setConsentByName(detail.dictationConsentByName ?? null);
-        // THE REGISTER, OFF THE SAME READ. It costs no extra request — `get_design_workshop` carries
-        // it — and it is the only place on the web a designer can see what was asked for.
         setInspectionFeedback(detail.inspectionFeedback ?? []);
         setFeedbackTruncated(detail.inspectionFeedbackTruncated === true);
-        // WHO SIGNED IT OFF, AND THE DECISIONS, OFF THE SAME READ.
         setSignOff({
           status: String(detail.status ?? ""),
           approvedAt: detail.approvedAt ?? null,
@@ -1308,30 +646,9 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
           handedOnTo: detail.handedOnTo ?? null
         });
         setDecisions(detail.decisions ?? []);
-        // WHERE THIS WORKSHOP CAME FROM, OFF THE SAME READ AND AT NO EXTRA REQUEST. The server puts
-        // a key here for each ministry register THIS reader keeps, so what arrives is an
-        // entitlement answer as much as a data one and nothing on this page has to guess at either.
         setRegisterProvenance(readRegisterProvenance(detail));
         const merged = await adoptServerDetail(detail, loadedRegistry);
         if (cancelled) return;
-        /*
-          THE WORKSHOP'S OWN QUESTIONS ARE READ HERE TOO, AND WITHOUT THIS THE INDEX WOULD DISAGREE WITH
-          THE STAGE FORM ABOUT ITS OWN ARITHMETIC.
-
-          `localCompleteness` scores the designer's required custom questions off `draft.customDefinition`
-          — that is what taught every reader of it at once, including the readiness screen. But the copy on
-          the draft is only written where a definition is actually fetched, and until now that was the
-          stage form alone: a designer who opened this index before opening any stage would have seen
-          twenty-two bars counting the registry's fields only, then watched one of them drop when they came
-          back from a stage. Two arithmetics in one workshop, minutes apart, with nothing on screen to say
-          why — which is exactly the failure the server carries `customSchemaVersion` beside its scores to
-          prevent.
-
-          Not awaited: it refreshes numbers already on screen and its failure is swallowed into a source of
-          "unknown", so it cannot delay or fail the index. The draft is re-read afterwards because the
-          definition is written to the same record — reading it from `merged` would show the bars scored
-          against a definition that had just been superseded on disk.
-        */
         const target = merged ?? local;
         if (target) {
           void loadCustomDefinition(target).then(async (held) => {
@@ -1344,20 +661,11 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         setError(null);
       } catch (err) {
         if (cancelled) return;
-        // `isUnreachable`, NOT `isTransient` — the same split the list page and the stage form now
-        // make. `isTransient` answers "is it worth retrying" and counts every 5xx as yes, so a
-        // repository that answered and then failed raised the "there is no connection" banner and
-        // sent the designer to look at their signal for a fault the server had already reported.
         if (isUnreachable(err)) {
-          // A workshop already drawn from the local copy must not be replaced by an error box.
           setOffline(true);
           if (!local) setError("You're offline and this workshop isn't on this device.");
           return;
         }
-        // A 404 over a draft this browser has never reconciled means the record was FABRICATED by
-        // `ensureDraft` and there is nothing behind it. See {@link unopenable} — everything on this
-        // page is gated on it, because a red line above a complete-looking workshop was read as a
-        // transient glitch and typed into.
         if (err instanceof ApiError && err.status === 404 && (!local || neverReconciled(local))) {
           setUnopenable(true);
           return;
@@ -1365,94 +673,31 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         setError(err instanceof Error ? err.message : "Unable to load this design workshop");
       }
     })();
-    // The `cancelled` flag is the right race guard for a one-shot mount effect (a generation
-    // counter is for a list that refetches on filter changes, an AbortSignal for a fetch that
-    // accepts one). Without it, navigating away mid-flight sets state on an unmounted tree.
     return () => {
       cancelled = true;
     };
   }, [id]);
 
   const stages = registry?.stages ?? [];
-  /**
-   * How many stages there are, or null while nobody knows yet.
-   *
-   * NULL AND NOT ZERO, deliberately — the same distinction `submissionScope` draws two hundred lines
-   * up, and the reason `items === null` and `items === []` are kept apart everywhere in this app. An
-   * empty registry and an unread one are different facts, and a sentence built on the first while the
-   * second is true reads as a workshop with no stages in it.
-   *
-   * Read off `registry` rather than off `readiness`, which is also in scope: `readiness` is null
-   * whenever the local draft could not be read, and the number of stages is a property of the
-   * REGISTRY alone. Taking it from readiness would make the label go vague on a designer whose
-   * IndexedDB was cleared, for a count that had nothing to do with their draft.
-   */
   const stageCount = registry ? registry.stages.length : null;
-  /**
-   * Progress, scored against what is on THIS DEVICE.
-   *
-   * Deliberately the local figure rather than the server's, even when both are available: the local
-   * draft is the union of what the server holds and what has not been sent yet, so the server's
-   * score would read lower than the stage a designer just filled in and would tell them to go and
-   * do work they have already done.
-   */
   const completeness = useMemo(
     () => (registry && draft ? localCompleteness(registry, draft) : {}),
     [registry, draft]
   );
-  /**
-   * The search index over everything this device holds for this workshop.
-   *
-   * Built ONCE per draft load and not per keystroke — measured at 40–80ms for the flagship
-   * workshop's 1,393 written answers, which is a fraction of the IndexedDB read that produced the
-   * draft in the first place, and it buys a query that answers in under 4ms. It is memoised on the
-   * same two objects the progress bars are, so a save that replaces the draft rebuilds it and
-   * nothing else does.
-   */
   const searchIndex = useMemo(
     () => (registry && draft ? buildWorkshopSearchIndex(registry, draft) : emptyWorkshopSearchIndex()),
     [registry, draft]
   );
-  /**
-   * What still blocks a submission, assembled by `lib/submissionReadiness` and by nothing here.
-   *
-   * Memoised on the same two objects the progress bars are, so a stage save that replaces the draft
-   * recounts it and nothing else does. Null while either input is missing — the submission card then
-   * says the count is unknown rather than implying it is zero.
-   */
   const readiness = useMemo(
     () => (registry && draft ? workshopReadiness(registry, draft, id) : null),
     [registry, draft, id]
   );
-  /** The header as the local copy holds it, which is the server's whenever nothing is unsent. */
   const detail: DwSummary | null = draft ? { ...draftHeader(draft), id: draft.remoteId ?? draft.localId } : null;
   const unsentStages = draft
     ? Object.values(draft.stages).filter((stage) => stage.dirtyAt !== null || stage.removedFrom.length > 0).length
     : 0;
-  /**
-   * This workshop exists only in this browser: no repository row, so nothing to PATCH a status onto.
-   *
-   * The SAME test the mount effect uses to decide there is nothing to reconcile against, and
-   * deliberately not `draft.remoteId === null` — `ensureDraft` stamps `remoteId` with whatever id it
-   * was handed, so that test is the trap `neverReconciled` exists to warn about.
-   */
   const neverSent = draft ? isLocalWorkshopId(id) && !draft.remoteId : false;
-  /**
-   * WHY THIS READER MAY READ THIS WORKSHOP AND NOT WRITE IT, or null — a post they hold on it.
-   *
-   * Since 2026-10-09 an admin may be appointed a workshop's inspector, Assistant Director or Regional
-   * Director, and the server then refuses them every write to it, through the admin arm too. Asked of
-   * the route's id, which the hook resolves to the repository's (a workshop only this device holds has
-   * no posts and asks nothing). It switches off exactly the controls that write — Update details, the
-   * status buttons and the consent row here, and the forms on the screens below this one, which ask
-   * the same question — and says why above them. See `HeldPostNotice`.
-   */
   const postRefusal = useHeldPostRefusal(id);
-  /**
-   * WHY THIS REPORT CAN NO LONGER BE CHANGED BY ANYBODY, or null — it is approved, or handed on to the
-   * office. The server refuses every content write with this same sentence; it is said here, above the
-   * cards, before anybody opens a stage and types into it.
-   */
   const frozenReason = detail
     ? dwFrozenReason({
         status: confirmedStatus ?? detail.status,
@@ -1461,20 +706,6 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
     : null;
 
   if (unopenable) {
-    /*
-      A DEAD END, AND DELIBERATELY NOT A WORKSHOP WITH A WARNING ON IT.
-
-      Returning early — before the header's eight action links, before the detail panel, before the
-      search panel and before the `<ol>` of twenty-two stage rows — is the whole fix. Rendering any
-      of those beside a message is what produced the defect: the message read as a transient glitch
-      and the workshop below it read as real, so a designer opened stage 4 and typed into it.
-
-      THE WORDING STAYS AMBIGUOUS BETWEEN THE TWO CAUSES because the server's is. `load_workshop_or_404`
-      answers the identical 404 for "no such record" and "not one this account may open", with a
-      comment explaining that it will not distinguish them — telling a designer which one it is would
-      confirm the existence of a record she may not see. "Ask the designer who sent you the link" is
-      the remedy for both, and it is a remedy she can act on today rather than a status code.
-    */
     return (
       <>
         <PageHeader
@@ -1512,120 +743,40 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         icon={<DraftingCompass className="h-5 w-5" aria-hidden />}
         actions={
           <>
-            {/*
-              THE WORKSHOP'S OWN RECORD — requirement 27, and the only action in this row that edits
-              the WORKSHOP rather than something inside it.
-
-              ── WHY IT IS FIRST, AND WHY IT IS CALLED THIS ────────────────────────────────────────
-              Every other link here opens a child: the tags, the sketches, the photographs, the AI
-              layers, this workshop's own questions, the readiness list, the report. A row of nine
-              controls that all open something INSIDE the workshop is exactly the row in which a bare
-              "Edit" answers nothing, which is why the label names what it edits. It is first because it is the
-              shortest question a reader arrives with — "this title is wrong" — and the one they
-              would otherwise go looking for in stage 1, where three of the fields it reaches
-              (`notes`, the report template and the linked workshop record) do not exist at all.
-
-              ── WHICH PREDICATE, AND WHY NOT THE OBVIOUS ONE ──────────────────────────────────────
-              `canRunDesignWorkshops` — the SET `DESIGN_WORKSHOP_ROLES`, not a rank — because that is
-              what the server enforces: `PATCH /design-workshops/{id}` runs `_require_designer` and
-              then `load_workshop_or_404(..., for_edit=True)`, in that order. It is NOT
-              `canCreateDesignWorkshops`: creating a workshop is admin-only and editing one is not,
-              and gating this on the create predicate would lock every designer out of a route the
-              repository admits them to — their whole fortnight of corrections, on the tier the
-              feature exists for.
-
-              HIDDEN RATHER THAN GREYED, like the provenance link below and the create control on the
-              list page: a disabled button says "no" and answers nothing. The row-level half of the
-              rule (creator, admin, or a viewer grant) cannot be evaluated here at all — it is a
-              database question — so the edit screen answers a 403 and a 404 in words of their own
-              rather than this link pretending to know.
-
-              AND NOT WHILE THE WORKSHOP IS ONLY ON THIS DEVICE. `neverSent` means there is no
-              repository row to PATCH, so the link would lead to a screen whose Save cannot work.
-              That screen says so plainly if the URL is reached another way; the affordance simply is
-              not offered, for the same reason the Submission card withdraws its buttons.
-            */}
-            {/* AND NOT FOR SOMEBODY WHO HOLDS A POST ON IT (`postRefusal`): the PATCH behind that
-                screen is a write the server refuses them, and the notice below says why. Not while
-                the answer is out either (`null` is "none known"), so the link never appears and then
-                withdraws under the pointer. */}
             {canRunDesignWorkshops(user) && !neverSent && postRefusal === null && frozenReason === null ? (
               <Link href={`/design-workshops/${id}/edit`} className="field-button-secondary">
                 <SquarePen className="h-4 w-4" aria-hidden />
                 Update details
               </Link>
             ) : null}
-            {/* Tags are printed once, early, for the whole workshop, so the control belongs to the
-                workshop and not to stage 13: a designer looking for them is looking for "this
-                workshop", not for the stage that happens to hold the prototype rows. */}
             <Link href={`/design-workshops/${id}/codes`} className="field-button-secondary">
               <QrCode className="h-4 w-4" aria-hidden />
               Cards &amp; tags
             </Link>
-            {/* THE PAGE EXISTED FOR A DAY WITH NOTHING POINTING AT IT. It shipped with its own route
-                and a nav entry for the POOL round (`/design-review`), but the per-workshop half was
-                reachable only by typing the URL with a workshop id in it — the wave that built it
-                could not add this link because this file belonged to another unit, and the gap went
-                straight past a green deploy. Added 2026-08-23, after the owner went looking for it.
-
-                Belongs to the WORKSHOP rather than to a stage even though sketches live in stage 11
-                and prototypes in stage 13: the review round spans both, and ranking one against the
-                other is the whole point. Hanging it off either stage would ask a designer to pick a
-                stage before they could compare across them. */}
             <Link href={`/design-workshops/${id}/sketches-and-prototypes`} className="field-button-secondary">
               <DraftingCompass className="h-4 w-4" aria-hidden />
               Sketches &amp; prototypes
             </Link>
-            {/* Belongs to the WORKSHOP, not to any one stage: a camera dump spans the whole
-                fortnight and the whole point of the intake is that it decides which stage each
-                photograph goes to. Hanging it off a stage would ask the designer for the answer the
-                feature exists to produce. */}
             <Link href={`/design-workshops/${id}/photos`} className="field-button-secondary">
               <Images className="h-4 w-4" aria-hidden />
               Import photographs
             </Link>
-            {/* Belongs to the WORKSHOP for the same reason the photo intake does: a layer's chain
-                starts at a recording or a photograph hanging off an audio or image field in any of
-                the 22 stages, and one recording's transcript, its cleaned rewrite and a summary of
-                that are one chain wherever the clip was captured. It is deliberately NOT on the
-                report screen — see that page's header for the argument, the short form of which is
-                that everything on the report screen is a per-file choice that writes nothing, and an
-                acceptance puts a person's name on model output for good. */}
             <Link href={`/design-workshops/${id}/ai-layers`} className="field-button-secondary">
               <Layers className="h-4 w-4" aria-hidden />
               AI layers
             </Link>
-            {/* Belongs to the WORKSHOP because a definition IS one: the server replaces the whole set in
-                one write so that "one definition, one digest" stays atomic, and a section on stage 11 and
-                another on stage 17 are one instrument sharing one digest. It is also the only place the
-                answer state for every stage is in the same tab, which is what lets the editor say whether
-                an edit will retire a question or delete it BEFORE the button is pressed. */}
             <Link href={`/design-workshops/${id}/custom-sections`} className="field-button-secondary">
               <ListPlus className="h-4 w-4" aria-hidden />
               This workshop&apos;s own questions
             </Link>
-            {/* The question this whole index is read to answer, answered directly. The list below
-                shows 22 progress bars; what a designer chasing a submission actually wants is the
-                four fields inside them, and finding those by opening every stage is what this
-                replaces. Placed before Report because it is what decides whether generating one is
-                worth doing yet. */}
             <Link href={`/design-workshops/${id}/readiness`} className="field-button-secondary">
               <ListChecks className="h-4 w-4" aria-hidden />
               Ready to submit?
             </Link>
-            {/* The record of what has ALREADY been sent, beside the control for producing the next
-                file. A report submitted to a ministry is revised three or four times, and the
-                question asked months later — "did the cost sheet change before you resubmitted?" —
-                is about the files that exist, not the one being made now. */}
             <Link href={`/design-workshops/${id}/report/history`} className="field-button-secondary">
               <FileClock className="h-4 w-4" aria-hidden />
               Report history
             </Link>
-            {/* ADMIN ONLY, AND HIDDEN RATHER THAN GREYED for the reason the create control is: a
-                designer has lost nothing by not having this — every per-field stamp still renders
-                under their own boxes on every stage — so a disabled control would advertise a
-                capability they do not need and cannot get. The route is gated independently in
-                lib/permissions.ts and on the server; this is the affordance, not the boundary. */}
             {isAdmin(user) ? (
               <Link href={`/design-workshops/${id}/provenance`} className="field-button-secondary">
                 <GitCompareArrows className="h-4 w-4" aria-hidden />
@@ -1644,9 +795,6 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
       ) : null}
 
-      {/* UNDER THE HEADER AND ABOVE EVERY CARD, because it is about the workshop and not about one
-          control: it is the reason three controls on this page are missing and the forms one click
-          away are switched off. */}
       <HeldPostNotice refusal={postRefusal} />
 
       {frozenReason ? (
@@ -1656,9 +804,6 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
       ) : null}
 
       {offline || unsentStages ? (
-        // The two facts a designer needs before they decide anything on this page, and neither is
-        // guessable from the progress bars: whether what is on screen is the repository's copy, and
-        // whether anything here has yet to reach it.
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-100 px-3 py-2 text-sm text-amber-800">
           {offline
             ? "Offline — changes are saved on this device."
@@ -1673,12 +818,6 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
       {detail ? (
         <section className="panel mb-5 grid gap-4 p-4">
           <div className="flex flex-wrap items-center gap-3">
-            {/* THE STATUS CHIP MOVED OUT OF THIS ROW, DOWN TO THE SUBMISSION CARD. It belonged here
-                while the status was read-only; now that a control on this page writes it, the chip
-                has to be beside that control — and keeping a second copy here would have let the two
-                disagree, because the card's reads the status the server just returned while this row
-                reads the local draft header, which `adoptServerDetail` deliberately declines to
-                refresh while header edits are unsent. See `SubmissionCard`. */}
             {detail.workshopCode ? (
               <span className="rounded-full bg-field-200 px-2.5 py-1 text-xs font-medium text-ink-900">{detail.workshopCode}</span>
             ) : null}
@@ -1691,32 +830,6 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
           </div>
           <div>
             <div className="flex items-center justify-between text-sm">
-              {/*
-                DERIVED, NOT THE LITERAL 22. Same class of defect as the one `submissionScope` was
-                fixed for on this very screen: a count typed into a sentence is a promise that a
-                registry change makes false, and this screen would then be able to disagree with its
-                own submission dialog, which reads `readiness.stagesTotal`.
-
-                THE NUMBER IS DROPPED RATHER THAN GUESSED when the registry has not arrived. "every
-                stage" is true whatever the count turns out to be; "all 0 stages" and "all 22 stages"
-                are both assertions this component cannot make yet, and one of them is the wrong kind
-                of wrong — it looks right.
-
-                ⚠ `report/page.tsx` still carries this string as a literal, and it is left alone
-                deliberately rather than overlooked: `e2e/web-surface-gaps-unit.spec.ts` uses it as
-                the ANCHOR it slices that page's source at (`page.indexOf("Required fields across all
-                22 stages")`), so changing it there without changing the spec in the same commit turns
-                two assertions into silent passes over the tail of a file. That is a two-file change
-                and `frontend/e2e/` was another lane's while this was written. Until it is made, the
-                two screens read identically at 22 stages and only diverge if the registry moves — at
-                which point THIS one is the one telling the truth.
-              */}
-              {/*
-                ONE HEADLINE, COUNTED IN STAGES (UX audit DW-10, 2026-10-16). This card printed "5%" —
-                required FIELDS filled — beside the submission card's "9 of 22 stages complete", two
-                true numbers that read together as a bug. The headline and the bar now count stages,
-                the sentence `readinessSummary` prints, and the field count is the secondary line.
-              */}
               <span className="font-medium text-ink-900">
                 {readiness
                   ? `${readiness.stagesComplete} of ${readiness.stagesTotal} stages complete`
@@ -1744,38 +857,9 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
               aria-valuenow={readiness?.stagesComplete ?? 0}
             />
           </div>
-          {/* The two things that go stale silently, both stated rather than assumed. */}
           <p className="text-xs leading-5 text-ink-500">
             Progress counts required fields only. Craft, cluster, dates and code come from stage 1.
           </p>
-          {/*
-            ── WHERE THIS WORKSHOP CAME FROM ─────────────────────────────────────────────────────
-
-            THE ONE DIRECTION NOTHING IN THE PRODUCT COULD ANSWER. The annual plan links forward to
-            the workshop it promoted and the sanction register links forward to the workshop its
-            order opened; standing HERE there was no way back, so an officer reading a record had to
-            leave the page and search a register by title to find out which instrument authorised it.
-
-            IT DRAWS ONLY WHAT THE SERVER ANSWERED, AND THE ABSENT KEY IS AN ANSWER TOO. The payload
-            carries one key per ministry register this READER keeps
-            (`api/routes/design_workshops._register_provenance`), so a designer — who keeps none —
-            sees no band at all, and nothing here has to re-derive an entitlement the server has
-            already decided. Offline and after a failed read the state is `{}`, which draws the same
-            nothing: silence is the only claim any of those three can support.
-
-            NOT THE SAME THING AS "Authorship & divergence" IN THE HEADER ROW. That link opens
-            `/design-workshops/{id}/provenance` — field-by-field authorship across the shared record
-            tables, admin-only. This band is one line about which ministry instrument opened the
-            workshop, and the two are gated differently on purpose.
-
-            AND IT IS THE REGISTER, NOT STAGE 1. `workshopSetup.sanctionOrderNo` and
-            `.sanctionOrderDate` are STANDARD-tier stage-1 boxes carrying `report_role=COVER_FIELD`
-            — what a designer types onto the report's own cover. This is the row an officer
-            recorded. The two can disagree, which is why the sentence names the register rather than
-            printing a bare number with nothing to say where it came from. (This note said
-            "Supplementary" until it was checked: the tiers in `stage_schema.Tier` are BASIC,
-            STANDARD and ADVANCED, and no surface in this product uses that word for any of them.)
-          */}
           {registerProvenance.sanctionOrder !== undefined ? (
             <div className="grid gap-1 border-t border-line-200 pt-4">
               <h2 className="text-sm font-medium text-ink-900">Source</h2>
@@ -1790,10 +874,6 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
                     : "."}
                 </p>
               ) : (
-                // PRESENT AND EMPTY, SAID OUT LOUD. This reader keeps the register and no order in
-                // it names this workshop — which is ordinary (a workshop opened from the plan, or by
-                // an admin, is not sanctioned through this register) and is worth a sentence rather
-                // than a blank, because a blank here reads as "this screen does not do provenance".
                 <p className="text-sm leading-6 text-ink-700">
                   No sanction order.
                 </p>
@@ -1803,37 +883,13 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         </section>
       ) : null}
 
-      {/*
-        DIRECTLY UNDER THE WORKSHOP'S OWN PANEL, AND ABOVE EVERYTHING ELSE ON THE PAGE.
-
-        The submission is a fact about the WORKSHOP, like the progress bar it sits under, and it is
-        the act the whole index is read on the way to. It cannot go at the foot of the page, under
-        twenty-two stage rows: the designer who needs it is the one on the last afternoon of a
-        fortnight deciding whether they can pack up, and a control they have to scroll past the whole
-        record to find is one they will look for in the header actions instead — where "Ready to
-        submit?" links to a screen that only ever LISTED what was outstanding and could never finish
-        the job.
-
-        Drawn only once the local draft has loaded, exactly as the consent card below is: the card's
-        first line is the status, and drawing it against an empty header would show every workshop as
-        a draft for a moment and invite a designer to submit one that had already been submitted.
-      */}
-      {/* `unopenable` is deliberately NOT re-tested here: that state returns early, above this whole
-          tree, and a predicate that can never fire is how a rule quietly comes back. */}
       {detail ? (
         <SubmissionCard
-          // The SERVER's id and never the draft's local one — this is the thing being PATCHed. For a
-          // never-synced workshop there is no such id, and `neverSent` is what the card says so with.
           workshopId={draft?.remoteId ?? id}
-          // The server's answer to this session's own PATCH wins over the draft's copy, which by then
-          // is knowingly stale — see {@link confirmedStatus}.
           status={confirmedStatus ?? detail.status}
           readiness={readiness}
           neverSent={neverSent}
           headerUnsent={draft?.headerDirtyAt !== null && draft?.headerDirtyAt !== undefined}
-          // THE FIGURE THE AMBER BANNER ABOVE ALREADY DRAWS, handed down rather than recounted in the
-          // card. Without it the card could report a submission over stages the repository has never
-          // heard of — see {@link SubmissionCard}'s `unsentStages`.
           unsentStages={unsentStages}
           offline={offline}
           onStatusChanged={setConfirmedStatus}
@@ -1843,11 +899,6 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         />
       ) : null}
 
-      {/*
-        THE SIGN-OFF SCREEN, FOR THE ONE READER WHO TAKES IT — a link and never buttons. A Ministry Admin
-        who opened this workshop reaches this page as its creator, and the decision is taken on the
-        report's own screen, beside the stages read for it.
-      */}
       {detail && !neverSent && canApproveDesignWorkshops(user) ? (
         <p className="mb-5 text-sm leading-6 text-ink-700">
           <Link className="font-medium text-purple-700 dark:text-purple-300 underline" href={`/design-workshop-approvals/${draft?.remoteId ?? id}`}>
@@ -1856,8 +907,6 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         </p>
       ) : null}
 
-      {/* EVERY DECISION TAKEN ON THE REPORT, newest first — an inspector's send-back, and the Ministry
-          Admin's approval, withdrawal, return and hand-on. Drawn only when there is one. */}
       {decisions.length ? (
         <section className="panel mb-5 grid gap-3 p-4">
           <h2 className="text-sm font-medium text-ink-900">Decisions on this report</h2>
@@ -1878,45 +927,22 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         </section>
       ) : null}
 
-      {/* DIRECTLY UNDER THE SUBMISSION CARD, because it is the answer to the question that card's
-          status raises. A designer who reads "Needs revision" and has to scroll past twenty-two
-          stage rows to find out WHY has been told half a sentence. */}
       <InspectionFeedbackPanel
         rows={inspectionFeedback}
         status={confirmedStatus ?? detail?.status ?? ""}
         truncated={feedbackTruncated}
       />
 
-      {/*
-        ABOVE THE SEARCH PANEL AND THE STAGE INDEX, AND THAT PLACEMENT IS THE POINT.
-
-        Six different refusals — server dictation and all five AI verbs — end with "Open the
-        workshop's own screen and record the artisan's answer to that question". This IS that screen,
-        and a designer arriving from one of those sentences must find the control without reading
-        twenty-two progress bars first. It sits below the workshop's own detail panel because the
-        answer belongs to the workshop rather than to any stage.
-
-        Drawn only once the local draft has loaded: the card's whole job is to state what is on
-        record, and drawing it against "NOT_RECORDED" while the draft is still being read would show
-        every workshop as unanswered for a moment and invite a designer to re-ask a question that
-        already has an answer.
-      */}
       {draft ? (
         <DictationConsentCard
           draftLocalId={draft.localId}
           remoteId={draft.remoteId}
           consent={draft.consent?.decision ?? "NOT_RECORDED"}
           recordedAt={draft.consent?.recordedAt ?? null}
-          // The device's own name for the recorder is used when the server has not named one — after
-          // an offline answer there is no server copy to resolve, and "Recorded" with no name at all
-          // would read as though nobody had.
           recordedByName={consentByName ?? draft.consent?.recordedByName ?? null}
           synced={draft.consent ? draft.consent.synced : true}
           readOnlyReason={heldPostReason(postRefusal)}
           onRecorded={() => {
-            // Re-read from IndexedDB rather than patching state here: `recordDraftConsent` is the
-            // one writer, and a second reconstruction of the record in this component is how the
-            // screen and the store come to disagree about what is on record.
             void loadDraft(draft.localId).then((refreshed) => {
               if (refreshed) setDraft(refreshed);
             });
@@ -1924,19 +950,12 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         />
       ) : null}
 
-      {/* The workshop's forms, grouped by kind, Start session and the annexure as it will print
-          (UNIFY 4.2). A workshop still only on this device has no server id to bind forms to. */}
       {draft?.remoteId ? <WorkshopQuestionnairesCard designWorkshopId={draft.remoteId} /> : null}
 
-      {/* Above the stage index and below the header, because the question it answers ("where did I
-          write that?") is asked INSTEAD of reading the list below, not after it. */}
       <WorkshopSearchPanel workshopId={id} index={searchIndex} ready={registry !== null && draft !== null} />
 
       <section className="panel overflow-hidden">
         {registry === null || draft === null ? (
-          // NO NUMBER HERE AT ALL, and that is the point rather than a shortening: this branch renders
-          // precisely because the registry has NOT been read, so the stage count is the one fact this
-          // line cannot know. Printing 22 while waiting to find out is a guess dressed as a fact.
           <div className="p-4 text-sm text-ink-700">Loading the stages…</div>
         ) : (
           <ol>
@@ -1948,16 +967,11 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
       </section>
 
       {registry && serverSchemaVersion && registry.version !== serverSchemaVersion ? (
-        // Not decoration. `schemaVersion` is the digest of the registry this record was last
-        // WRITTEN against; a mismatch means fields have been added, removed or retyped since, and a
-        // designer who sees a new box appear on a stage they finished last week deserves to know
-        // why rather than assuming they missed it.
         <p className="mt-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
           The form has new fields since this workshop was last saved.
         </p>
       ) : null}
 
-      {/* Content admins in admin view; a soft delete, so it says where the workshop goes. */}
       <div className="mt-5">
         <RecordDangerZone
           noun="design workshop"

@@ -8,41 +8,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * The model CHOICE — advice rather than a verdict — on the desktop JVM.
- *
- * ── WHAT THIS FILE IS FOR ─────────────────────────────────────────────────────────────────────
- *
- * `DwDeviceTierTest` pins that this app never names a model nobody has weighed. This file pins the
- * half that comes after that: given models that HAVE been weighed, the app tells a designer what
- * each would cost on their own handset, lets them pick one the probe would not have picked, and
- * refuses — in exactly three arithmetic cases and one measured one — the ones that cannot run at
- * all.
- *
- * The two ways this can go wrong are opposites and both are pinned below:
- *
- *  * **Paternalism.** A model that would fit, refused because a chosen margin says so. The margins
- *    are chosen numbers ([DW_MODEL_FREE_RAM_MARGIN_BYTES] says so in its own comment), and a
- *    designer who works with the charger in and nothing else open knows something about their day
- *    that one reading of `availMem` does not.
- *  * **A crash sold as a choice.** A model larger than the phone, offered because "the user can
- *    decide". They cannot decide their way past a resident set larger than the machine.
- *
- * ── THE FIXTURE RULE, INHERITED ───────────────────────────────────────────────────────────────
- *
- * Every plan here is called `NOT_A_REAL_*`, every number in it is round, and no handset in this file
- * is named after a real one. `DwLanguagePackTest`'s scar — a fixture named for the fleet's own M32
- * asserting capabilities it did not have — is the reason.
- */
 class DwModelChoiceTest {
 
     private val mib: Long = 1024L * 1024L
 
-    // ---------------------------------------------------------------------------------------
-    // Fixtures — shaped, not measured
-    // ---------------------------------------------------------------------------------------
-
-    /** 3,700 MiB reported, 1,100 MiB free, 12,000 MiB of storage, 64-bit. Not a reading. */
     private val ordinaryPhone = DwDeviceMeasurement(
         totalRamBytes = 3_700L * mib,
         availableRamBytes = 1_100L * mib,
@@ -68,19 +37,12 @@ class DwModelChoiceTest {
 
     private val phoneThatWouldNotAnswer = DwDeviceMeasurement()
 
-    /**
-     * A SMALL MODEL THAT DOES NOT EXIST. 200 MiB resident, 150 MiB on disk — small enough to be
-     * comfortable on [ordinaryPhone] with both margins intact (needs 712 MiB free memory and
-     * 1,174 MiB free storage).
-     */
     private val NOT_A_REAL_SMALL_MODEL = DwModelPlan(
         modelId = "not-a-real-small-model",
         quantisation = "int4",
         abi = "arm64-v8a",
         languages = listOf("hi-IN", "en-IN"),
         contextCapTokens = 1024,
-        // A DECODER-SHAPED FIXTURE, so the cap above is the envelope and this sentence
-        // restates it. Nothing here was measured; see this file's fixture rule.
         runBound = "one generation at the invented 1,024-token context cap above",
         onDiskBytes = 150L * mib,
         peakRssBytes = 200L * mib,
@@ -88,11 +50,6 @@ class DwModelChoiceTest {
         survivesBackgrounding = true,
     )
 
-    /**
-     * A MIDDLING MODEL THAT DOES NOT EXIST. 900 MiB resident: it fits in [ordinaryPhone]'s
-     * 1,100 MiB free, but not with the 512 MiB margin — 1,412 MiB needed against 1,100 MiB free —
-     * so it is the TIGHT case this whole lane is about.
-     */
     private val NOT_A_REAL_MIDDLING_MODEL = NOT_A_REAL_SMALL_MODEL.copy(
         modelId = "not-a-real-middling-model",
         languages = listOf("or-IN"),
@@ -100,7 +57,6 @@ class DwModelChoiceTest {
         peakRssBytes = 900L * mib,
     )
 
-    /** A MODEL LARGER THAN THE PHONE. 4,000 MiB resident against 3,700 MiB reported in total. */
     private val NOT_A_REAL_HUGE_MODEL = NOT_A_REAL_SMALL_MODEL.copy(
         modelId = "not-a-real-huge-model",
         languages = listOf("or-IN", "bn-IN"),
@@ -119,21 +75,8 @@ class DwModelChoiceTest {
         NOT_A_REAL_HUGE_MODEL,
     )
 
-    // ---------------------------------------------------------------------------------------
-    // Today's answer. If any of these change, the shipped promise has changed
-    // ---------------------------------------------------------------------------------------
-
     @Test
     fun `the list is the catalogue judged, and no control is ever drawn without a connection`() {
-        /*
-         * THE INVARIANTS, ASSERTED AGAINST WHATEVER THE SHIPPED CATALOGUES CONTAIN.
-         *
-         * DELIBERATELY NOT "the catalogues are empty" — `DwDeviceTierTest` already owns that
-         * tripwire, and a second copy of it would put two red tests behind one conversation the day
-         * somebody adds a measured row. What this pins instead survives that day: nothing is hidden
-         * from the list, nothing that cannot run is offered, and nothing that spends data is offered
-         * to a handset with no connection to spend it on.
-         */
         listOf(ordinaryPhone, roomyPhone, goEditionPhone, phoneThatWouldNotAnswer).forEach { phone ->
             DwConnection.entries.forEach { connection ->
                 val recommendation = dwRecommendTiers(phone, connection)
@@ -160,8 +103,6 @@ class DwModelChoiceTest {
                 }
             }
         }
-        // AND TODAY, WITH THE CATALOGUES AS SHIPPED, THAT COMES TO NOTHING ON EVERY HANDSET.
-        // Written as a consequence of the emptiness rather than as a second assertion of it.
         if (DW_TIER1_CATALOGUE.isEmpty() && DW_TIER2_CATALOGUE.isEmpty()) {
             val recommendation = dwRecommendTiers(ordinaryPhone, DwConnection.UNMETERED)
             assertTrue(recommendation.tier1Choices.isEmpty() && recommendation.tier2Choices.isEmpty())
@@ -171,21 +112,6 @@ class DwModelChoiceTest {
 
     @Test
     fun `every language a catalogued model claims is one this app actually offers`() {
-        /*
-         * THE ASSERTION [DwModelPlan]'s CONSTRUCTOR CANNOT MAKE. The nineteen live in a Compose file
-         * and the data layer may not import it, so the membership check lives here — and it has to,
-         * because a model row claiming `od-IN` (not a real tag; Odia is `or`) would silently cover
-         * no language at all while looking like coverage on the card.
-         *
-         * THE COMPARISON IS `dwTagCovers` AND NOT EQUALITY AFTER NORMALISATION, which is what this
-         * check used to do. Normalisation folds separator and case only, so a row measured against a
-         * bare `or` — legitimate, and exactly what `dwModelServesLanguage` widens to cover `or-IN` —
-         * failed this assertion while serving Odia perfectly well. A test that rejects an honest
-         * catalogue row is a test that sends whoever adds the first one down a wrong path, and the
-         * one rule about tags in this app has to be the same rule everywhere it is asked. It still
-         * catches everything it was written for: `en-US` covers no offered row, because the widening
-         * deliberately does not run the other way, and `od-IN` covers nothing at all.
-         */
         val offered = DW_DICTATION_LANGUAGES.map { it.tag }
         (DW_TIER1_CATALOGUE + DW_TIER2_CATALOGUE).forEach { plan ->
             plan.languages?.forEach { tag ->
@@ -195,8 +121,6 @@ class DwModelChoiceTest {
                 )
             }
         }
-        // AND THE CHECK ITSELF IS NOT VACUOUS WHILE BOTH CATALOGUES ARE EMPTY. Asserted against the
-        // shapes it exists to reject, so an edit that neutered it goes red rather than going quiet.
         assertTrue("a bare language tag covers its region", offered.any { dwTagCovers("or", it) })
         assertFalse("en-US must never be read as English (India)", offered.any { dwTagCovers("en-US", it) })
         assertFalse("od-IN is not a language this app offers", offered.any { dwTagCovers("od-IN", it) })
@@ -213,14 +137,9 @@ class DwModelChoiceTest {
             "two spellings of one tag are one language to every comparison in this app",
             duplicated.isFailure
         )
-        // And the two honest empties are both constructible, because they are different facts.
         assertNotNull(NOT_A_REAL_SMALL_MODEL.copy(languages = null))
         assertNotNull(NOT_A_REAL_SMALL_MODEL.copy(languages = emptyList()))
     }
-
-    // ---------------------------------------------------------------------------------------
-    // THE LINE — three arithmetic refusals and one measured one
-    // ---------------------------------------------------------------------------------------
 
     @Test
     fun `a model larger than the phone's whole memory will not fit, and consent cannot buy it`() {
@@ -238,8 +157,6 @@ class DwModelChoiceTest {
 
     @Test
     fun `a model exactly the size of the phone's memory is refused, not merely tight`() {
-        // The equal case, which is the one a `>` would have let through: a resident set that is the
-        // whole of reported memory leaves nothing for the kernel, Compose or this app's own draft.
         val exact = NOT_A_REAL_SMALL_MODEL.copy(peakRssBytes = 3_700L * mib)
         assertEquals(DwModelFit.WILL_NOT_FIT, dwModelFit(exact, ordinaryPhone).fit)
         val oneByteSmaller = NOT_A_REAL_SMALL_MODEL.copy(peakRssBytes = 3_700L * mib - 1)
@@ -267,12 +184,6 @@ class DwModelChoiceTest {
 
     @Test
     fun `a load that already failed on this handset outranks every piece of arithmetic`() {
-        /*
-         * PLAN §2.1'S RULE, AS A REFUSAL: "if a load fails on a device the table said was fine, that
-         * is data". The model below is comfortable by every number, and the handset has already
-         * proved the numbers wrong. Evidence wins, and it wins BEFORE the arithmetic runs — a
-         * version that checked the fit first would print "comfortable" for the length of one branch.
-         */
         val failed = listOf(
             DwLoadFailureNote(
                 tier = DwAiTier.TIER_1,
@@ -289,8 +200,6 @@ class DwModelChoiceTest {
 
     @Test
     fun `the same model at a different context cap is a different run and is not retired`() {
-        // [DwLoadFailureNote]'s own rule. The same weights at a smaller cap may well load, and
-        // refusing it would retire a model on the strength of an experiment nobody performed.
         val failed = listOf(
             DwLoadFailureNote(
                 tier = DwAiTier.TIER_1,
@@ -325,10 +234,6 @@ class DwModelChoiceTest {
         assertEquals(DwModelFit.WILL_NOT_FIT, tier2.single().fit)
     }
 
-    // ---------------------------------------------------------------------------------------
-    // TIGHT — the fit that is offered anyway, with the cost said first
-    // ---------------------------------------------------------------------------------------
-
     @Test
     fun `a model that fits without the memory margin is offered, and says what it expects to cost`() {
         val choice = dwModelFit(NOT_A_REAL_MIDDLING_MODEL, ordinaryPhone)
@@ -340,11 +245,8 @@ class DwModelChoiceTest {
 
         val warning = dwModelOverrideSentence(choice)
         assertNotNull("an override must say what it expects to happen", warning)
-        // The user's own words for what this has to say, and the reason the camera is named.
         assertTrue(warning!!.contains("camera"))
         assertTrue(warning.contains("Android may close this app"))
-        // AND IT MUST SAY WHAT SURVIVES. A designer who believes a killed model takes the draft with
-        // it will never accept a tight fit; one who thinks nothing can go wrong is being misled.
         assertTrue(warning.contains("draft"))
         assertTrue(warning.contains("saved on the phone"))
         assertTrue("the model is named on the button, so it cannot be a blind yes",
@@ -365,13 +267,6 @@ class DwModelChoiceTest {
 
     @Test
     fun `Android's own low-memory flag never refuses, and never lets a model be comfortable`() {
-        /*
-         * WHERE THE LINE IS AND IS NOT. `isLowRamDevice` is the platform's considered verdict about
-         * a build and the OEM configuration behind it knows things a memory total does not — so no
-         * model is ever COMFORTABLE on such a handset. But it is not a claim that the bytes will not
-         * fit, and this app does not refuse a download on somebody else's opinion when the
-         * arithmetic says it would run.
-         */
         val choice = dwModelFit(NOT_A_REAL_SMALL_MODEL, goEditionPhone)
         assertEquals(DwModelFit.TIGHT, choice.fit)
         assertTrue(choice.notes.contains(DwFitNote.ANDROID_CALLS_THIS_A_LOW_MEMORY_DEVICE))
@@ -383,18 +278,12 @@ class DwModelChoiceTest {
 
     @Test
     fun `every crossed margin is reported, not only the first`() {
-        // "Tight on memory" and "tight on memory AND storage" are different decisions, and a
-        // designer about to spend a gigabyte is owed both halves before the tap.
         val squeezed = ordinaryPhone.copy(freeStorageBytes = 1_000L * mib)
         val choice = dwModelFit(NOT_A_REAL_MIDDLING_MODEL, squeezed)
         assertEquals(DwModelFit.TIGHT, choice.fit)
         assertTrue(choice.notes.contains(DwFitNote.LITTLE_STORAGE_LEFT_OVER))
         assertTrue(choice.notes.contains(DwFitNote.LITTLE_FREE_MEMORY_RIGHT_NOW))
     }
-
-    // ---------------------------------------------------------------------------------------
-    // UNMEASURED — a refusal that is not about the phone being small
-    // ---------------------------------------------------------------------------------------
 
     @Test
     fun `a handset that would not answer gets neither a yes nor a verdict`() {
@@ -429,23 +318,8 @@ class DwModelChoiceTest {
         )
     }
 
-    // ---------------------------------------------------------------------------------------
-    // THE SUGGESTION AND THE CHOICES CANNOT DISAGREE
-    // ---------------------------------------------------------------------------------------
-
     @Test
     fun `comfortable is exactly what the suggestion arithmetic already called a fit`() {
-        /*
-         * THE MECHANICAL GUARD THAT THE ADVICE LAYER DID NOT FORK THE ARITHMETIC. [dwPlanFits] is
-         * what `dwBestPlan` — and therefore every offer this app has ever made — decides from. If
-         * these two ever disagree, one card would suggest a model the list beneath it calls tight.
-         *
-         * EVERY READING BELOW IS ONE THE PROBE CAN ACTUALLY PRODUCE. The one combination left out —
-         * a null total with a live `availMem` beside it — is unreachable and is asserted separately
-         * in the next test, for the reason `dwPlanFits` gives in its own docstring: both figures
-         * come out of ONE `MemoryInfo` read in `DwDeviceProbe.kt`, so a reading cannot lose the
-         * total and keep the free figure.
-         */
         val phones = listOf(ordinaryPhone, roomyPhone, goEditionPhone, phoneThatWouldNotAnswer,
             ordinaryPhone.copy(freeStorageBytes = 1_000L * mib),
             ordinaryPhone.copy(availableRamBytes = 300L * mib),
@@ -469,19 +343,6 @@ class DwModelChoiceTest {
 
     @Test
     fun `on the one unreachable reading the two differ, and the choice is the stricter of them`() {
-        /*
-         * A NULL TOTAL WITH A LIVE FREE FIGURE. `dwPlanFits` lets it through — total is consulted
-         * there only as a durable ceiling and the free-memory gate does the work — while
-         * [dwModelFit] refuses it, because the LINE it draws ("larger than this phone's whole
-         * memory") cannot be tested without a total, and a line that quietly stops being checked
-         * when a signal goes missing is not a line.
-         *
-         * THE DIVERGENCE IS RECORDED RATHER THAN REMOVED because it cannot be reached: both figures
-         * come from one `MemoryInfo` read, so this reading does not arrive from any handset. What is
-         * asserted is the direction — the newer function is the stricter one — so that if some
-         * future probe DOES produce it, the card refuses a download it cannot judge instead of
-         * offering one it cannot size.
-         */
         val impossible = ordinaryPhone.copy(totalRamBytes = null)
         assertNull("dwPlanFits still allows it", dwPlanFits(NOT_A_REAL_SMALL_MODEL, impossible))
         assertEquals(
@@ -518,8 +379,6 @@ class DwModelChoiceTest {
 
     @Test
     fun `nothing is suggested where nothing is comfortable, and every row is still listed`() {
-        // A phone where the whole catalogue is tight or worse. The list must not go empty: a
-        // designer who has heard a model exists needs to find out HERE that it will not fit.
         val squeezed = ordinaryPhone.copy(availableRamBytes = 600L * mib)
         val offer = dwBestPlan(catalogue, squeezed, emptyList())
         assertTrue(offer is DwTierOffer.None)
@@ -527,10 +386,6 @@ class DwModelChoiceTest {
         assertEquals(catalogue.size, choices.size)
         assertTrue(choices.none { it.suggested })
     }
-
-    // ---------------------------------------------------------------------------------------
-    // The order of the list
-    // ---------------------------------------------------------------------------------------
 
     @Test
     fun `the list reads comfortable, tight, unmeasured, will-not-fit, and is deterministic`() {
@@ -542,8 +397,6 @@ class DwModelChoiceTest {
             listOf(DwModelFit.COMFORTABLE, DwModelFit.TIGHT, DwModelFit.WILL_NOT_FIT, DwModelFit.WILL_NOT_FIT),
             fits
         )
-        // Twice over the same reading gives the same order: a list that reordered itself under a
-        // designer's finger would move the row they were reaching for as they reached for it.
         assertEquals(
             choices.map { it.plan.modelId },
             dwModelChoices(
@@ -565,27 +418,8 @@ class DwModelChoiceTest {
             dwModelChoiceIntroSentence(emptyList()))
     }
 
-    // ---------------------------------------------------------------------------------------
-    // The sentences
-    // ---------------------------------------------------------------------------------------
-
     @Test
     fun `a choice sentence names the model and what the download costs, and stops there`() {
-        /*
-         * ── THIS TEST WAS INVERTED ON 2026-08-16, AND THE INVERSION IS THE POINT ──────────────
-         *
-         * It used to require the quantisation tag (`int4`), the run bound and its `1,024-token
-         * context cap`, the peak-memory figure and the name of the handset the figures came off —
-         * five engineering values, ASSERTED ONTO A ROW A DESIGNER READS. That is how the surface the
-         * repository owner has now rejected four times kept growing back after each cut: the prose
-         * was trimmed and the test pulled it straight back in.
-         *
-         * A row exists to answer "should I spend this download". The model's name and the size
-         * answer it; nothing else here does. So the two that survive are asserted, and the five that
-         * went are asserted ABSENT — a test that only checks what is present cannot stop the essay
-         * returning. They remain on [DwModelPlan] for whoever is choosing which model to ship, and
-         * `DwModelChoiceTest` still covers them there.
-         */
         val choice = dwModelFit(NOT_A_REAL_SMALL_MODEL, ordinaryPhone)
         val sentence = dwModelChoiceSentence(choice, ordinaryPhone)
         assertTrue(sentence.contains(NOT_A_REAL_SMALL_MODEL.modelId))
@@ -607,10 +441,6 @@ class DwModelChoiceTest {
 
     @Test
     fun `a model that does not survive backgrounding says so wherever it is offered`() {
-        // The rule [DwModelPlan.survivesBackgrounding] exists for: a designer takes a photograph
-        // mid-summary, and if that kills the process the summary goes with it. The clause was cut
-        // from 24 words to 16 on 2026-08-16; what it may never lose is the CAMERA, because that is
-        // the one thing a designer is certain to do and the only part they can act on.
         val fragile = NOT_A_REAL_SMALL_MODEL.copy(survivesBackgrounding = false)
         val sentence = dwModelChoiceSentence(dwModelFit(fragile, ordinaryPhone), ordinaryPhone)
         assertTrue(sentence.contains("It stops if you leave the app"))
@@ -641,32 +471,17 @@ class DwModelChoiceTest {
 
     @Test
     fun `the count is what the model covers of the nineteen, not the length of its own list`() {
-        /*
-         * THE SENTENCE SAYS "N OF THIS APP'S LANGUAGES", SO N HAS TO BE COUNTED AGAINST THIS APP'S
-         * LANGUAGES. Counting the artifact's own tags instead — which is what this replaced —
-         * overstates on the one screen where overstating costs a designer a download they cannot
-         * use, and it does it in the two shapes below.
-         */
         val labels = DW_DICTATION_LANGUAGES.associate { it.tag to it.label }
 
-        // 1. A REGION THAT DOES NOT MATCH. `dwTagCovers` is deliberately asymmetric — en-US does not
-        //    cover en-IN — because English (India) transcribed by a US model is the silent-wrong-
-        //    output failure. The row must not claim it as coverage.
         val american = NOT_A_REAL_SMALL_MODEL.copy(languages = listOf("en-US"))
         val americanSentence = dwModelLanguagesSentence(american, labels)
         assertTrue(americanSentence.contains("serves none of this app's dictation languages"))
         assertTrue("and it names the tag, so a wrong catalogue row can be found", americanSentence.contains("en-US"))
         assertFalse("it hears none of them, so it may not claim one", americanSentence.contains("hears 1"))
 
-        // 2. A TAG THIS APP DOES NOT OFFER AT ALL. `od-IN` is the plausible typo (Odia is `or`), and
-        //    printed as a raw tag beside a count it reads to a designer as a language they could
-        //    dictate in.
         val typo = NOT_A_REAL_SMALL_MODEL.copy(languages = listOf("od-IN"))
         assertFalse(dwModelLanguagesSentence(typo, labels).contains("hears 1"))
 
-        // 3. AND THE WIDENING STILL COUNTS, WITH THE NAME A DESIGNER READS. A model measured against
-        //    a bare `or` serves every region of it — which the earlier version printed as the string
-        //    "or", because a bare tag is not a key of the label map.
         val bare = NOT_A_REAL_SMALL_MODEL.copy(languages = listOf("or"))
         val bareSentence = dwModelLanguagesSentence(bare, labels)
         assertTrue(bareSentence.contains("hears 1 of this app's languages: Odia"))
@@ -674,13 +489,6 @@ class DwModelChoiceTest {
 
     @Test
     fun `a handset that would not answer is never told none of its models can be run`() {
-        /*
-         * THE HONEST-UNKNOWN RULE, IN THE ONE LINE ABOVE THE LIST. Every row on a phone that would
-         * not say what processor it has is UNMEASURED, and the arm this replaced printed "none of
-         * them can be run on this phone" for it — a verdict manufactured out of a missing reading,
-         * which is the thing this file's own header forbids. A designer told their phone cannot run
-         * any of these buys a different phone; one told the reading failed taps “Check again”.
-         */
         val choices = dwModelChoices(catalogue, phoneThatWouldNotAnswer, emptyList(), null, DwAiTier.TIER_1)
         assertTrue(choices.all { it.fit == DwModelFit.UNMEASURED })
         val intro = dwModelChoiceIntroSentence(choices)!!
@@ -691,25 +499,14 @@ class DwModelChoiceTest {
 
     @Test
     fun `the marking is only explained where a row carries it`() {
-        // A sentence pointing at an empty set reads as a broken card — the rule
-        // `dwCoverageSummarySentence` keeps for its own closing clause, applied to this one. On a
-        // phone where nothing is comfortable, no row is marked, so the copy explaining the marking
-        // must not be printed; the absence is explained instead, because a missing marking otherwise
-        // reads as a rendering fault.
         val squeezed = ordinaryPhone.copy(availableRamBytes = 600L * mib)
         val choices = dwModelChoices(catalogue, squeezed, emptyList(), dwBestPlan(catalogue, squeezed, emptyList()), DwAiTier.TIER_1)
         assertTrue(choices.none { it.suggested })
         val intro = dwModelChoiceIntroSentence(choices)!!
         assertFalse("there is no such row to point at", intro.contains("The one marked"))
         assertTrue(intro.contains("Nothing is marked"))
-        // And the capitalisation of the clause that opens after a full stop, which read as a
-        // truncated string in two of the four arms.
         assertTrue(intro.contains(". None is comfortable here"))
     }
-
-    // ---------------------------------------------------------------------------------------
-    // A failed load says what changed, and does not disown advice the app actually gave
-    // ---------------------------------------------------------------------------------------
 
     @Test
     fun `a load that failed after an override does not claim the reading said it would fit`() {
@@ -727,7 +524,6 @@ class DwModelChoiceTest {
         )
         assertFalse(sentence.contains("although its memory and storage said it would fit"))
 
-        // And the ordinary case is unchanged: the table WAS wrong, and that is the data.
         val surprise = chosen.copy(chosenAgainstAdvice = false)
         assertTrue(
             dwFallbackAfterLoadFailure(surprise, DwConnection.METERED).sentence

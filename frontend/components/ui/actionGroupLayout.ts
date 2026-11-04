@@ -1,18 +1,3 @@
-/**
- * The one layout rule for a row of buttons, as a pure function so a spec can call it.
- *
- * - ONE button on its line is centred. A form's primary action pinned in a footer passes `fill`,
- *   which keeps it full width on a phone. Inside a list row or table cell (`inline`), a lone action
- *   follows `align` instead, so a column of row actions stays aligned whether a row has one or three.
- * - TWO share one line: equal halves on a phone, content-fit from `sm` up. At every width a label
- *   wraps inside its button rather than pushing the pair past a narrow card or cell.
- * - THREE OR MORE stack full width below `sm` and become one row of pills from `sm` up. A child
- *   marked `data-danger` goes last and is set apart.
- *
- * Every class string is written out in full: Tailwind reads source text, so an interpolated class
- * compiles to nothing.
- */
-
 export type ActionGroupAlign = "start" | "center" | "end";
 
 export type ActionGroupShape = "one" | "two" | "many";
@@ -50,7 +35,6 @@ const JUSTIFY_MANY: Record<ActionGroupAlign, string> = {
   end: "sm:justify-end"
 };
 
-/** The class list for a group of `count` actions. */
 export function actionGroupClass(
   count: number,
   align: ActionGroupAlign = "center",

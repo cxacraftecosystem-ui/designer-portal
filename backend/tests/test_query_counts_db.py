@@ -1,15 +1,3 @@
-"""How many SQL statements the fixed paths send to Postgres — pinned, and pinned NOT TO GROW WITH ROWS.
-
-Every test here counts with :mod:`query_count_support` (the query engine's own statement counter) and
-asserts one of two things about a path that used to issue a statement per row: that it now costs the
-SAME for a small and a larger set of rows, or that it stays under a fixed ceiling whatever the data.
-The failure message prints both counts, so a regression says what it costs, not only that it moved.
-
-Each test runs its whole story in one private ``asyncio.run`` — connect, seed, count, clean up — the
-order ``conftest.py`` prescribes, and talks to the app over ASGI without its lifespan, so no background
-task (the connection watchdog, the usage flush) can add a statement to a count.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -56,7 +44,6 @@ def _auth(user: Any) -> dict[str, str]:
 
 
 async def _quietly(*cleanups: Any) -> None:
-    """Best-effort cleanup: a row another table still points at is left for the next run's stamp."""
     for cleanup in cleanups:
         with contextlib.suppress(Exception):
             await cleanup
@@ -66,14 +53,9 @@ def _same(small: int, large: int, what: str) -> None:
     assert large == small, f"{what}: {small} statements for the small set, {large} for the larger one"
 
 
-# ── The queue process: an idle pass ──────────────────────────────────────────────────────────────
-
 
 @needs_db
 def test_the_export_sweep_skips_the_stale_lock_recovery_between_minutes_and_still_expires_files():
-    """``recover_and_purge(recover=False)`` is the five-second pass: the expiry only. The two stale-
-    lock sweeps (thirty-minute locks) run on the once-a-minute pass — two of them each wrapped in
-    its own transaction, every pass, on production."""
     from datetime import UTC, datetime, timedelta
 
     from app.services import ministry_export as exports
@@ -112,17 +94,14 @@ def test_the_export_sweep_skips_the_stale_lock_recovery_between_minutes_and_stil
             )
 
     seen = _private(work)
-    # The expiry still lands on the five-second pass; the stale lock waits for the minute.
     assert seen["after_between"][seen["expired"]] == "EXPIRED"
     assert seen["after_between"][seen["stale"]] == "RUNNING"
     assert seen["stale_after"] == "QUEUED"
-    # One update_many (BEGIN, UPDATE, COMMIT) between minutes; three on the minute.
     assert seen["between"] <= 3, seen
     assert seen["minute"] > seen["between"], seen
 
 
 def test_a_drain_pass_hands_recover_to_every_sweep_it_runs(monkeypatch):
-    """``worker.drain_pass`` forwards the once-a-minute decision to all three services."""
     from app import worker
 
     seen: dict[str, Any] = {}
@@ -154,8 +133,6 @@ def test_a_drain_pass_hands_recover_to_every_sweep_it_runs(monkeypatch):
 
 
 def _quiet_drain(monkeypatch: Any, worker: Any) -> None:
-    """Every service ``drain_pass`` calls, answering nothing."""
-
     async def nothing(*_args: Any, **_kwargs: Any) -> None:
         return None
 
@@ -171,7 +148,6 @@ def _quiet_drain(monkeypatch: Any, worker: Any) -> None:
 
 
 def test_a_drain_pass_says_whether_its_sweep_held(monkeypatch):
-    """A recovering service that raises makes the pass answer False — the sweep did not happen."""
     from app import worker
 
     _quiet_drain(monkeypatch, worker)
@@ -186,13 +162,10 @@ def test_a_drain_pass_says_whether_its_sweep_held(monkeypatch):
 
         monkeypatch.setattr(worker, failing, down)
         assert asyncio.run(worker.drain_pass(settings, recover=True, search=False)) is False, failing
-        # Not asked to recover, a failure says nothing about the sweep's clock.
         assert asyncio.run(worker.drain_pass(settings, recover=False, search=False)) is True, failing
 
 
 def test_the_minute_gate_restarts_only_from_a_sweep_that_held(monkeypatch):
-    """``_run``: the first pass sweeps; a failed sweep is tried again on the very next pass; a sweep
-    that held starts the minute, and nothing sweeps again until it has passed."""
     import pytest
 
     from app import worker
@@ -203,7 +176,6 @@ def test_the_minute_gate_restarts_only_from_a_sweep_that_held(monkeypatch):
     async def nothing(*_args: Any, **_kwargs: Any) -> None:
         return None
 
-    # (clock reading, what the pass answers when asked to sweep)
     script = [(0.0, False), (5.0, True), (10.0, True), (64.0, True), (65.0, True), (70.0, True)]
     clock = iter(at for at, _ in script)
     outcomes = iter(held for _, held in script)
@@ -230,18 +202,12 @@ def test_the_minute_gate_restarts_only_from_a_sweep_that_held(monkeypatch):
     monkeypatch.setattr(worker, "drain_pass", drain)
     with pytest.raises(Stop):
         asyncio.run(worker._run())
-    # 0 s: first pass sweeps and fails. 5 s: tried again at once, holds. 10 s, 64 s: inside the
-    # minute that began at 5 s. 65 s: the minute is up. 70 s: inside the next one.
     assert asked == [True, True, False, False, True, False]
 
-
-# ── E-mail fan-out: one preference read per notice, not per recipient ───────────────────────────
 
 
 @needs_db
 def test_a_notice_reads_every_recipients_preference_in_one_statement():
-    """``_queue_for`` (access requests, review notes, approvals) read ``UserPreference`` once per
-    recipient. With mail off the queueing itself writes nothing, so what is left is that one read."""
     from app.services import email_outbox, mailer
 
     off = get_settings().model_copy(update={"mail_from_address": None})
@@ -269,7 +235,6 @@ def test_a_notice_reads_every_recipients_preference_in_one_statement():
 
 @needs_db
 def test_a_hand_in_notice_reads_every_recipients_choice_in_one_statement(monkeypatch):
-    """``notify_handed_in`` read each inspector's and approver's preference row one by one."""
     from app.services import email_outbox
 
     on = get_settings().model_copy(update={"mail_from_address": "qc@example.org"})
@@ -304,19 +269,9 @@ def test_a_hand_in_notice_reads_every_recipients_choice_in_one_statement(monkeyp
     assert (queued_small, queued_large) == (2, 7)
 
 
-# ── The craft master list: the review report and the seed loader ─────────────────────────────────
-
 
 @needs_db
 def test_the_craft_review_report_costs_the_same_for_two_legacy_crafts_or_seven():
-    """``GET /crafts/review`` (``map_crafts.plan``) read the spelling table twice and counted seven
-    tables once PER legacy craft. Now: one read of the spellings, one grouped read per table.
-
-    THE CRAFTS CARRY REFERENCES, AND DIFFERENT NUMBERS OF THEM, so the grouped count is checked as well
-    as its cost: every craft's ``references`` must equal what :func:`craft_master.reference_count`
-    counts for it alone. Each craft is named by its own tool twice over (``craftId`` and a ``ToolCraft``
-    row, which counts once), by a tool shared across its batch through ``ToolCraft``, by ``k % 3``
-    workshops, and by a product when ``k`` is even."""
     from datetime import UTC, datetime
 
     from app.services import craft_master as cm
@@ -370,7 +325,7 @@ def test_the_craft_review_report_costs_the_same_for_two_legacy_crafts_or_seven()
 
         try:
             async with asgi_client() as client:
-                await client.get("/api/crafts/review", headers=_auth(admin))  # warms the identity cache
+                await client.get("/api/crafts/review", headers=_auth(admin))
                 await legacy(2)
                 async with count_statements() as two:
                     first = await client.get("/api/crafts/review", headers=_auth(admin))
@@ -405,8 +360,6 @@ def test_the_craft_review_report_costs_the_same_for_two_legacy_crafts_or_seven()
 
 @needs_db
 def test_the_seed_loader_reads_the_master_list_in_a_handful_of_statements():
-    """``sync_master`` looked every category, sub-category and craft of the 455-row master list up by
-    slug, one read each. A run with nothing to change is now a few reads in all."""
     from app.services import craft_master as cm
 
     async def work() -> tuple[int, dict[str, int]]:
@@ -419,8 +372,6 @@ def test_the_seed_loader_reads_the_master_list_in_a_handful_of_statements():
     assert report["created"] == report["updated"] == 0, report
     assert statements <= 8, f"an idempotent sync_master issued {statements} statements"
 
-
-# ── Tasks: the chip counts ride the list ─────────────────────────────────────────────────────────
 
 
 @needs_db
@@ -470,8 +421,6 @@ def test_the_task_board_chip_counts_cost_one_grouped_read_and_match_the_per_stat
     assert seen["counts"] == seen["totals"] == {"OPEN": 2, "IN_PROGRESS": 1, "DONE": 1, "CANCELLED": 0}
     assert seen["with"] == seen["plain"] + 1, seen
 
-
-# ── Held posts: one answer for every workshop on a screen ────────────────────────────────────────
 
 
 @needs_db
@@ -530,7 +479,6 @@ def test_my_posts_answers_every_workshop_in_the_same_statements_however_many_the
     seen = _private(work)
     _same(seen["two"], seen["seven"], "GET /design-workshop-oversight/my-posts")
     assert sorted(seen["first"]["workshops"]) == sorted(seen["ids"][:2])
-    # The soft-deleted workshop is left out, as the per-workshop read answers 404 for it.
     assert sorted(seen["second"]["workshops"]) == sorted(seen["ids"][:-1])
     mine = seen["second"]["workshops"][seen["ids"][0]]
     assert mine["oversight"] == [{"capacity": "ASSISTANT_DIRECTOR", "userId": seen["admin"]}]
@@ -541,11 +489,8 @@ def test_my_posts_answers_every_workshop_in_the_same_statements_however_many_the
     }
 
 
-# ── Questionnaires: a reuse and an upload write their questions in bulk ──────────────────────────
-
 
 def _toolkit_questions(count: int) -> tuple[str, list[str]]:
-    """``count`` questions of one shared-code section, as (section code, prompts)."""
     from app.services import cross_portal_codes
 
     by_section: dict[str, list[str]] = defaultdict(list)
@@ -558,8 +503,6 @@ def _toolkit_questions(count: int) -> tuple[str, list[str]]:
 
 @needs_db
 def test_reusing_a_questionnaire_costs_the_same_for_two_coded_questions_or_eight():
-    """``POST /questionnaires/{id}/reuse`` then reconciled the shared codes by UPDATING every copied
-    toolkit question, one statement each. The copy now carries its codes from the insert."""
     from app.services import cross_portal_codes
 
     async def source(owner: Any, prompts: list[str], section: str) -> Any:
@@ -614,7 +557,6 @@ def test_reusing_a_questionnaire_costs_the_same_for_two_coded_questions_or_eight
 
 @needs_db
 def test_an_uploaded_section_is_written_in_the_same_statements_however_many_questions_it_has():
-    """``create_from_parsed`` (``POST /questionnaires/upload``) inserted its questions one by one."""
     from app.services.questionnaire_forms import create_from_parsed
     from app.services.questionnaire_xlsx import ParsedQuestion, ParsedQuestionnaire, ParsedSection
 
@@ -655,8 +597,6 @@ def test_an_uploaded_section_is_written_in_the_same_statements_however_many_ques
     _same(seen["two"], seen["nine"], "create_from_parsed")
 
 
-# ── Design workshops: new stage rows and new custom fields go in as one insert ───────────────────
-
 
 async def _admin_workshop(admin: Any) -> Any:
     return await db.designworkshop.create(data={"title": f"QC workshop {uuid.uuid4().hex[:8]}", "createdById": admin.id})
@@ -664,8 +604,6 @@ async def _admin_workshop(admin: Any) -> Any:
 
 @needs_db
 def test_saving_new_sketch_rows_costs_the_same_for_two_rows_or_seven():
-    """``PUT /design-workshops/{id}/stages/{key}`` inserted every new collection row on its own."""
-
     def body(count: int) -> dict[str, Any]:
         return {
             "entries": [
@@ -721,8 +659,6 @@ def test_saving_new_sketch_rows_costs_the_same_for_two_rows_or_seven():
 
 @needs_db
 def test_defining_a_custom_section_costs_the_same_for_two_fields_or_eight():
-    """``PUT /design-workshops/{id}/custom-sections`` inserted every new field on its own."""
-
     def definition(count: int) -> dict[str, Any]:
         return {
             "sections": [
@@ -773,14 +709,9 @@ def test_defining_a_custom_section_costs_the_same_for_two_fields_or_eight():
     _same(seen["two"], seen["eight"], "PUT /design-workshops/{id}/custom-sections")
 
 
-# ── The Monday summary: the whole estate is read once per pass ───────────────────────────────────
-
 
 @needs_db
 def test_every_administrators_summary_after_the_first_reads_nothing_more():
-    """``build_payload`` re-read the inspection holders and the six whole-estate figures for EVERY
-    administrator in a pass; they are the same answer for all of them, so the pass reads them once.
-    The payload itself is unchanged: it is compared with one built without the shared reads."""
     from datetime import UTC, datetime
 
     from app.services import weekly_digest

@@ -39,47 +39,13 @@ from app.services.workshop_access import (
 
 router = APIRouter(prefix="/crafts", tags=["crafts"])
 
-# One relation, so the wave saves nothing here — but the count no longer waits for the page, which
-# is a whole round trip off the craft dropdown every form opens with. That was a cross-region hop
-# when it was written and is a co-located one or two milliseconds since 2026-09-02
-# (``services/concurrency.py``); the read that does not have to wait for another still does not.
 RELATIONS = (Relation("workshop", "workshop", "workshopId"),)
 INCLUDE = include_of(RELATIONS)
 
-# CRAFT'S OWN NULLABLE SCALARS — the names ``clean_data`` must let an explicit ``null`` through for
-# on this model, so emptying a box on the craft form actually empties the column instead of
-# answering 200 and keeping the old value.
-#
-# THE FIFTH ROUTE, ADDED AFTER the artisan/product/tool/process wave: this route was never in that
-# sweep, so until now clearing a craft's category or description was the same silent no-op the other
-# four had. It matters less here than on Artisan — a craft is a taxonomy row, not a person, so
-# nothing on this list is a retraction — but "the box is empty, the save said OK, the value is still
-# there on the next load" is the same lie whatever the column holds.
-#
-# ``place`` IS THE ENTRY THAT PROVES WHY THIS TUPLE IS PER MODEL AND NOT GLOBAL. It is ``String?``
-# on Craft and NOT NULL on Artisan, ProductDocumentation and ToolDocumentation — the sibling routes
-# name it under "deliberately absent" for exactly that reason. Copying this tuple onto one of them
-# would turn an emptied box into a constraint violation; copying theirs onto this one would leave
-# ``place`` unclearable here. Derived from ``model Craft`` in prisma/schema.prisma, intersected with
-# what ``CraftUpdate`` actually accepts.
-#
-# Only valid because ``update_craft`` dumps with ``exclude_unset=True``; see the note at that call.
-#
-# DELIBERATELY ABSENT: ``name`` (NOT NULL, and @unique — the column the 409 below is about),
-# ``recordedAt``/``recordedTimezone`` (NOT NULL with defaults), ``workshopId`` (already in the global
-# ``records.CLEARABLE_KEYS``, which is what makes the unlink at the end of this route reachable), and
-# ``extraMetadata``, which would be inert: ``merge_field_provenance`` rebuilds and reassigns that
-# column further down this route, so a null could never reach Prisma through it. ``createdById`` is
-# nullable but is not a key ``CraftUpdate`` accepts.
 _CLEARABLE_COLUMNS = (
     "localName",
-    # ``category`` WAS HERE until the master craft list (2026-10-20): it is now the server's copy of the
-    # sub-category's category name, and a client's value is ignored on every write.
     "description",
     "place",
-    # The master craft list (2026-10-20). A null GI status means "not known". ``subCategoryId`` is
-    # NOT here: a craft on the list cannot leave its sub-category through an edit, and
-    # ``_master_list_update`` refuses that null with a 422 rather than ignoring it.
     "giStatus",
 )
 
@@ -90,13 +56,7 @@ async def list_crafts(
     search: str | None = None,
     place: str | None = None,
     workshopId: str | None = None,
-    # WHOSE CRAFTS — same parameter, same reason, as the record lists: My Activity asks the API for
-    # one person's entries instead of sifting page one of the whole taxonomy. Note that
-    # ``Craft.createdById`` is NULLABLE (the seeded taxonomy has no author), so this narrows to the
-    # crafts somebody actually added, which is exactly what the activity page wants.
     createdBy: str | None = None,
-    # THE MASTER LIST'S FILTERS (2026-10-20, docs/CRAFTS.md). ``state`` matches a state of origin or
-    # of practice; ``status`` defaults to ACTIVE, so a LEGACY or MERGED craft is listed only when asked.
     categoryId: str | None = None,
     subCategoryId: str | None = None,
     giStatus: str | None = None,
@@ -105,7 +65,6 @@ async def list_crafts(
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=500),
 ) -> dict[str, Any]:
-    # The cap is 500 here, not the shared 100: the admin table reads the whole list in one page.
     page, page_size = max(1, page), max(1, min(pageSize, 500))
     skip = (page - 1) * page_size
     where: dict[str, Any] = {}
@@ -132,9 +91,6 @@ async def list_crafts(
     if createdBy:
         where["createdById"] = createdBy
     if workshopId:
-        # Either reading counts: the craft's own workshopId column, or the WorkshopCraft join
-        # (relation named ``workshops``) that carried the link before the column existed. Nested under
-        # AND so it can never overwrite the free-text search OR above.
         and_clauses.append(
             {
                 "OR": [
@@ -145,15 +101,6 @@ async def list_crafts(
         )
     if and_clauses:
         where["AND"] = and_clauses
-    # ORDERING IS DELIBERATE — alphabetical by name, NOT newest-first. Do not flip it to
-    # ``createdAt desc`` for consistency with the other record lists: every consumer of this endpoint
-    # is a PICKER (the craft dropdown in the artisan/product/tool/workshop forms, the media entry
-    # picker, the funnel filters, Android's craft dropdown), and a picker is scanned by name — a
-    # recency order reshuffles it on every new craft. The two views that do want recency already
-    # re-sort client-side (``sortRecent`` on the web /data and activity pages,
-    # ``sortedByDescending { createdAt }`` on Android), so they are unaffected either way.
-    # ``name`` is unique only within a sub-category since the master list, so ``id`` breaks ties and
-    # the order stays total: pagination cannot repeat or skip.
     total, items = await count_and_page(
         db.craft,
         where=where,
@@ -166,10 +113,6 @@ async def list_crafts(
 
 
 async def _with_taxonomy(rows: Any) -> Any:
-    """Add each craft's ``categoryId`` (through its sub-category); a list also gets ``referenceCount``.
-
-    Reads nothing for a craft with no sub-category, which is every craft recorded before the list.
-    """
     many = isinstance(rows, list)
     items = [row for row in (rows if many else [rows]) if isinstance(row, dict)]
     if not items:
@@ -195,10 +138,6 @@ async def craft_catalogue(
     includeInactive: bool = False,
     current_user: Any = Depends(get_current_user),
 ) -> Any:
-    """The one list every craft picker reads (docs/CRAFTS.md). ``ETag``; a matching ``If-None-Match`` is 304.
-
-    Declared before ``/{craft_id}`` so the path is not read as a craft id.
-    """
     if includeInactive and not is_content_admin(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Content admin access required")
     catalogue = await craft_master.build_catalogue(db, include_inactive=includeInactive)
@@ -212,18 +151,6 @@ async def craft_catalogue(
 
 @router.get("/review")
 async def craft_review_queue(_: Any = Depends(require_content_admin)) -> dict[str, Any]:
-    """The "Needs review" tab on /crafts (content admins): what the master list has not absorbed yet.
-
-    ``crafts``: every LEGACY craft, with its references and what the mapping would do with it (a
-    curated or exact target, or a fuzzy ``proposed`` suggestion). ``records``: every record whose
-    typed craft text is not linked to a craft, kept in ``legacyCraftText`` or a free-text
-    ``craftName``. The same report as ``python -m app.scripts.map_crafts --dry-run``; it changes
-    nothing.
-
-    A record whose text now matches a craft (``action: "link"``, say after an admin added the craft
-    it names) stays in ``records`` until the link is made: only ``map_crafts --apply`` makes it, so
-    leaving it out would hide an unlinked record from everyone.
-    """
     from app.scripts import map_crafts
 
     rows = await map_crafts.plan(db)
@@ -270,9 +197,6 @@ async def create_craft(
     payload: CraftCreate, current_user: Any = Depends(require_craft_manager)
 ) -> dict[str, Any]:
     data = clean_data(payload.model_dump())
-    # THE MASTER LIST (2026-10-20): a new craft joins a sub-category. The server owns ``slug``,
-    # ``category`` (the compatibility copy of the category name) and ``status``; a client's
-    # ``category`` is ignored.
     sub = await _sub_category(data["subCategoryId"])
     await _assert_name_free(data["name"], sub.id)
     data.pop("category", None)
@@ -281,22 +205,16 @@ async def create_craft(
     data["category"] = sub.category.name
     data["slug"] = await craft_master.unique_slug(db.craft, data["name"])
     data["status"] = craft_master.ACTIVE
-    # Workshop entries: enforce assignment, then flag a late submission for admin approval. Craft has
-    # no status column, so pinning is a no-op here; wired for parity with the other record types.
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     stamp_workshop_submission(data, check=check)
     data["createdById"] = current_user.id
     merge_field_provenance(data, current_user, previous=None)
     pin_pending_if_late(data, current_user, check=check)
-    # The shared craft code (C26), set AFTER the provenance stamp: it is derived from the name, not
-    # a value the person typed, so it must not be recorded as theirs.
     data["craftCode"] = await cross_portal_codes.code_for_new_craft(db, data.get("name"))
     try:
         created = await db.craft.create(data=data, include=INCLUDE)
     except UniqueViolationError as exc:
-        # The (sub-category, name) index answering a race the check above lost.
         raise craft_master.craft_error("CRAFT_EXISTS", status.HTTP_409_CONFLICT) from exc
-    # The explicit column ADDS to the WorkshopCraft join every existing query still reads through.
     await link_workshop_craft(created.workshopId, created.id)
     return await _with_taxonomy(public_encode(created))
 
@@ -312,128 +230,38 @@ async def get_craft(craft_id: str, _: Any = Depends(get_current_user)) -> dict[s
 async def update_craft(
     craft_id: str,
     payload: CraftUpdate,
-    # A craft is the shared taxonomy every other record points at, so editing one is not a
-    # contribution to somebody's entry — it renames a category under everyone. Professor and above,
-    # the same floor as creating one; ``guard_record_edit`` below still audits and still decides
-    # whether THIS professor may overwrite a field another professor populated.
     current_user: Any = Depends(require_craft_manager),
 ) -> dict[str, Any]:
     craft = await require_record(db.craft, craft_id)
-    # A craft on the master list cannot leave its sub-category through an edit (2026-10-20). Asked of
-    # the body as sent, because ``clean_data`` would drop the null before anything else could see it.
     if "subCategoryId" in payload.model_fields_set and payload.subCategoryId is None and getattr(
         craft, "subCategoryId", None
     ):
         raise HTTPException(
             status_code=422, detail={"code": "SUB_CATEGORY_REQUIRED", "message": "Pick a sub-category."}
         )
-    # Read BEFORE anything writes: the mirrored WorkshopCraft row is keyed on the workshop the craft
-    # is LEAVING, and after ``db.craft.update`` below that value is gone — ``updated.workshopId`` is
-    # null in exactly the case that needs cleaning up. See the ``sync_workshop_craft`` call at the
-    # end of this route for the unlink this pairs with, and ``update_artisan`` for the twin.
     previous_workshop_id = craft.workshopId
-    # ``exclude_unset=True`` IS THE PRECONDITION OF ``clearable``, not a stylistic choice: it is what
-    # makes a present key mean "the caller sent this". Drop it and every optional the client left
-    # alone would arrive as ``None`` and be written as an explicit NULL over stored data.
     data = clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
-    # The precondition is a question, not a column — taken out of the body here, asked inside the
-    # transaction below. See ``records.take_expected_updated_at``.
     expected_updated_at = take_expected_updated_at(data)
     await _master_list_update(craft, data)
-    # Moving a record into (or between) workshops is a workshop submission too, so the create-time
-    # guard can't be bypassed by PATCHing the workshop in afterwards.
     check = None
     if "workshopId" in data and data.get("workshopId") != craft.workshopId:
         check = await enforce_workshop_submission(current_user, data.get("workshopId"))
-    # ONE TRANSACTION FOR THE AUDIT ROW AND THE ROW IT DESCRIBES (2026-09-03). ``guard_record_edit``
-    # ends in ``record_revision``, which used to COMMIT on its own one statement before the update
-    # below — so a request that died in the gap (P2024 on a cross-region pool, a dropped connection)
-    # left a ledger entry asserting a change to a craft that still holds the old name. See
-    # ``access.record_revision`` for the full argument; the ``client=tx`` is not optional decoration,
-    # because ``db.tx()`` hands back a DIFFERENT client and a callee writing through the module
-    # singleton is not in this block however it looks.
-    #
-    # THE REFUSALS STILL COME FIRST AND THE TRANSACTION DOES NOT MOVE THEM: ``guard_record_edit``
-    # raises 403 above its own write, and everything between it and the update either mutates
-    # ``data`` in place or, in ``apply_status_policy_update``'s case, reads one user row and DROPS an
-    # unauthorised status rather than raising. That read is the only round trip this block adds
-    # inside the transaction, and only on a PATCH that actually carries a status change.
     async with db.tx() as tx:
-        # Before ``guard_record_edit``, which is the first write in this block, so the refusal takes
-        # the ledger entry with it. ``None`` passes and changes nothing, which is every client
-        # shipped to date. See ``records.assert_expected_updated_at``.
-        #
-        # THE SECOND 409 THIS ROUTE CAN ANSWER — a taken ``Craft.name``, below — CARRIES ITS OWN
-        # DETAIL, SO THE TWO NEVER HAVE TO BE TOLD APART BY A CODE. This note used to say they were
-        # distinguished by ``detail["code"]``, which was never true of the pair: the precondition
-        # failure raises a DICT carrying ``code: "record_changed"``, and the name collision raises
-        # the bare string ``"Craft name already exists"`` — kept byte-identical to the create's, so a
-        # client can match one sentence for both. ``artisans.update_artisan`` documents exactly this
-        # convention for its own pair (a stale precondition and an Aadhaar clash) and this line
-        # asserted the opposite of it; a client written to read ``detail["code"]`` on both would have
-        # indexed a string. Corrected 2026-09-03. A ``code`` is NOT being added to the collision:
-        # the sentence is the contract the create already shipped, and giving one member of a pair a
-        # new shape to make a comment true is the wrong way round.
-        # CLAIMED with a conditional write inside this transaction, so two corrections cannot both pass.
         await lock_and_assert_expected_updated_at(tx, "craft", craft, expected_updated_at)
         await guard_record_edit(craft, current_user, data, "craft", client=tx)
-        # Craft has no status column, so this is a no-op here; wired for parity with the other 6
-        # PATCHes.
         await apply_status_policy_update(current_user, craft, data)
         stamp_workshop_submission(data, check=check, record=craft)
         pin_pending_if_late(data, current_user, check=check, record=craft)
         merge_field_provenance(data, current_user, previous=craft)
         resubmit_status(craft, current_user, data)
-        # A rename that lands on a known spelling takes that code (C26). A rename that does not keeps
-        # whatever code the craft had: an administrator's mapping is not undone by a typo fix.
         if "name" in data and data["name"] != craft.name:
             renamed_code = await cross_portal_codes.code_for_new_craft(tx, data["name"])
             if renamed_code is not None:
                 data["craftCode"] = renamed_code
-        # THE SAME UNIQUE INDEX AS THE CREATE, SO THE SAME ANSWER. ``Craft.name`` is @unique and
-        # ``clean_data`` title-cases it on the way in, so a professor renaming a duplicate ("Bandhej")
-        # to the canonical spelling that already exists ("Bandhani") writes exactly the value another
-        # row holds. Without this the driver's UniqueViolationError reached the catch-all in main.py,
-        # which logged a stack trace and answered 500 with "Something went wrong on the server" —
-        # telling the professor the server is broken, when the truth is that the name is taken and
-        # retrying cannot help. The create path five lines up has always answered 409 for the
-        # identical collision; two routes over one index must not disagree about what a clash is. The
-        # detail string is kept BYTE-IDENTICAL to the create's so a client can match one sentence for
-        # both.
-        #
-        # THE 409 IS RAISED FROM INSIDE THE TRANSACTION, WHICH IS WHAT MAKES IT CLEAN. A unique
-        # violation aborts the transaction in Postgres whatever this handler does, so leaving the
-        # try/except out here — with the update inside — would answer 409 while the revision written
-        # four lines up rolled back anyway, telling the professor the name is taken and leaving an
-        # audit row for the rename that did not happen. Converting it in place takes the ledger entry
-        # back with the refused rename, which is the same rule the block above is written for.
-        #
-        # SINCE THE MASTER LIST (2026-10-20) the index is (sub-category, name) and the answer is
-        # ``CRAFT_EXISTS`` in the ``{code, message}`` shape, the same as the create's.
         try:
             updated = await tx.craft.update(where={"id": craft_id}, data=data, include=INCLUDE)
         except UniqueViolationError as exc:
             raise craft_master.craft_error("CRAFT_EXISTS", status.HTTP_409_CONFLICT) from exc
-    # BIDIRECTIONAL, unlike the create path's one-way ``link_workshop_craft`` twenty lines up. An
-    # edit can REMOVE a workshop, and until this call the removal stopped at the column: ``workshopId``
-    # is in ``records.CLEARABLE_KEYS`` so an explicit null really does clear the column, but the old
-    # ``link_workshop_craft(updated.workshopId, …)`` was then handed that null, returned immediately
-    # (its contract is "never removes a link"), and the ``WorkshopCraft`` row written when the craft
-    # was first filed survived. Everything that reads the join — ``craft_workshop_clause``'s second
-    # arm, and through today's ``bucket_workshop_clause`` that means search, the map, the completion
-    # matrix and the datasets export all at once; ``GET /crafts?workshopId=`` sixty lines up; the
-    # workshop form's "Crafts covered" picker; the export tree's craft folders — kept the craft in a
-    # workshop its own page reports it as having left. Re-filing it under a second workshop added a
-    # row without removing the first, so one craft was counted in two workshops.
-    #
-    # THIS BITES HARDER FOR CRAFTS THAN FOR ARTISANS: ``craft_workshop_clause``'s docstring records
-    # that on the live repository every craft predates the column, so the join is the ONLY link most
-    # of them have — the stale row is not a second opinion there, it is the whole answer.
-    #
-    # Do NOT "simplify" this back to passing one argument. The previous value is what makes the
-    # delete possible at all, and it must be read before the update, not after. See
-    # ``sync_workshop_craft`` for what it deliberately does NOT try to tell apart (an admin-curated
-    # roster row is indistinguishable from a mirrored one until the join grows a ``source`` column).
     await sync_workshop_craft(previous_workshop_id, updated.workshopId, updated.id)
     if updated.name != craft.name:
         await craft_master.remember_spelling(db, updated, craft.name, user_id=current_user.id)
@@ -441,12 +269,6 @@ async def update_craft(
 
 
 async def _master_list_update(craft: Any, data: dict[str, Any]) -> None:
-    """The master-list half of a craft edit. Mutates ``data``.
-
-    ``category`` from a client is ignored: it is derived from the sub-category. A name sent back
-    unchanged but for the title-casing ``clean_data`` applies is no rename. A real rename keeps the
-    old name as an alias, so search and the matcher still find the craft by it.
-    """
     data.pop("category", None)
     if "name" in data and craft_master.normalise(data["name"]) == craft_master.normalise(craft.name):
         data.pop("name")
@@ -476,11 +298,9 @@ async def _master_list_update(craft: Any, data: dict[str, Any]) -> None:
 async def delete_craft(craft_id: str, current_user: Any = Depends(get_current_user)) -> None:
     assert_can_delete(current_user)
     craft = await require_record(db.craft, craft_id)
-    # A referenced craft is never deleted: merging keeps every record's link and the old name.
     references = await craft_master.reference_count(db, craft_id)
     if references:
         raise craft_master.craft_error("CRAFT_IN_USE", status.HTTP_409_CONFLICT, referenceCount=references)
-    # A master craft leaves a tombstone, so revising the master file never brings it back.
     async with db.tx() as tx:
         await craft_master.delete_craft(tx, craft, user_id=current_user.id)
 
@@ -489,7 +309,6 @@ async def delete_craft(craft_id: str, current_user: Any = Depends(get_current_us
 async def merge_craft(
     craft_id: str, payload: CraftMerge, current_user: Any = Depends(require_content_admin)
 ) -> dict[str, Any]:
-    """Fold this craft into ``intoId``: every reference moves, and this craft stays as MERGED."""
     source = await require_record(db.craft, craft_id)
     if payload.intoId == craft_id:
         raise HTTPException(status_code=422, detail="A craft cannot be merged into itself.")
@@ -506,7 +325,6 @@ async def merge_craft(
 async def adopt_craft(
     craft_id: str, payload: CraftAdopt, current_user: Any = Depends(require_content_admin)
 ) -> dict[str, Any]:
-    """A LEGACY craft joins the list, under its own name, in ``subCategoryId``."""
     craft = await require_record(db.craft, craft_id)
     if craft_master.status_of(craft) != craft_master.LEGACY:
         raise HTTPException(status_code=409, detail={"code": "CRAFT_NOT_LEGACY", "message": "Only a craft waiting for review can be added."})

@@ -38,36 +38,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.WorkshopSyncStatus
 import com.designprototype.workshop.data.dwDeviceSyncBanner
-// The two-typeface `Text`, shadowing androidx.compose.material3.Text. Without this import the bare
-// `Text` below resolves to Material's, inherits whatever family LocalTextStyle carries, and quietly
-// sets these lines in the wrong face — the exact failure ui/FieldText.kt exists to prevent.
 import com.designprototype.workshop.ui.Text
 import com.designprototype.workshop.ui.field
 
-/**
- * The surfaces that answer "is my work safe yet?" without the designer having to guess.
- *
- * WHY THIS IS NOT ONE SPINNER. Before it, the only thing the workshop list said about syncing was a
- * badge reading "On this device only", shown when a workshop had no server id — which is a true
- * statement about the HEADER and says nothing whatever about the fortnight of stages and photographs
- * hanging off it. A workshop created on the server on day one and captured offline for the next
- * thirteen days showed no badge at all, and looked identical to one that was fully backed up. The
- * question a designer actually asks before they leave a cluster is not "does a record exist" but
- * "has everything I captured left this phone", and nothing on screen could answer it.
- *
- * So every surface here counts THINGS rather than showing a percentage or a state colour: nine
- * stages, four photographs, one refusal and the reason for it. A number a designer can compare
- * against what they know they captured is checkable; a green tick is something they have to trust.
- *
- * NOTHING HERE EVER DELETES ANYTHING ON ITS OWN. The one action that removes bytes is
- * [WorkshopSyncActions]'s "free up space", it is a button a person presses, it names the amount
- * first, and it only ever releases files the server has acknowledged an id for. See the KDoc on
- * `WorkshopDraftStore.releaseUploadedMedia` for why keeping them is the default: the phone is where
- * the offline report is generated, and a workshop whose photographs were swept still exports —
- * silently, with the pictures missing.
- */
-
-/** Sizes in the units a person reads, so "is this a big send?" is answerable at a glance. */
 internal fun syncBytes(bytes: Long): String = when {
     bytes >= 1_000_000_000 -> String.format(java.util.Locale.ROOT, "%.1f GB", bytes / 1_000_000_000.0)
     bytes >= 1_000_000 -> String.format(java.util.Locale.ROOT, "%.1f MB", bytes / 1_000_000.0)
@@ -75,12 +48,6 @@ internal fun syncBytes(bytes: Long): String = when {
     else -> "$bytes B"
 }
 
-/**
- * The one-line state of a single workshop, drawn on its row in the list.
- *
- * [sending] is passed rather than derived so the row that is actually being uploaded says so, while
- * the nineteen behind it keep showing what they are waiting on rather than all claiming to be busy.
- */
 @Composable
 internal fun WorkshopSyncChip(status: WorkshopSyncStatus, sending: Boolean) {
     val (icon, tint, container) = when {
@@ -89,17 +56,6 @@ internal fun WorkshopSyncChip(status: WorkshopSyncStatus, sending: Boolean) {
             MaterialTheme.colorScheme.onPrimaryContainer,
             MaterialTheme.colorScheme.primaryContainer
         )
-        // A REFUSED ANSWER WEARS THE REFUSAL ICON, NOT THE CLOUD-OFF ONE. It is not a failed stage —
-        // the stage saved, and `hasFailures` is right to exclude it — but it is equally not "waiting
-        // for signal", which is what the `else` arm below draws. Sending somebody out of a building
-        // to look for a bar of signal, over an answer the repository has already considered and
-        // declined, is the same wrong story `isConnectionFailure` exists to stop telling.
-        // AND SO DOES A DELETION THAT CANNOT TRAVEL, for the identical reason and to keep this chip
-        // saying what the banner ten pixels above it says. `unsentDeletions` is a term of
-        // `isFullySynced`, so without this arm such a workshop fell to the `else` below and wore the
-        // cloud with a line through it — a claim that the next bar of signal carries it away. No pass
-        // ever will: `pushStages` only pushes, and this needs the stage READ. See
-        // [DwDeviceSyncBanner.waiting], which draws exactly this distinction from the same two counts.
         status.hasFailures || status.refusedAnswers > 0 || status.unsentDeletions > 0 -> Triple(
             Icons.Filled.ErrorOutline,
             MaterialTheme.colorScheme.onErrorContainer,
@@ -133,14 +89,6 @@ internal fun WorkshopSyncChip(status: WorkshopSyncStatus, sending: Boolean) {
     }
 }
 
-/**
- * Everything one workshop is waiting on, plus the two things a person can do about it.
- *
- * The problem list is shown IN FULL rather than summarised into "3 problems". Each line is already a
- * sentence naming the file or the stage and the server's own words for refusing it, and those words
- * are the only thing that tells a designer whether the fix is theirs (sign in again, shorten a
- * field) or somebody else's. A count would send them to a support request to find out.
- */
 @Composable
 internal fun WorkshopSyncActions(
     status: WorkshopSyncStatus,
@@ -160,9 +108,6 @@ internal fun WorkshopSyncActions(
             )
         }
         status.lastError?.takeIf { !status.isFullySynced }?.let { error ->
-            // A transient reason, kept apart from the refusals below and worded as the network's
-            // fault rather than the data's, because the two call for completely different reactions
-            // and mixing them teaches the designer to ignore both.
             Text(
                 "Last attempt: $error It will retry automatically.",
                 color = MaterialTheme.field.muted,
@@ -208,10 +153,6 @@ internal fun WorkshopSyncActions(
                     enabled = !busy,
                 )
             }
-            // Offered ONLY when there is something genuinely duplicated on the server, and it names
-            // the amount before it is pressed. An automatic sweep would take away the ability to
-            // generate the report on the device that captured it, which is this product's whole
-            // claim — so it is a decision, and it is always the designer's.
             if (status.releasableMedia > 0) {
                 TextButton(onClick = onFreeSpace, enabled = !busy) {
                     Icon(Icons.Filled.DeleteSweep, contentDescription = null, modifier = Modifier.size(15.dp))
@@ -223,44 +164,15 @@ internal fun WorkshopSyncActions(
     }
 }
 
-/**
- * The whole device in one strip above the list: what is outstanding everywhere, and one button.
- *
- * Shown only when there IS something outstanding. A permanent "everything is synced" bar is a bar
- * people stop reading, and then the day it changes nobody notices.
- */
 @Composable
 internal fun DeviceSyncBanner(
     workshops: Int,
     stages: Int,
     files: Int,
     bytes: Long,
-    /** Stages and files the server refused OUTRIGHT — see [WorkshopSyncStatus.hasFailures]. */
     refusals: Int,
-    /**
-     * Answers refused INSIDE saves that otherwise succeeded — see
-     * [WorkshopSyncStatus.refusedAnswers], and [dwDeviceSyncBanner] for what leaving this out said.
-     */
     refusedAnswers: Int,
-    /**
-     * Stages holding a row deletion that cannot be sent until the stage has been READ — see
-     * [WorkshopSyncStatus.unsentDeletions].
-     *
-     * Handed down for the same reason `refusedAnswers` is, and it is the same omission that made the
-     * banner lie once already: it is a term of [WorkshopSyncStatus.isFullySynced], so such a workshop
-     * reaches the caller's `outstanding` list, and a banner given no number for it would draw a
-     * workshop it cannot name.
-     */
     unsentDeletions: Int,
-    /**
-     * Answers the server had nowhere to store, because this workshop's own sections stopped asking —
-     * see [WorkshopSyncStatus.droppedAnswers].
-     *
-     * Handed down for the reason the two above it are, and it is the third time the same omission
-     * would have made this banner lie: it is a term of [WorkshopSyncStatus.isFullySynced], so such a
-     * workshop reaches the caller's `outstanding` list, and a banner given no number for it draws a
-     * workshop it cannot name.
-     */
     droppedAnswers: Int,
     busy: Boolean,
     onSyncNow: () -> Unit,
@@ -290,10 +202,6 @@ internal fun DeviceSyncBanner(
                 strokeWidth = 2.dp
             )
         } else {
-            // THE CLOUD WITH A LINE THROUGH IT IS A CLAIM ABOUT THE NETWORK, so it is drawn only
-            // when something is actually waiting for one. See [DwDeviceSyncBanner.waiting] — this is
-            // the same distinction [WorkshopSyncChip] draws one line down the same screen, and the
-            // two disagreeing about one phone is the defect that put it here.
             Icon(
                 if (banner.waiting) Icons.Filled.CloudOff else Icons.Filled.ErrorOutline,
                 contentDescription = null,

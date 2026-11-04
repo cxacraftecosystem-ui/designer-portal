@@ -1,12 +1,3 @@
-"""Every table that can name an artisan is accounted for by the merge.
-
-Parses ``prisma/schema.prisma`` (no database, no Prisma import of the client) and fails when a
-field pointing at ``Artisan``, or a table carrying ``recordType``/``recordId`` (or the media tag's
-``linkedRecordType``/``linkedRecordId``), is in neither ``artisan_merge.MERGE_REPOINT``,
-``SPECIAL_REPOINT`` nor ``NOT_REPOINTED``. A table added later (an in-app notification naming a
-record, say) fails here until somebody decides what a merge does to it.
-"""
-
 from __future__ import annotations
 
 import pathlib

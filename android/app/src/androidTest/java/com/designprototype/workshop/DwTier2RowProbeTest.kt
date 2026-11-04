@@ -21,52 +21,6 @@ import java.security.MessageDigest
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/**
- * WHAT THE TIER 2 ROWS SAY ON THIS PARTICULAR HANDSET, AND WHETHER IT IS TRUE OF IT.
- *
- * A MEASUREMENT, not a regression guard — the same shape as `DwDeviceTierProbeTest`, and it asserts
- * nothing. Its output is a table in logcat and the table is the point. The desktop suite already
- * checks the arithmetic against invented rows; what no desktop test can answer is what THIS phone's
- * own `/proc/meminfo`, `StatFs` and `Build.SUPPORTED_ABIS` make of the two weighed Gemma 4 rows, and
- * what the sentence a designer would read actually says once those numbers are in it.
- *
- * It renders nothing on purpose. A Compose test needs a RESUMED activity, and an activity cannot
- * resume behind a secure keyguard — so a UI test cannot run on a locked fleet handset at all, while
- * this can: reading memory, storage and ABIs needs no unlock. **The rendering half is therefore
- * checked separately, on an unlocked device, by dumping the real view hierarchy.**
- *
- * ── HOW TO RUN IT WITHOUT SIGNING THE DESIGNER OUT ────────────────────────────────────────────
- *
- * **DO NOT USE `connectedDebugAndroidTest`** — AGP uninstalls the app afterwards and takes the
- * signed-in session and any unsynced drafts with it. Build and install the two APKs, then drive the
- * installed test APK directly:
- *
- *   ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
- *   adb install -r app/build/outputs/apk/debug/app-debug.apk
- *   adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
- *   adb shell am instrument -w \
- *     -e class com.designprototype.workshop.DwTier2RowProbeTest \
- *     com.designprototype.workshop.test/androidx.test.runner.AndroidJUnitRunner
- *   adb logcat -d -s DWTIER2PROBE
- *
- * ── WHAT IT PRINTS AND WHY EACH LINE IS THERE ─────────────────────────────────────────────────
- *
- *  * The raw reading, so it can be diffed against `adb shell cat /proc/meminfo` taken by hand in the
- *    same minute. `availMem` and `MemAvailable` are different kernel figures and are expected to
- *    differ; a large gap in `totalMem` would mean the probe is not reading this phone.
- *  * Every row's fit, its notes, and its two headrooms as SIGNED numbers — a negative headroom is the
- *    whole reason `dwHeadroomBytes` refuses to clamp.
- *  * The exact sentence each row draws, and its word count, because the per-row bound is 90 words and
- *    the screen this replaced was measured at 1,207.
- *  * Whether an install control may be drawn, for all three connection states — the gate
- *    `DwTier2ModelList` draws Download from since the runtime landed (2026-10-10).
- *  * What [dwTier2VerifyFile] says about anything actually sitting in this app's storage — the same
- *    predicate `DwTier2ModelController` runs on every download and every staged copy.
- *
- * COST: it hashes every file in that directory. With the real 2.59 GB E2B artifact present that took
- * **16.9 s** on the fleet's SM-M325F (2026-08-13), against 1.7 s with only a 100 MB slice there. That
- * is the price of the one check worth having — a digest not taken is a substituted model not caught.
- */
 @RunWith(AndroidJUnit4::class)
 class DwTier2RowProbeTest {
 
@@ -86,7 +40,6 @@ class DwTier2RowProbeTest {
         rule()
     }
 
-    /** The phone's own numbers, printed raw so a hand reading can be diffed against them. */
     private fun theReading(reading: DwDeviceMeasurement) {
         head("THE READING — dwProbeDevice, on this phone, now")
         log("  totalRamBytes      : ${reading.totalRamBytes}")
@@ -95,15 +48,12 @@ class DwTier2RowProbeTest {
         log("  freeStorageBytes   : ${reading.freeStorageBytes}")
         log("  abis               : ${reading.abis}")
         log("  thermal            : ${reading.thermal}")
-        // The kernel's own figures beside the framework's, since they are different reads and the
-        // difference is the thing a hand-taken `cat /proc/meminfo` would otherwise look like a fault.
         val meminfo = runCatching { File("/proc/meminfo").readLines() }.getOrNull().orEmpty()
         meminfo.filter { it.startsWith("MemTotal") || it.startsWith("MemAvailable") || it.startsWith("MemFree") }
             .forEach { log("  /proc/meminfo      : ${it.trim()}") }
         log("  Build.SUPPORTED_ABIS: ${Build.SUPPORTED_ABIS.joinToString(",")}")
     }
 
-    /** Every row, its verdict, its numbers and the exact words. */
     private fun theRows(reading: DwDeviceMeasurement) {
         head("THE ROWS — verdicts from dwModelFit, sentences as a designer would read them")
         val recommendation = dwRecommendTiers(reading, DwConnection.UNMETERED)
@@ -140,7 +90,6 @@ class DwTier2RowProbeTest {
         log("  WHOLE SECTION, EVERY WORD ON SCREEN: $total")
     }
 
-    /** Whether an install control is drawn on this phone, per row and connection. */
     private fun theGate(reading: DwDeviceMeasurement) {
         head("THE GATE — may an install control be drawn on this phone?")
         val choices = dwRecommendTiers(reading, DwConnection.UNMETERED).tier2Choices
@@ -154,13 +103,6 @@ class DwTier2RowProbeTest {
         }
     }
 
-    /**
-     * What is actually on this phone, and what the one verify predicate says about it.
-     *
-     * Both directories are looked at because a sideload lands where a person put it: `filesDir` is
-     * where the app's own download would write, and the external one is what an `adb push` can reach
-     * without `run-as`.
-     */
     private fun theFilesOnThisPhone(context: android.content.Context) {
         head("THE FILES — what is here, and what dwTier2VerifyFile says about it")
         val roots = listOfNotNull(
@@ -194,7 +136,6 @@ class DwTier2RowProbeTest {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    /** Words as a reader counts them: whitespace-separated runs. */
     private fun words(text: String): Int = text.split(Regex("\\s+")).count { it.isNotBlank() }
 
     private fun head(title: String) {

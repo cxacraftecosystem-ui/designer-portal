@@ -1,29 +1,5 @@
 "use client";
 
-/**
- * What this browser keeps so a workshop's report can be built with no connection: the report's
- * SOURCES (`GET /design-workshops/{id}/report/sources`) and the PHOTOGRAPHS the report places.
- *
- * WHY A STORE OF ITS OWN. The stages are already on the device — `lib/designWorkshopStore` holds
- * every workshop this browser has opened, and holds an unsynced photograph's bytes until the server
- * confirms them. What it deliberately lets go of is a photograph's bytes once they are safe on the
- * server, and it never held the records a REF names, the questionnaire sittings, the transcripts or
- * the accepted machine-assisted text. Those are copies, not fieldwork, so they live here, where they
- * can be evicted without anybody losing anything: the server still has every one of them.
- *
- * WHAT GETS IN. Only what this account has already OPENED: the sources are fetched when the report
- * screen is opened with a connection, and a photograph is kept when the report screen (or the
- * stage that shows it) has resolved it. Nothing is fetched in the background for workshops nobody
- * looked at.
- *
- * LIMITS AND CLEANUP. Photographs: at most {@link MEDIA_BUDGET_BYTES} in all, none larger than
- * {@link MEDIA_MAX_BYTES}, none kept past {@link MAX_AGE_MS} since it was last used; the
- * least-recently-used go first when the budget is reached ({@link planEviction}, which is pure and
- * unit-tested). Sources: one record per workshop, replaced on every fetch, dropped after
- * {@link MAX_AGE_MS}. Every record is stamped with the account that fetched it and is served to that
- * account only, and {@link clearReportCache} empties both stores — it runs on sign-out.
- */
-
 import type { ReportSources } from "@/lib/offlineReport/assemble";
 
 const DB_NAME = "design-workshop-report-cache";
@@ -31,11 +7,8 @@ const DB_VERSION = 1;
 const STORE_MEDIA = "media";
 const STORE_SOURCES = "sources";
 
-/** The whole photograph cache. A fortnight's workshop at ~1 MB a photograph is well inside it. */
 export const MEDIA_BUDGET_BYTES = 200 * 1024 * 1024;
-/** One photograph. The server refuses to embed anything larger (`REPORT_IMAGE_MAX_BYTES`). */
 export const MEDIA_MAX_BYTES = 16 * 1024 * 1024;
-/** Anything not used for this long is evicted, whatever room is left. */
 export const MAX_AGE_MS = 45 * 24 * 60 * 60 * 1000;
 
 export type CachedMedia = {
@@ -55,7 +28,6 @@ export type CachedSources = {
   storedAt: number;
 };
 
-/** Which cached photographs to delete: the stale ones, then the least recently used, until it fits. */
 export function planEviction(
   entries: ReadonlyArray<Pick<CachedMedia, "id" | "sizeBytes" | "usedAt">>,
   now: number,
@@ -77,7 +49,6 @@ export function planEviction(
   return [...doomed];
 }
 
-/** Whether a cached sources record may be served: this account's, and not stale. */
 export function sourcesAreUsable(record: CachedSources | null | undefined, userId: string | null, now: number): boolean {
   if (!record || !userId || record.ownerUserId !== userId) return false;
   return now - record.storedAt <= MAX_AGE_MS;
@@ -169,7 +140,6 @@ export async function hasMedia(id: string, userId: string | null): Promise<boole
   return key !== null && key !== undefined;
 }
 
-/** Apply {@link planEviction} to the photograph store, and drop stale sources records. */
 export async function pruneMedia(now: number = Date.now()): Promise<number> {
   const removed = await withStore<number>(STORE_MEDIA, "readwrite", async (store) => {
     const all = ((await done(store.getAll())) ?? []) as CachedMedia[];
@@ -185,7 +155,6 @@ export async function pruneMedia(now: number = Date.now()): Promise<number> {
   return removed ?? 0;
 }
 
-/** Empty both stores. Called on sign-out: a shared laptop keeps nobody's copies for the next person. */
 export async function clearReportCache(): Promise<void> {
   await withStore(STORE_MEDIA, "readwrite", (store) => done(store.clear()));
   await withStore(STORE_SOURCES, "readwrite", (store) => done(store.clear()));

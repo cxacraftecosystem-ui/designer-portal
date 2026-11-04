@@ -7,15 +7,6 @@ import { LIST_PAGE_CEILING } from "@/components/data/cappedList";
 import { RENDER_CAP } from "@/components/ui/selectFilter";
 import { WORKSHOP_OPTION_PAGE_SIZE } from "@/lib/workshopOptions";
 
-/**
- * EVERY `pageSize` SENT TO `GET /workshops` IS AT MOST 100 (UX audit DW-01, 2026-10-16).
- *
- * The route declares `pageSize: int = Query(20, ge=1, le=100)`, so a larger number is not clamped —
- * it is a 422. The "Design workshop visibility" panel asked for 200, was refused on every visit, and
- * told every admin the type filter was off. Nothing failed anywhere a developer would look: the
- * panel caught the refusal and printed a sentence. This test reads the source rather than the
- * screen, so the next literal over the ceiling fails here instead.
- */
 const ROUTE_CEILING = 100;
 const ROOT = join(__dirname, "..");
 const KNOWN: Record<string, number> = {

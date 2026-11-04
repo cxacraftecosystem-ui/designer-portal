@@ -1,9 +1,3 @@
-/**
- * Interview summaries, key quotes and translations — the pure half of `lib/transcriptInsights.ts`
- * plus source assertions for what lives in JSX (there is no React renderer in devDependencies).
- * The same contract as the Field Repository's spec of the same name.
- */
-
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -44,7 +38,7 @@ function view(mediaId: string, patch: Partial<TranscriptInsightView> = {}): Tran
       translation: { status: "COMPLETED", text: null, note: null },
       provenance: {
         provider: "openai",
-        modelId: "gpt-4o-mini",
+        modelId: "gpt-6-luna",
         modelVersion: null,
         promptVersion: "transcript-insights/1",
         generatedAt: "2026-10-30T10:00:00Z"
@@ -109,7 +103,7 @@ test("a 404 hides the section and an id left out of the batch is hidden too", as
   expect(await failed).toBe("error");
 });
 
-test("the edit form keeps at most five summary lines", () => {
+test("@qf:H1 the edit form keeps at most five summary lines", () => {
   expect(cleanSummaryLines(["1", " ", "2", "3", "4", "5", "6"])).toEqual(["1", "2", "3", "4", "5"]);
   expect(cleanSummaryLines(["x".repeat(500)])[0]).toHaveLength(400);
   expect(editRows(["a", "b"])).toEqual(["a", "b", "", "", ""]);
@@ -119,7 +113,7 @@ test("the edit form keeps at most five summary lines", () => {
   ]);
 });
 
-test("the confirm dialog shows only for edited insights", () => {
+test("@qf:H1 the confirm dialog shows only for edited insights", () => {
   expect(needsRegenerateConfirm(view("a"))).toBe(false);
   const edited = view("b");
   edited.insight!.edited = { at: "2026-10-30T11:00:00Z" };
@@ -136,12 +130,10 @@ test("the confirm dialog shows only for edited insights", () => {
 });
 
 test("the section is drawn under a completed transcript and read-only in the lightbox", () => {
-  // Under a completed transcript; a record's read-only page passes readOnly down, so no Edit there.
   expect(read("components", "media", "TranscriptBlock.tsx")).toContain(
     '{status === "COMPLETED" ? <TranscriptInsights mediaId={current.id} readOnly={readOnly} /> : null}'
   );
   expect(read("components", "media", "MediaLightbox.tsx")).toContain("<TranscriptInsights mediaId={item.id} readOnly />");
-  // Buttons go through the shared row primitive.
   expect(read("components", "media", "TranscriptInsights.tsx")).toContain('from "@/components/ui/ActionGroup"');
   const component = read("components", "media", "TranscriptInsights.tsx");
   expect(component).toContain("Machine-generated ·");

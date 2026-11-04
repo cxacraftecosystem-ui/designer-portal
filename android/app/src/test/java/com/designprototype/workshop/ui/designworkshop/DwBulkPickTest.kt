@@ -14,7 +14,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
-/** B3 — the handset's bulk add mirrors the web's `bulkField` and `addFromReferences`. */
 class DwBulkPickTest {
 
     private val schemaJson = Json { ignoreUnknownKeys = true }
@@ -43,7 +42,6 @@ class DwBulkPickTest {
     @Test
     fun `the shipped registry offers it on the roster, certificates, follow-ups and sketch reviews`() {
         val asset = File("src/main/assets/design-workshop-schema.json")
-        // A missing file is a FAILURE, not a pass: a moved asset must not turn this test green.
         assertTrue("${asset.absolutePath} is missing", asset.exists())
         val schema = schemaJson.decodeFromString(SchemaResponse.serializer(), asset.readText(Charsets.UTF_8))
         val offered = schema.stages.flatMap { it.entities }
@@ -53,7 +51,6 @@ class DwBulkPickTest {
         assertEquals("DwParticipant", offered["certificate"])
         assertEquals("DwFinalProduct", offered["followUp"])
         assertEquals("DwSketch", offered["sketchReview"])
-        // A prototype pairs a sketch with an artisan: never bulk-added.
         assertTrue("prototype" !in offered)
     }
 

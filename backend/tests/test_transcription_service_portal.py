@@ -1,10 +1,3 @@
-"""This portal's wiring of the shared transcription service: pause, providers, dedup, budget, consent.
-
-No database and no provider: ``db`` is replaced with small fakes, and ``requests.post`` with a
-tripwire wherever a test claims that nothing is sent. The same cases exist in documentation-portal's
-``tests/test_transcription_service_portal.py`` against that portal's own consent rule.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -21,8 +14,6 @@ from app.services import ai, app_settings, media_queue, transcription_jobs
 def _never(*_a: Any, **_k: Any) -> Any:
     raise AssertionError("a provider was called")
 
-
-# --- The pause ---------------------------------------------------------------------------------
 
 
 def test_a_missing_settings_row_reads_as_paused_and_a_row_can_unpause() -> None:
@@ -49,7 +40,6 @@ def test_while_paused_the_drain_never_selects_a_transcription_job(monkeypatch) -
     monkeypatch.setattr(media_queue, "load_app_settings", _row)
     monkeypatch.setattr(media_queue, "recover_stale_processing_jobs", _recover)
     monkeypatch.setattr(requests, "post", _never)
-    # Insights on, so the only job type held back is the one the pause decides.
     monkeypatch.setattr(media_queue.transcript_insights, "enabled", lambda: True)
     asyncio.run(
         media_queue.process_next_media_jobs(
@@ -77,7 +67,6 @@ def test_unpaused_and_inside_the_window_transcription_is_selected(monkeypatch) -
     monkeypatch.setattr(media_queue, "load_app_settings", _row)
     monkeypatch.setattr(media_queue, "recover_stale_processing_jobs", _recover)
     monkeypatch.setattr(media_queue, "_rate_limit_cooldown_until", None)
-    # Insights on, so the only job type held back is the one the pause decides.
     monkeypatch.setattr(media_queue.transcript_insights, "enabled", lambda: True)
     asyncio.run(
         media_queue.process_next_media_jobs(
@@ -89,7 +78,7 @@ def test_unpaused_and_inside_the_window_transcription_is_selected(monkeypatch) -
 
 def test_transcribe_now_refuses_while_paused_and_sends_nothing(monkeypatch) -> None:
     async def _row(*_a: Any, **_k: Any) -> Any:
-        return None  # no settings row at all: paused
+        return None
 
     async def _verdict(*_a: Any, **_k: Any) -> Any:
         return SimpleNamespace(may_send=True, refusal=None)
@@ -113,8 +102,6 @@ def test_the_paused_answer_is_a_calm_unavailable() -> None:
     assert answer["message"] == "Transcription is paused."
 
 
-# --- Providers ---------------------------------------------------------------------------------
-
 
 def test_muse_is_off_by_default_even_with_a_key(monkeypatch) -> None:
     monkeypatch.setattr(ai.managed_secrets, "peek_secret", lambda name: "k")
@@ -136,8 +123,6 @@ def test_an_older_client_may_save_a_ranking_without_muse() -> None:
 def test_the_catalogue_names_muse_for_both_clients() -> None:
     assert ("muse", "Meta Muse", "META_MODEL_API_KEY") in ai.transcription_provider_catalog()
 
-
-# --- One open job per clip ---------------------------------------------------------------------
 
 
 def test_enqueue_reuses_the_open_job_instead_of_paying_twice(monkeypatch) -> None:
@@ -166,7 +151,7 @@ def test_enqueue_reuses_the_open_job_instead_of_paying_twice(monkeypatch) -> Non
     jobs = asyncio.run(
         media_queue.enqueue_media_processing_jobs(
             {"id": "m-1", "mediaType": "AUDIO"},
-            None,
+            ["TRANSCRIPTION"],
             "u-1",
             SimpleNamespace(media_queue_job_max_attempts=3),
         )
@@ -174,8 +159,6 @@ def test_enqueue_reuses_the_open_job_instead_of_paying_twice(monkeypatch) -> Non
     assert jobs == [existing]
     assert created == []
 
-
-# --- Budget: wait for the window, never fail ----------------------------------------------------
 
 
 def test_a_budget_deferral_requeues_without_spending_an_attempt(monkeypatch) -> None:
@@ -203,8 +186,6 @@ def test_a_budget_deferral_requeues_without_spending_an_attempt(monkeypatch) -> 
     assert job_write["data"]["attempts"] == 1
     assert job_write["data"]["runAfter"] > datetime.now(UTC)
 
-
-# --- Dedup: same bytes, one provider call --------------------------------------------------------
 
 
 def test_a_cache_hit_copies_the_transcript_and_calls_no_provider(monkeypatch, tmp_path) -> None:
@@ -261,8 +242,6 @@ def test_the_language_hint_prefers_the_recording_then_the_state() -> None:
     assert languages.bias_for_state("Nowhere") == []
 
 
-# --- Consent backfill (owner attestation): idempotent, flags nothing, sends nothing ----------
-
 
 def _load_backfill():
     import importlib.util
@@ -273,7 +252,7 @@ def _load_backfill():
     module = importlib.util.module_from_spec(spec)
     import sys
 
-    sys.modules[spec.name] = module  # dataclasses resolve their module through sys.modules
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -281,7 +260,7 @@ def _load_backfill():
 def test_the_consent_backfill_grants_once_and_then_finds_nothing(monkeypatch) -> None:
     backfill = _load_backfill()
     consent = backfill.dictation_consent
-    refusal = consent.legacy_waiting_sentence(consent.MEDIA)  # an older note still stored
+    refusal = consent.legacy_waiting_sentence(consent.MEDIA)
     workshops = {
         "w-open": SimpleNamespace(id="w-open", title="Bagru", dictationConsent="NOT_RECORDED"),
         "w-done": SimpleNamespace(id="w-done", title="Majuli", dictationConsent="GRANTED"),
@@ -332,12 +311,10 @@ def test_the_consent_backfill_grants_once_and_then_finds_nothing(monkeypatch) ->
     monkeypatch.setattr(consent, "current_consent", _current)
     monkeypatch.setattr(requests, "post", _never)
 
-    # --keep-refused leaves an explicit refusal alone and lists it.
     kept = asyncio.run(backfill.build_plan(keep_refused=True))
     assert [w[0] for w in kept.workshops] == ["w-open"]
     assert [w[0] for w in kept.refused] == ["w-no"]
 
-    # The default follows the owner's attestation: every workshop with recordings, refusals included.
     plan = asyncio.run(backfill.build_plan())
     assert [w[0] for w in plan.workshops] == ["w-open", "w-no"]
     assert [w[0] for w in plan.refused] == ["w-no"]

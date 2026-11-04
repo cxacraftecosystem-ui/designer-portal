@@ -87,25 +87,21 @@ RETIRED_ID = "questionnaire-retired-global-form"
 RETIRED_TITLE = "Interview form (retired)"
 DEFERRED = BACKEND / "prisma" / "deferred"
 MIGRATIONS = BACKEND / "prisma" / "migrations"
-#: Applied by --apply before it writes (each idempotent); the rest wait for the switch-on commit.
 PREREQUISITES = (
     "20261108091000_questionnaire_unify_section_keys",
     "20261108092000_questionnaire_unify_form_title_unique",
     "20261108093500_questionnaire_unify_form_mirror",
 )
-#: The form mirror's triggers and functions (prerequisite 3), removed by --undo when the run installed them.
 MIRROR_TRIGGERS = (("questionnaire_form_section_mirror", "QuestionnaireFormSection"), ("questionnaire_form_question_mirror", "QuestionnaireFormQuestion"),
                    ("questionnaire_form_mirror_drop", "Questionnaire"))
 MIRROR_FUNCTIONS = ("questionnaire_form_section_mirror()", "questionnaire_form_question_mirror()", "questionnaire_form_mirror_rank(text)",
                     "questionnaire_form_mirror_drop()")
-#: Index names the prerequisites drop or create, recorded in the snapshot for the undo.
 INDEX_DDL = {
     "QuestionnaireSection_code_key": 'CREATE UNIQUE INDEX "QuestionnaireSection_code_key" ON "QuestionnaireSection"("code")',
     "QuestionnaireSection_sortOrder_key": 'CREATE UNIQUE INDEX "QuestionnaireSection_sortOrder_key" ON "QuestionnaireSection"("sortOrder")',
     "QuestionnaireSection_questionnaireId_sortOrder_key": None,
     "Questionnaire_shared_title_key": None,
 }
-#: Every table the apply may write, parents first. The snapshot copies each whole; undo restores each.
 TABLES = (
     "Questionnaire", "QuestionnaireBinding", "QuestionnaireSection", "QuestionnaireQuestion", "QuestionnaireSectionStatus",
     "QuestionnaireInterview", "QuestionnaireInterviewArtisan", "QuestionnaireInterviewResearcher", "QuestionnaireRespondent",
@@ -134,7 +130,6 @@ def _overlay() -> None:
             app.__path__.append(path)
 
 
-# ── small helpers ──────────────────────────────────────────────────────────────────────────────
 def moment(value: Any) -> datetime | None:
     if value is None or value == "":
         return None
@@ -184,7 +179,6 @@ def language(value: str | None) -> tuple[str | None, str | None]:
     return "other", text[:40]
 
 
-# ── lineage and display codes (the U0 migration's rule, in Python for the pre-U0 dry run) ────────
 def lineages(rows: list[dict[str, Any]]) -> tuple[dict[str, str], int]:
     """``{id: lineage root}`` and the number of rows the chain does not place cleanly (a row two
     chains claim, or a loop): those block the apply."""
@@ -223,7 +217,6 @@ def display_codes(rows: list[dict[str, Any]], lineage: dict[str, str], form_of: 
     return {rid: root_code.get(lineage[rid], root_code.get(rid, "")) for rid in by_id}
 
 
-# ── loading (read-only) ────────────────────────────────────────────────────────────────────────
 async def schema_state(client: Any) -> dict[str, Any]:
     cols = await client.query_raw(
         "SELECT table_name AS t, column_name AS c FROM information_schema.columns WHERE table_schema = current_schema()"
@@ -313,8 +306,6 @@ async def load(client: Any, state: dict[str, Any]) -> dict[str, Any]:
         return bool(isinstance(meta, dict) and ((meta.get("questionnaireV2") or {}).get("unify") or {}).get("fromSitting"))
 
     data["foreign_collisions"] = sum(1 for i in interviews if str(i["id"]) in entry_ids and not _from_sitting(i))
-    # A global interview: any interview that is not a migrated sitting and that no v2 route wrote
-    # (U0 writes nothing while the switch is off; a session with a form other than the retired one is native).
     data["interviews"] = [
         i for i in interviews if str(i["id"]) not in entry_ids and i.get("questionnaireId") in (None, RETIRED_ID)
     ]
@@ -341,7 +332,7 @@ async def load(client: Any, state: dict[str, Any]) -> dict[str, Any]:
         "WHERE m.\"questionnaireInterviewId\" = ANY($1::text[]) AND m.\"mediaType\" IN ('AUDIO', 'VIDEO') "
         f'{removed}ORDER BY m."createdAt", m."id"', iids,
     )
-    for m in data["media"]:  # the resolver reads the metadata as a mapping
+    for m in data["media"]:
         if isinstance(m.get("extraMetadata"), str):
             try:
                 m["extraMetadata"] = json.loads(m["extraMetadata"])
@@ -373,7 +364,6 @@ async def load(client: Any, state: dict[str, Any]) -> dict[str, Any]:
         "WHERE w.\"id\" = ANY($1::text[]) AND w.\"dictationConsent\" <> 'NOT_RECORDED' "
         'AND NOT EXISTS (SELECT 1 FROM "DwWorkshopConsentDecision" d WHERE d."designWorkshopId" = w."id") ORDER BY w."id"', dw_ids,
     )
-    # what the v2 tables hold already (nothing before the U0 release)
     data["v2"] = {"bindings": [], "respondents": set(), "answers": {}, "revisions": set(), "recordings": set(), "drafts": set(),
                   "researchers": set(), "reconstructed": set(), "retired": False, "global_q_form": {}, "global_s_form": {}}
     if state["u0"]:
@@ -395,7 +385,6 @@ async def load(client: Any, state: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-# ── planning (pure) ────────────────────────────────────────────────────────────────────────────
 @dataclass
 class Plan:
     counts: dict[str, int] = field(default_factory=dict)
@@ -404,20 +393,20 @@ class Plan:
     forms: list[dict[str, Any]] = field(default_factory=list)
     form_updates: list[dict[str, Any]] = field(default_factory=list)
     retired: dict[str, Any] | None = None
-    sections: list[dict[str, Any]] = field(default_factory=list)       # form sections to insert
-    global_sections: list[str] = field(default_factory=list)           # ids to move onto the retired instrument
-    questions: list[dict[str, Any]] = field(default_factory=list)      # form questions to insert
+    sections: list[dict[str, Any]] = field(default_factory=list)
+    global_sections: list[str] = field(default_factory=list)
+    questions: list[dict[str, Any]] = field(default_factory=list)
     global_questions: list[dict[str, Any]] = field(default_factory=list)
-    primary: dict[str, str] = field(default_factory=dict)              # designWorkshopId -> formId
-    sessions: list[dict[str, Any]] = field(default_factory=list)       # from sittings
-    reconstruct: list[dict[str, Any]] = field(default_factory=list)    # global interviews
+    primary: dict[str, str] = field(default_factory=dict)
+    sessions: list[dict[str, Any]] = field(default_factory=list)
+    reconstruct: list[dict[str, Any]] = field(default_factory=list)
     respondents: list[dict[str, Any]] = field(default_factory=list)
     researchers: list[tuple[str, str, str]] = field(default_factory=list)
     answers: list[dict[str, Any]] = field(default_factory=list)
     recordings: list[dict[str, Any]] = field(default_factory=list)
     drafts: list[dict[str, Any]] = field(default_factory=list)
     consents: list[dict[str, Any]] = field(default_factory=list)
-    rows: list[list[str]] = field(default_factory=list)                # the CSV
+    rows: list[list[str]] = field(default_factory=list)
 
 
 def _resolver():
@@ -436,7 +425,6 @@ def build_plan(data: dict[str, Any], *, default_form: str | None = None, primary
     sections_now = {str(s["id"]): s for s in data["sections_now"]}
     questions_now = {str(q["id"]): q for q in data["questions_now"]}
 
-    # 1. forms: library order, the default form
     live_forms = [f for f in forms if not f.get("deletedAt")]
     if default_form and (default_form not in form_by_id or form_by_id[default_form].get("deletedAt")):
         plan.blockers.append(f"--default-form {default_form} is not a live form")
@@ -454,7 +442,6 @@ def build_plan(data: dict[str, Any], *, default_form: str | None = None, primary
         if n > 1:
             plan.blockers.append(f"{n} live shared forms are titled {title!r}; the shared-title unique needs one")
 
-    # 2. primary bindings: one per design workshop
     by_dw: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for f in live_forms:
         if f.get("designWorkshopId"):
@@ -476,7 +463,6 @@ def build_plan(data: dict[str, Any], *, default_form: str | None = None, primary
         1 for (fid, dw), primary in existing.items() if primary and plan.primary.get(dw) != fid
     )
 
-    # 3. sections and questions of the forms, ids kept
     secs_by_form: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for s in data["form_sections"]:
         secs_by_form[str(s["questionnaireId"])].append(s)
@@ -496,7 +482,6 @@ def build_plan(data: dict[str, Any], *, default_form: str | None = None, primary
     plan.pending["sections"] = sum(1 for s in plan.sections if s["id"] not in sections_now)
     plan.pending["questions"] = sum(1 for q in plan.questions if q["id"] not in questions_now)
 
-    # 4. the global instrument becomes the retired one
     gq = data["global_questions"]
     g_lineage, g_conflicts = lineages(gq)
     computed = display_codes(gq, g_lineage, {})
@@ -524,11 +509,9 @@ def build_plan(data: dict[str, Any], *, default_form: str | None = None, primary
 
     lineage_of = {q["id"]: q["lineage"] for q in plan.questions} | {q["id"]: q["lineage"] for q in plan.global_questions}
 
-    # 5. section overrides: kept as they are
     statuses = Counter(str(s["status"]) for s in data["section_statuses"])
     outside = sum(n for s, n in statuses.items() if s not in ("COMPLETED", "NEEDS_REVIEW", "NEEDS_REDO"))
 
-    # 6. sittings -> sessions, respondents, answers
     answers_by_entry: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for a in data["form_answers"]:
         answers_by_entry[str(a["entryId"])].append(a)
@@ -577,7 +560,6 @@ def build_plan(data: dict[str, Any], *, default_form: str | None = None, primary
     if data["foreign_collisions"]:
         plan.blockers.append(f"{data['foreign_collisions']} sittings share an id with an interview that is not theirs")
 
-    # 7. global interviews, reconstructed in place
     parts: dict[str, list[str]] = defaultdict(list)
     for p in data["participants"]:
         parts[str(p["interviewId"])].append(str(p["artisanId"]))
@@ -640,7 +622,6 @@ def build_plan(data: dict[str, Any], *, default_form: str | None = None, primary
     if data["native_sessions"]:
         plan.blockers.append(f"{data['native_sessions']} native v2 sessions exist already; the switch must still be off when this runs")
 
-    # 8. clips -> recordings
     legacy = _resolver() if data["media"] else None
     gsections = [{"id": str(s["id"]), "code": str(s["code"])} for s in data["global_sections"]]
     gquestions = [{**q, "lineageId": lineage_of.get(str(q["id"]))} for q in gq]
@@ -673,7 +654,6 @@ def build_plan(data: dict[str, Any], *, default_form: str | None = None, primary
             plan.drafts.append({"id": f"u5-draft-{d['id']}", "sourceId": str(d["id"]), "recordingId": rid,
                                 "lineage": lineage_of.get(str(d["questionId"]), str(d["questionId"]))})
 
-    # 9. consent onto the ledger
     for origin, rows in (("DwWorkshopConsentDecision", data["consent_log"]), ("DesignWorkshop.dictationConsent", data["consent_cache"])):
         for r in rows:
             if r.get("copied") or str(r.get("state")) not in ("GRANTED", "REFUSED"):
@@ -682,10 +662,8 @@ def build_plan(data: dict[str, Any], *, default_form: str | None = None, primary
                                   "source": r.get("source"), "actorId": r.get("actorId") if r.get("actorExists") else None,
                                   "recordedAt": moment(r.get("recordedAt")), "note": r.get("note")})
 
-    # a researcher must still have an account (the table refuses anyone else)
     plan.researchers = [r for r in dict.fromkeys(plan.researchers) if r[1] in data["users"]]
 
-    # counts
     sessions_ids = {s["id"] for s in plan.sessions}
     have_answers = set(v2["answers"].values())
     source_text = {str(a["id"]): (a.get("answerText") or "", a.get("notes")) for a in data["form_answers"]}
@@ -760,7 +738,6 @@ def changes(plan: Plan) -> int:
     return sum(v for k, v in plan.pending.items())
 
 
-# ── reports ────────────────────────────────────────────────────────────────────────────────────
 def report_csv(plan: Plan) -> str:
     buffer = io.StringIO()
     w = csv.writer(buffer, lineterminator="\n")
@@ -823,7 +800,6 @@ def report_names() -> tuple[str, str]:
     return md, md[:-3] + ".csv"
 
 
-# ── the deferred prerequisites ─────────────────────────────────────────────────────────────────
 def statements(sql: str) -> list[str]:
     """The statements of a migration file: comments dropped, split on ``;`` outside ``$$`` bodies."""
     out, buf, quoted = [], [], False
@@ -846,7 +822,6 @@ def statements(sql: str) -> list[str]:
 async def apply_prerequisites(client: Any) -> list[str]:
     done = []
     for name in PREREQUISITES:
-        # deferred until the switch-on commit moves it into migrations; idempotent either way
         folder = DEFERRED / name if (DEFERRED / name).is_dir() else MIGRATIONS / name
         for stmt in statements((folder / "migration.sql").read_text(encoding="utf-8")):
             await client.execute_raw(stmt)
@@ -854,7 +829,6 @@ async def apply_prerequisites(client: Any) -> list[str]:
     return done
 
 
-# ── snapshot, apply, undo ──────────────────────────────────────────────────────────────────────
 def snapshot_schema(run_id: str) -> str:
     return "questionnaire_unify_" + run_id.replace("-", "_")
 
@@ -916,8 +890,6 @@ async def write_plan(tx: Any, plan: Plan, run_id: str, approver_id: str | None) 
 
     n = 0
     ex = tx.execute_raw
-    # forms
-    # the old default is cleared before the new one is set (one default, a partial unique)
     for f in sorted(plan.form_updates, key=lambda f: f["isDefault"]):
         n += int(await ex('UPDATE "Questionnaire" SET "sortOrder" = $2, "isDefault" = $3 WHERE "id" = $1 AND ("sortOrder" <> $2 OR "isDefault" <> $3)',
                           f["id"], f["sortOrder"], f["isDefault"]) or 0)
@@ -928,12 +900,10 @@ async def write_plan(tx: Any, plan: Plan, run_id: str, approver_id: str | None) 
             "$3, false, false, now(), now()) ON CONFLICT (\"id\") DO NOTHING",
             RETIRED_ID, RETIRED_TITLE, plan.retired["ownerId"],
         ) or 0)
-    # bindings: one primary per design workshop (unmark first, the partial unique allows one)
     for dw, fid in plan.primary.items():
         n += int(await ex('UPDATE "QuestionnaireBinding" SET "isPrimary" = false WHERE "designWorkshopId" = $1 AND "questionnaireId" <> $2 AND "isPrimary"', dw, fid) or 0)
     for dw, fid in plan.primary.items():
         n += int(await ex('UPDATE "QuestionnaireBinding" SET "isPrimary" = true WHERE "designWorkshopId" = $1 AND "questionnaireId" = $2 AND NOT "isPrimary"', dw, fid) or 0)
-    # sections and questions
     if plan.sections:
         n += int(await ex(
             'INSERT INTO "QuestionnaireSection" ("id", "code", "title", "sortOrder", "isActive", "createdAt", "updatedAt", "questionnaireId") '
@@ -959,7 +929,6 @@ async def write_plan(tx: Any, plan: Plan, run_id: str, approver_id: str | None) 
             '"displayCode" = COALESCE(q."displayCode", p."code") FROM jsonb_to_recordset($1::jsonb) AS p("id" text, "lineage" text, "code" text) '
             'WHERE q."id" = p."id" AND q."questionnaireId" IS DISTINCT FROM $2', json.dumps(plan.global_questions), RETIRED_ID,
         ) or 0)
-    # sittings -> sessions
     for s in plan.sessions:
         n += int(await ex(
             'INSERT INTO "QuestionnaireInterview" ("id", "title", "legacyTitle", "questionnaireId", "designWorkshopId", "createdById", "createdAt", '
@@ -978,7 +947,6 @@ async def write_plan(tx: Any, plan: Plan, run_id: str, approver_id: str | None) 
             'ON CONFLICT ("id") DO NOTHING',
             r["id"], r["sessionId"], r["name"], r["kind"], r["userId"], r["notes"], r["createdById"],
         ) or 0)
-    # global interviews, in place
     for r in plan.reconstruct:
         extra = {"questionnaireV2": {"unify": {"runId": run_id, "reconstructed": True, **({"droppedWorkshopId": r["droppedWorkshopId"]} if r["droppedWorkshopId"] else {})}}}
         n += int(await ex(
@@ -995,7 +963,6 @@ async def write_plan(tx: Any, plan: Plan, run_id: str, approver_id: str | None) 
             'INSERT INTO "QuestionnaireInterviewResearcher" ("interviewId", "userId", "role") SELECT $1, $2, $3::"ResearcherRole" '
             'WHERE EXISTS (SELECT 1 FROM "User" WHERE "id" = $2) ON CONFLICT ("interviewId", "userId") DO NOTHING', sid, uid, role,
         ) or 0)
-    # answers and their revisions
     for a in plan.answers:
         src = "QuestionnaireFormAnswer" if a["source"] == "form" else "QuestionnaireResponse"
         ids = [r["sourceId"] for r in a["revisions"]]
@@ -1013,7 +980,6 @@ async def write_plan(tx: Any, plan: Plan, run_id: str, approver_id: str | None) 
                 f'x."updatedAt", x."notes" FROM "{src}" x WHERE x."id" = $5 ON CONFLICT ("id") DO NOTHING',
                 r["id"], a["id"], r["origin"], r["attribution"], r["sourceId"],
             ) or 0)
-            # a sitting edited in the old screens after an earlier apply (the window before the switch)
             n += int(await ex(
                 f"""UPDATE "QuestionnaireAnswerRevision" v SET "text" = COALESCE(x."answerText", ''), "note" = x."notes", """
                 f"""\"createdAt\" = x."updatedAt" FROM "{src}" x WHERE v."id" = $1 AND x."id" = $2 """
@@ -1024,7 +990,6 @@ async def write_plan(tx: Any, plan: Plan, run_id: str, approver_id: str | None) 
             'UPDATE "QuestionnaireAnswer" SET "currentRevisionId" = $2, "version" = $3 WHERE "id" = $1 '
             'AND ("currentRevisionId" IS DISTINCT FROM $2 OR "version" <> $3)', a["id"], a["revisions"][-1]["id"], len(a["revisions"]),
         ) or 0)
-    # clips -> recordings
     for r in plan.recordings:
         written = int(await ex(
             'INSERT INTO "QuestionnaireRecording" ("id", "mediaFileId", "clientClipKey", "capturedAt", "capturedAtSource", "rosterCount", "recordedById", '
@@ -1052,7 +1017,6 @@ async def write_plan(tx: Any, plan: Plan, run_id: str, approver_id: str | None) 
             'SELECT $1, $2, $3, x."draftText", \'MACHINE_SUGGESTED\', x."model", x."createdAt" FROM "QuestionnaireAnswerDraft" x WHERE x."id" = $4 '
             'ON CONFLICT DO NOTHING', d["id"], d["recordingId"], d["lineage"], d["sourceId"],
         ) or 0)
-    # consent onto the ledger (the same rows and keys as scripts/migrate_workshop_consent_to_ledger.py)
     for c in plan.consents:
         owner = c["source"] == ledger.SOURCE_OWNER
         actor = c["actorId"] or approver_id
@@ -1071,10 +1035,8 @@ async def write_plan(tx: Any, plan: Plan, run_id: str, approver_id: str | None) 
     return n
 
 
-#: Tables whose new rows can only be v2 content (the switch is off while this runs). A row in one of
-#: them that neither the snapshot nor the run holds is native content, and the undo refuses.
 V2_ONLY = (
-    "QuestionnaireSection", "QuestionnaireQuestion",  # new rows there since the apply came through the form mirror
+    "QuestionnaireSection", "QuestionnaireQuestion",
     "QuestionnaireInterviewResearcher", "QuestionnaireRespondent", "QuestionnaireAnswer", "QuestionnaireAnswerRevision",
     "QuestionnaireRecording", "QuestionnaireRecordingTarget", "QuestionnaireRecordingSubject", "QuestionnaireRecordingRespondent",
     "QuestionnaireRecordingEvent", "QuestionnaireTakeDraft",
@@ -1164,14 +1126,13 @@ async def undo(client: Any, run_id: str) -> int:
         raise UndoRefused(f"rows the run wrote have been changed since ({moved}); undoing would discard those changes")
     restored = 0
     async with client.tx(max_wait=timedelta(seconds=15), timeout=timedelta(seconds=900)) as tx:
-        # The U0 CHECK holds every row written since (NOT VALID); an old interview may name both workshops.
         await tx.execute_raw('ALTER TABLE "QuestionnaireInterview" DROP CONSTRAINT IF EXISTS "QuestionnaireInterview_one_workshop_kind"')
-        if not meta.get("mirrorBefore"):  # the form mirror goes with the run that installed it
+        if not meta.get("mirrorBefore"):
             for trigger, table in MIRROR_TRIGGERS:
                 await tx.execute_raw(f'DROP TRIGGER IF EXISTS {trigger} ON "{table}"')
             for function in MIRROR_FUNCTIONS:
                 await tx.execute_raw(f"DROP FUNCTION IF EXISTS {function}")
-        for table in TABLES:  # rows the run changed: back to the snapshot
+        for table in TABLES:
             pk, cols = info[table]
             rest = [c for c in cols if c not in pk]
             if not rest:
@@ -1181,7 +1142,7 @@ async def undo(client: Any, run_id: str) -> int:
                 f'UPDATE "{table}" t SET ({quoted}) = {_row("s", rest)} FROM "{snap}"."{table}" s, "{snap}"."_after_{table}" a '
                 f'WHERE {_on(pk, "t", "s")} AND {_on(pk, "a", "s")}'
             ) or 0)
-        for table in reversed(TABLES):  # rows the run created: gone, children first
+        for table in reversed(TABLES):
             pk, _ = info[table]
             restored += int(await tx.execute_raw(
                 f'DELETE FROM "{table}" t USING "{snap}"."_after_{table}" a WHERE {_on(pk, "t", "a")} '
@@ -1201,7 +1162,6 @@ async def undo(client: Any, run_id: str) -> int:
     return restored
 
 
-# ── the command ────────────────────────────────────────────────────────────────────────────────
 async def dry_plan(client: Any, args: argparse.Namespace) -> tuple[Plan, dict[str, Any]]:
     async with client.tx(max_wait=timedelta(seconds=15), timeout=timedelta(seconds=300)) as tx:
         await qv2_guard.assert_read_only(tx)

@@ -7,13 +7,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { RequiredMark } from "@/components/ui/RequiredMark";
 
-/**
- * THE ASTERISK FOLLOWS THE FIELD'S REQUIRED STATE, AND ABSENT MEANS NOT REQUIRED (UX audit DW-02).
- *
- * `RequiredMark` was `{ when = true }`, and a default parameter turns an explicit `undefined` into
- * the default — so `Field`'s `<RequiredMark when={required} />` starred every field written without
- * a `required` prop: "Note (optional) *", an artisan's email and phone drawn as compulsory.
- */
 test("no required state draws no asterisk", () => {
   expect(renderToStaticMarkup(createElement(RequiredMark, { when: undefined }))).toBe("");
   expect(renderToStaticMarkup(createElement(RequiredMark, { when: false }))).toBe("");

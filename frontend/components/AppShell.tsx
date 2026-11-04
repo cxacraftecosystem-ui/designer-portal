@@ -14,7 +14,6 @@ import {
 } from "@/components/AdminViewProvider";
 import { useAuth } from "@/components/AuthProvider";
 import { DynamicIslandNav } from "@/components/DynamicIslandNav";
-// The SAME form `/login` renders. See its header: two hosts, one password vocabulary.
 import { FirstPasswordGate } from "@/components/FirstPasswordGate";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { PageSelvedge } from "@/components/PageSelvedge";
@@ -28,32 +27,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { adminMode, adminViewResolved, setAdminView } = useAdminView();
   const router = useRouter();
   const pathname = usePathname();
-  /**
-   * The route-change fade below is the one animation nobody using this app can avoid — it replays on
-   * every navigation, on every protected page — so it is also the one that most needs the preference
-   * honoured. `useAppReducedMotion()` and not framer's `useReducedMotion()`: the latter sees only the
-   * OS media query, and this app's second switch is the Settings toggle, which stamps
-   * `data-reduced-motion="true"` on <html> and reaches CSS but never JavaScript.
-   *
-   * Branching `initial` as well as the transition is safe HERE, unlike on the public hero. `loading`
-   * starts true, so the server and the first client render both paint the "Opening the repository…"
-   * frame and `motion.main` does not exist to mismatch; by the time `/me` has answered and it first
-   * mounts, ThemeProvider's mount effect has long since read the stored preference. Every later
-   * navigation remounts it through `key={pathname}`, which is when `initial` is read again.
-   */
   const reduce = useAppReducedMotion();
-  /*
-    THERE IS NO LATCH IN THIS FILE ANY MORE, AND THAT IS THE FIX.
-
-    There used to be one here and another on /login, each set by its own host after a successful
-    change, and they did not know about each other: a person who chose their password on /login
-    landed on /dashboard, met a FRESH latch reading false over an account still stale until `/me`
-    answered, and was shown the password form a second time. Nor was this one ever reset, so
-    a flag raised again later in the same tab was ignored until a reload. `markPasswordChanged` in
-    `AuthProvider` is the one latch now: it clears the flag on the account both hosts read, so a
-    navigation has nothing stale to reveal, and a `/me` sent after it — the server's word — can raise
-    the flag again and is obeyed.
-  */
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
@@ -69,140 +43,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   if (!user) return null;
 
-  /**
-   * ══════════════════════════════════════════════════════════════════════════════════════════════
-   * THE FIRST-LOGIN PASSWORD, HELD ABOVE THE APP AND NOT ONLY AT THE DOOR
-   * ══════════════════════════════════════════════════════════════════════════════════════════════
-   *
-   * ── THE GAP THIS CLOSES ───────────────────────────────────────────────────────────────────────
-   *
-   * `FirstPasswordGate` landed on /login and fired NOWHERE ELSE, so the obligation was enforced
-   * against people arriving and against nobody already inside. An administrator who resets somebody's
-   * password through `PATCH /api/users/{id}` sets `mustChangePassword` on an account whose browser
-   * tab is open, and that tab went on working indefinitely, because a session that never revisits
-   * /login never meets the door. The handset has gated here since it landed (`ui/PasswordGate.kt`, a
-   * `when` arm replacing `HomeScreen`); this is the web's half of the same arrangement.
-   *
-   * THE SERVER NOW REFUSES AS WELL, and this branch is how that refusal is met rather than suffered.
-   * The sign-in still succeeds (the only route that can change a password needs a bearer token), but
-   * every authenticated route outside a short allow-list answers 401 with
-   * `X-Password-Change-Required`. `apiFetch` keeps the session on that answer instead of throwing the
-   * token away, and `AuthProvider` re-reads `/me` — so a tab that was already open when the flag was
-   * raised, and whose next request was refused, lands HERE in place of its page rather than on a
-   * sign-in form.
-   *
-   * ── WHY IT IS AN EARLY RETURN AND NOT A PANEL INSIDE `<main>` ─────────────────────────────────
-   *
-   * Because everything below this line is the app. The island alone offers twenty destinations, the
-   * admin-view toggle and sign-out; a lock drawn inside `motion.main` would leave every one of them
-   * live under it, which is a picture of a gate rather than a gate. Returning here is what makes
-   * this a full surface BETWEEN sign-in and the product — the shape `UsageConsentGateScreen` argues
-   * for at length and the shape `FirstPasswordGate`'s own header inherits.
-   *
-   * ── AND WHY IT IS ABOVE `ROUTE_GUARDS` AND ABOVE ADMIN VIEW ───────────────────────────────────
-   *
-   * Those two answer "may this person open THIS route". This one answers "may this person use the
-   * product at all", so it is the outer question and is asked first. Below them, an account that
-   * happens to fail a route guard would be shown the honest permission copy inside full chrome while
-   * still holding a password an administrator typed — the gate silently not applying on exactly the
-   * screens that already refuse something.
-   *
-   * ── THE SETTLING RULE (§7.10), AND WHY THERE IS NOTHING EXTRA TO WAIT FOR ─────────────────────
-   *
-   * Chrome that merely HIDES may act on an unsettled answer; anything that LOCKS must hold the frame
-   * until the answer is known. Admin view needs `adminViewResolved` for that because its answer
-   * arrives from localStorage one commit after the account does. This flag does not: it rides on the
-   * same `/me` payload as the user, so "known" is exactly `!loading` — which is why this branch sits
-   * BELOW the loading frame and below the signed-out return above, and not one line higher. Moved
-   * above them it would paint a lock for somebody who does not need one, or, worse, paint the app for
-   * one commit for somebody who does.
-   *
-   * ── WHAT THIS DOES NOT PROMISE ────────────────────────────────────────────────────────────────
-   *
-   * It is not a poll. The flag is re-read whenever `/me` is — a page load, any `refreshMe()`, and
-   * now the first request the server refuses for it — so a reset performed while a tab sits idle is
-   * met the next time that tab asks the server for anything, not within the second. An idle tab that
-   * asks nothing is not a tab doing anything with the old password.
-   *
-   * ── THE ESCAPE, AND THE ONE DOOR THIS MUST NEVER STAND IN FRONT OF ────────────────────────────
-   *
-   * "Sign out instead" is inside the form, for `UsageConsentGateScreen`'s reason. It matters more
-   * here than at the door: an administrator who resets a password WITHOUT telling anybody leaves a
-   * person who cannot fill this form in at all, because the route requires the current password and
-   * they do not know it. Their way back is the link that administrator issues, redeemed at
-   * `/set-password` — which is public and lives OUTSIDE `app/(protected)/`, so this gate is not in
-   * front of it and must never be moved anywhere that would put it there.
-   */
   if (mustChangePassword(user)) {
     return (
       <FirstPasswordLocked
-        // The one latch, `/login`'s too: it clears the flag on the account this branch reads, so the
-        // app is drawn on the next render whether or not the re-read it starts ever lands.
         onDone={markPasswordChanged}
         onSignOut={() => {
-          // `logout` clears the session, which drops `user`, which sends the effect above to /login.
-          // It does not continue into the app — a way out is not a way in.
           logout().catch(() => undefined);
         }}
       />
     );
   }
 
-  /**
-   * Page-level enforcement for the whole protected tree. Hiding a nav entry only removes the link —
-   * /users, /review, /data and the create forms are still one typed URL away — so the guard table in
-   * lib/permissions.ts is applied HERE, above every page, and the page never renders at all when the
-   * user fails it. Pages that also guard themselves are simply defended twice.
-   */
   const guard = routeGuardFor(pathname);
   const blocked = Boolean(guard && !guard.can(user));
 
-  /**
-   * The second, softer gate: admin view. It is consulted only AFTER the real one has passed, so a
-   * user who genuinely may not open the route always gets the honest permission copy and never the
-   * "you turned this off" copy. Because it is a preference and not a permission it can only ever
-   * subtract — `adminChromeVisible` returns true for everyone who has no toggle, so a professor
-   * keeps /users and a forged `adminMode` in localStorage unlocks nothing (the guard above still
-   * ran, and `adminMode` itself is recomputed from the server-issued role every render).
-   */
   const chrome = blocked ? null : adminChromeRouteFor(pathname);
-  // One commit exists where the account is known but its stored preference is not. Deciding then
-  // would flash a lock at every admin who browses with admin view ON, so we hold the frame instead.
   const chromeSettling = Boolean(chrome) && isAdmin(user) && !adminViewResolved;
   const chromeHidden = Boolean(chrome) && !adminChromeVisible(user, adminMode);
 
-  /**
-   * THE MINISTRY SURFACE, STAMPED ON <main> — the whole of how four screens come to look like the
-   * ministry's own. `lib/permissions.ts` holds the register ({@link ministrySurface}, driven by
-   * `ROUTE_GUARDS`' `ministry` flag) and the end of app/globals.css holds the paint; this line is
-   * the only join between them, and a fifth ministry route needs nothing here.
-   *
-   * ── AND ONLY WHEN THE PAGE IS ACTUALLY BEING SERVED ─────────────────────────────────
-   *
-   * `blocked` is in the condition deliberately. What <main> holds when a guard refuses is
-   * `RouteLocked` — a padlock shown to somebody who is NOT a ministry account — and painting the
-   * ministry accent onto it would put the mark in front of exactly the person it is not for, which
-   * is the same argument the three self-refusal panels inside /officers carry for staying purple.
-   * (`chromeSettling` and `chromeHidden` need no clause: no ministry route is admin chrome, so
-   * `chrome` is null on all four and both are already false there.)
-   *
-   * ── IT CANNOT GO STALE ────────────────────────────────────────────────────────────
-   *
-   * `key={pathname}` already remounts <main> on every navigation, so the attribute is recomputed
-   * with the element rather than patched onto a surviving one. `undefined` rather than `false` or
-   * `""`: React omits the attribute entirely, and the CSS selector is an attribute-value match, so a
-   * non-ministry page carries no `data-surface` at all and nothing to explain.
-   *
-   * Components OUTSIDE these four routes opt in by putting `data-surface="ministry"` on their own
-   * root — the ministry desk card on /dashboard does exactly that. The scoped block matches both the
-   * descendant and the self case, so the attribute may sit on the styled element itself.
-   */
   const ministry = !blocked && ministrySurface(pathname);
 
   return (
     <div className="min-h-screen bg-bg-0">
-      {/* The island is a floating pill and comes first in the tab order — give the keyboard a way
-          past it straight to the page content. Visible only while focused. */}
       <a
         href="#main-content"
         className="sr-only left-3 top-3 z-60 rounded-md bg-purple-700 px-3 py-2 text-sm font-medium text-white focus:not-sr-only focus:fixed"
@@ -210,29 +72,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         Skip to content
       </a>
       <DynamicIslandNav />
-      {/* Decorative only — see PageSelvedge. It is `fixed z-0`, so `main` below carries an explicit
-          `relative`: two positioned elements at the same stacking level paint in tree order, and the
-          selvedge comes first, so `main` covers it at every width between `md` and the point the
-          content column stops filling the viewport. Without the `relative` the strips would sit ON
-          the page rather than behind it.
-
-          `main` carries NO z-index, and that omission is the whole reason two full-screen surfaces
-          are reachable at all. `z-10` here made `main` a STACKING CONTEXT, and everything drawn
-          inside it — the media lightbox and the rich-text editor's full-screen mode, both fixed and
-          both at a higher rung than the island — was then capped at that context's level 10 and
-          painted UNDERNEATH the nav island, which lives outside it and still takes pointer events.
-          A click on the pill navigated away from a surface that had just declared itself
-          `aria-modal`, and the unsaved-changes interception does not cover the island's links. An
-          `auto` z-index on a positioned element creates no stacking context, so removing the class
-          keeps the painting order above and lets those surfaces reach their declared rung.
-
-          The cost of that, and it is paid in DynamicIslandNav rather than here: the cap worked in
-          both directions. Fixed chrome a PAGE mounts — `UploadTray`, `z-40` — was also held under
-          level 10, and so under the nav sheet's scrim, which was `z-40` too. Uncapped, the two meet
-          in the root stacking context and tree order decides; the nav renders first, so the dock
-          would have painted over an open `aria-modal` sheet. The sheet's overlay is `z-90` now
-          for exactly that reason. Anything else mounted inside `main` is at or below `z-20` or is
-          one of the two `z-100` surfaces above. */}
       <PageSelvedge />
       <motion.main
         id="main-content"
@@ -258,55 +97,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-/**
- * THE SURFACE A PERSON MEETS INSTEAD OF THE APP while their account still holds a password somebody
- * else chose.
- *
- * ── IT IS THE AUTH FRAME, NOT THE REFUSAL FRAME, AND THAT IS DELIBERATE ───────────────────────
- *
- * `RouteLocked` and `AdminViewHidden` below are panels drawn INSIDE the shell, under the island,
- * because both are answers about one route and the rest of the app is still the reader's to use.
- * This one replaces the shell outright, so it has to supply its own frame — and it supplies the
- * SIGN-IN card's frame rather than a wider page: the mark, one heading, one column of 52px boxes.
- * Somebody who reloaded a tab and met this needs to recognise in one glance that they are being
- * asked for a credential, not told that something is broken or forbidden.
- *
- * ── THE MARK IS HERE FOR `DeadEndFrame`'S REASON ──────────────────────────────────────────────
- *
- * The island carries the wordmark and the island is not on screen. Without it this is a white card
- * on a tinted page with no answer to "what have I opened" — which is the wrong thing to wonder on
- * the one screen in the product that asks for a password.
- *
- * ── NO `aria-live`, THOUGH BOTH PANELS BELOW HAVE ONE ─────────────────────────────────────────
- *
- * The form already opens with a `role="status"` box carrying the sentence that matters ("Choose a
- * new password to continue."), and it is present from this surface's first paint. A live region
- * wrapped around a live region announces the same demand twice, which on a screen reader is
- * indistinguishable from the app repeating itself.
- *
- * ── NO COPY OF ITS OWN BEYOND THE HEADING ─────────────────────────────────────────────────────
- *
- * Terse, and one vocabulary: the explanation, the length rule, the mismatch sentence and both
- * buttons all live in `FirstPasswordGate`, which /login renders too. Anything added here would be a
- * sentence only half the people who meet this gate ever see.
- */
 function FirstPasswordLocked({ onDone, onSignOut }: { onDone: () => void; onSignOut: () => void }) {
   return (
     <div className="grid min-h-screen place-items-center bg-bg-0 px-4 py-12">
       <main id="main-content" tabIndex={-1} className="w-full max-w-md">
         <div className="mb-6 flex flex-col items-center gap-2 text-center">
           <WorkshopLogo className="h-12 w-12 rounded-xl shadow-sm" />
-          {/* Android's `PasswordGateScreen` heading, word for word (`PASSWORD_GATE_HEADING`) — a
-              designer refused on the phone opens the website next, and a different sentence there
-              reads as a different demand. It was "Set your own password", which, like the sentence
-              under it, assumed somebody else had chosen the one being replaced. */}
           <h1 className="font-display text-2xl font-bold text-ink-900">Set a new password</h1>
         </div>
         <section className="panel p-6">
-          {/* Always "" here: the protected tree never saw a password typed at a door, so the form
-              draws its "Current password" box. Android's gate does the same for the same case — a
-              session that was already open when the app was launched. A wrong entry is answered
-              with a 400 and the box is cleared for another go; it no longer costs the session. */}
           <FirstPasswordGate currentPassword="" onDone={onDone} onSignOut={onSignOut} />
         </section>
       </main>
@@ -314,10 +113,6 @@ function FirstPasswordLocked({ onDone, onSignOut }: { onDone: () => void; onSign
   );
 }
 
-/**
- * What a user sees instead of a page they may not open. It names their tier and points at the two
- * routes that are always available — the dashboard and the walkthrough — rather than dead-ending.
- */
 function RouteLocked({ title, message, role }: { title: string; message: string; role: string }) {
   return (
     <section className="panel px-6 py-14 text-center" aria-live="polite">
@@ -341,15 +136,6 @@ function RouteLocked({ title, message, role }: { title: string; message: string;
   );
 }
 
-/**
- * What an ADMIN sees on an admin route while their own admin view is off.
- *
- * Deliberately not RouteLocked: this is self-inflicted and one click from being undone, so it must
- * not borrow the padlock, the "access required" title or the "an admin can raise your access" line
- * that a genuine non-admin sees — telling an admin they lack access they in fact hold is the worse
- * error of the two. The primary action turns the toggle back on and leaves them exactly where they
- * are, so the page they asked for appears in place rather than after a detour.
- */
 function AdminViewHidden({ route, onEnable }: { route: AdminChromeRoute; onEnable: () => void }) {
   return (
     <section className="panel px-6 py-14 text-center" aria-live="polite">

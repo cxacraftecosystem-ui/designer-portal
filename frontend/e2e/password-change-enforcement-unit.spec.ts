@@ -21,36 +21,7 @@ import { SESSION_TOKEN_HEADER, changeOwnPassword } from "@/lib/signIn";
 
 import { installSessionCookie, removeSessionCookie, type FakeSessionCookie } from "./support/fakeSessionCookie";
 
-/** The current fake marker cookie; replaced by every `installFakeWindow`. */
 let session: FakeSessionCookie = installSessionCookie(null);
-
-/**
- * THE PASSWORD GATE, ENFORCED BY THE SERVER AND MET — NOT SUFFERED — BY THE CLIENT.
- *
- * ── WHAT CHANGED ON THE SERVER ──────────────────────────────────────────────────────────────────
- *
- * The owner ruled that the server enforces `mustChangePassword`: while an account carries it, every
- * authenticated route outside a short allow-list answers 401 with `X-Password-Change-Required: 1`
- * and "Choose a new password to continue.". A 401, not a 403, because both clients keep queued work
- * on a 401 and park or destroy it on a 403.
- *
- * ── WHY THE CLIENT HAD TO CHANGE WITH IT ────────────────────────────────────────────────────────
- *
- * `apiFetch` read EVERY 401 sent with a token as a dead session: it threw the token away and, off
- * /login, hard-navigated to the sign-in form. Under enforcement that would have turned "choose a new
- * password" into "sign in again, then choose a new password" for every open tab — and the token it
- * threw away is the one `POST /auth/change-password` needs. So the gated 401 is a different answer:
- * the token stays, nothing navigates, and the auth layer is told so it re-reads `/me` and `AppShell`
- * draws the gate in place. Every other 401 is exactly what it was, and `public-page-401-unit.spec.ts`
- * still pins that.
- *
- * WHY THIS DRIVES THE REAL FUNCTIONS. `apiFetch` and `changeOwnPassword` are plain async functions
- * whose only ambient dependencies are `window` and `fetch`, both of which stand up in Node — the
- * approach `public-page-401-unit.spec.ts` takes — so the 401 branch is exercised, not read. Only the
- * `AuthProvider` half is a source read, because this repository has no React renderer.
- *
- * ⚠ LINE-ENDING AGNOSTIC: `\s` and `[\s\S]` throughout; never a literal newline.
- */
 
 type Recorded = { assign: string[]; replace: string[] };
 
@@ -61,7 +32,6 @@ const SIGN_IN = readFileSync(join(__dirname, "..", "lib", "signIn.ts"), "utf8");
 const BACKEND = join(__dirname, "..", "..", "backend");
 const readBackend = (...parts: string[]) => readFileSync(join(BACKEND, ...parts), "utf8");
 
-/** Every `.py` file under one backend directory. `__pycache__` holds no source. */
 function pythonFiles(dir: string, found: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.name === "__pycache__") continue;
@@ -72,11 +42,6 @@ function pythonFiles(dir: string, found: string[] = []): string[] {
   return found;
 }
 
-/**
- * A module-level string constant's value, wherever under `backend/app` it is declared — so a header
- * the server names through a constant (`PASSWORD_CHANGE_REQUIRED_HEADER`, imported from `deps`) is
- * read as the string it is, and a rename of the constant cannot pass for a missing header.
- */
 function backendConstant(name: string): string | null {
   const bare = name.split(".").at(-1) ?? "";
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(bare)) return null;
@@ -88,14 +53,8 @@ function backendConstant(name: string): string | null {
   return null;
 }
 
-/**
- * A window just real enough for `apiFetch`: the token store it reads and clears, and the location it
- * inspects and navigates. `protocol: "http:"` for the reason `public-page-401-unit.spec.ts` gives — a
- * loopback API base from an https page is refused before any request is made.
- */
 function installFakeWindow(pathname: string, storedToken: string | null): Recorded {
   const recorded: Recorded = { assign: [], replace: [] };
-  // The session the page can see is its marker cookie (the token itself is HttpOnly).
   session = installSessionCookie(storedToken);
   (globalThis as Record<string, unknown>).window = {
     location: {
@@ -108,7 +67,6 @@ function installFakeWindow(pathname: string, storedToken: string | null): Record
   return recorded;
 }
 
-/** Every request answered with one status, one sentence and the given headers. */
 function respond(status: number, detail: string, headers: Record<string, string> = {}) {
   (globalThis as Record<string, unknown>).fetch = async () =>
     new Response(JSON.stringify({ detail }), {
@@ -117,7 +75,6 @@ function respond(status: number, detail: string, headers: Record<string, string>
     });
 }
 
-/** The session this page still believes in: null once `apiFetch` has ended it. */
 const tokenNow = () => getSessionMarker();
 
 function asBatchFailure(error: unknown, name = "loom.jpg"): MediaBatchError {
@@ -130,19 +87,13 @@ test.afterEach(() => {
   delete (globalThis as Record<string, unknown>).window;
   removeSessionCookie();
   (globalThis as Record<string, unknown>).fetch = realFetch;
-  // Module state, and this worker runs other spec files after this one.
   setSessionOwesPasswordChange(false);
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 1. The gated 401 keeps the session
- * ──────────────────────────────────────────────────────────────────────────── */
 
 test("a gated 401 keeps the token, navigates nowhere, and is recognisable to the caller", async () => {
   const recorded = installFakeWindow("/products", "a-perfectly-good-token");
   respond(401, "Choose a new password to continue.", GATED);
 
-  // No options: an ordinary call from a protected page, which defaults to redirecting on a 401.
   const refused = await apiFetch("/products?page=1").catch((error: unknown) => error);
 
   expect(refused).toBeInstanceOf(ApiError);
@@ -175,7 +126,6 @@ test("the flag is raised before the caller hears, and the auth layer is told onc
     expect(sessionOwesPasswordChange()).toBe(false);
     const seenByCaller = await apiFetch("/preferences/me").then(
       () => null,
-      // Read INSIDE the rejection: a drain asks this in its catch, before anything else has run.
       () => sessionOwesPasswordChange()
     );
     expect(seenByCaller, "the background drains read this to stop spending refused requests").toBe(true);
@@ -200,10 +150,6 @@ test("a listener that throws cannot turn the refusal into a different error", as
   }
 });
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 2. Every other 401 is what it always was
- * ──────────────────────────────────────────────────────────────────────────── */
-
 test("an ordinary 401 still ends the session and still lands on /login", async () => {
   const recorded = installFakeWindow("/products", "a-token-the-server-no-longer-honours");
   respond(401, "This session is no longer valid. Sign in again.");
@@ -224,45 +170,27 @@ test("an ordinary 401 still ends the session and still lands on /login", async (
 });
 
 test("the header means nothing on another status, or with another value", () => {
-  // Spelled once, lower-case because `Headers.get` is case-insensitive.
   expect(PASSWORD_CHANGE_REQUIRED_HEADER).toBe("x-password-change-required");
   expect(new ApiError(401, "…", null, new Headers({ "X-Password-Change-Required": "1" })).passwordChangeRequired).toBe(true);
-  // A 403 is a refusal of the WORK, and both clients park work on a 403: never the gate.
   expect(new ApiError(403, "…", null, new Headers(GATED)).passwordChangeRequired).toBe(false);
   expect(new ApiError(401, "…", null, new Headers({ [PASSWORD_CHANGE_REQUIRED_HEADER]: "0" })).passwordChangeRequired).toBe(false);
-  // A cross-origin response that does not expose the header reads as an ordinary dead session —
-  // the safe direction to be wrong in, at the cost of one sign-in.
   expect(new ApiError(401, "…", null, new Headers()).passwordChangeRequired).toBe(false);
   expect(new ApiError(401, "…", null).passwordChangeRequired).toBe(false);
 });
-
-/* ────────────────────────────────────────────────────────────────────────────
- * 3. The triage reads it through a wrapper, and keeps it on the expiry row
- * ──────────────────────────────────────────────────────────────────────────── */
 
 test("a gated refusal is recognised bare and inside a media batch, and stays a stop-and-keep", () => {
   const gated = new ApiError(401, "Choose a new password to continue.", null, new Headers(GATED));
   const expired = new ApiError(401, "Could not validate credentials", null);
 
   expect(isPasswordChangeRefusal(gated)).toBe(true);
-  // How the media leg of a drain meets it — the case that would otherwise mark a photograph refused.
   expect(isPasswordChangeRefusal(asBatchFailure(gated))).toBe(true);
   expect(isPasswordChangeRefusal(expired), "an expired token is not the gate").toBe(false);
   expect(isPasswordChangeRefusal(new TypeError("Failed to fetch"))).toBe(false);
-  // A NARROWER READING, NOT A NEW KIND: it keeps the 401 row — stop the pass, mark nothing — so any
-  // drain that already handles an expiry already does the safe thing with it.
   expect(isCredentialExpiry(gated)).toBe(true);
   expect(isUnreachable(gated), "the server answered").toBe(false);
 });
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 4. The gate's own form no longer costs the session on a typo
- * ──────────────────────────────────────────────────────────────────────────── */
-
 test("a wrong current password is a 400 that keeps the session and empties only the box", async () => {
-  // The server answered a wrong current password with a 401, and `apiFetch` read it as a dead
-  // session: the token went, the protected host hard-reloaded onto the sign-in form, and "Current
-  // password is incorrect" was never seen. It is a 400 now, which `apiFetch` leaves alone.
   const recorded = installFakeWindow("/dashboard", "a-perfectly-good-token");
   respond(400, "Current password is incorrect");
 
@@ -275,16 +203,10 @@ test("a wrong current password is a 400 that keeps the session and empties only 
   expect(recorded.replace).toEqual([]);
 });
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 5. The auth layer's half — source reads, for want of a React renderer
- * ──────────────────────────────────────────────────────────────────────────── */
-
 test("AuthProvider re-reads /me on a gated refusal, one re-read at a time", () => {
   const listener = AUTH.slice(AUTH.indexOf("onPasswordChangeRequired(() => {"));
   expect(listener.length, "the subscription was located").toBeGreaterThan(0);
   const body = listener.slice(0, listener.indexOf("[refreshMe]"));
-  // Six refused requests from one page cost one `/me` — and a refusal of `/me` itself, were the
-  // server ever to send one, arrives while its own re-read is the one in flight: no loop.
   expect(body).toContain("if (gateProbe.current) return;");
   expect(body).toMatch(/gateProbe\.current = refreshMe\(\)\.finally\(\(\) => \{\s*gateProbe\.current = null;\s*\}\);/);
 });
@@ -292,9 +214,6 @@ test("AuthProvider re-reads /me on a gated refusal, one re-read at a time", () =
 test("every account the provider adopts writes the flag the background drains read", () => {
   const adopt = AUTH.slice(AUTH.indexOf("const adopt = useCallback("));
   expect(adopt.slice(0, adopt.indexOf("}, []);"))).toContain("setSessionOwesPasswordChange(mustChangePassword(next));");
-  // Sign-in on all three paths (password, Google, Microsoft/Yahoo) and the two-step verify, sign-out,
-  // a refused /me, and a re-read — all through the one door. The four sign-in answers meet in `open`,
-  // which adopts a session and leaves a two-step challenge unadopted.
   expect((AUTH.match(/adopt\(result\.user\);/g) ?? []).length, "one adoption for every sign-in answer").toBe(1);
   expect((AUTH.match(/return open\(\s*await apiFetch<SignInResult>\("\/auth\/login"/g) ?? []).length, "every sign-in path").toBe(3);
   expect(AUTH).toContain("const account = open(result);");
@@ -303,9 +222,6 @@ test("every account the provider adopts writes the flag the background drains re
 });
 
 test("a re-read that fails on the connection keeps the account it already had", () => {
-  // A dropped connection during a re-read is an ordinary event here, and answering it with
-  // `user = null` sent a person holding a valid token to the sign-in form. Only the server's own
-  // 401/403 ends the account in this tab.
   const refresh = AUTH.slice(AUTH.indexOf("const refreshMe = useCallback("));
   const body = refresh.slice(0, refresh.indexOf("}, [adopt]);"));
   const caught = body.slice(body.indexOf("} catch (err) {"), body.indexOf("} finally {"));
@@ -313,16 +229,10 @@ test("a re-read that fails on the connection keeps the account it already had", 
     /if \(err instanceof ApiError && \(err\.status === 401 \|\| err\.status === 403\) && !sessionReplacedSince\(sentWith\)\) \{\s*endSession\(\);\s*adopt\(null\);\s*\}/
   );
   expect((caught.match(/adopt\(/g) ?? []).length, "and nowhere else in the catch").toBe(1);
-  // `sentWith` is the session the re-read went out with, read before the request — not after it.
   expect(body.indexOf("const sentWith = getSessionMarker();")).toBeGreaterThan(-1);
   expect(body.indexOf("const sentWith = getSessionMarker();")).toBeLessThan(body.indexOf('apiFetch<User>("/me"'));
 });
 
-/* ────────────────────────────────────────────────────────────────────────────
- * 6. A changed password retires the session that sent it, and hands back a fresh one — in a header
- * ──────────────────────────────────────────────────────────────────────────── */
-
-/** Answer every request with one JSON body; `before` runs as the answer is produced. */
 function answer(status: number, body: unknown, before?: () => void, headers: Record<string, string> = {}) {
   (globalThis as Record<string, unknown>).fetch = async () => {
     before?.();
@@ -330,40 +240,25 @@ function answer(status: number, body: unknown, before?: () => void, headers: Rec
   };
 }
 
-/** The site's answer replaced the session (a sign-in, a password change): a new marker cookie. */
 const setStoredToken = (token: string) => session.set(token);
 
 test("changeOwnPassword reports a renewed session from the site's header, and false where none came", async () => {
-  // Since 2026-10-09 every token carries the fingerprint of the password it was opened with, so the
-  // change retires the token that sent it — and the API answers with one minted after the write, in
-  // `X-Session-Token`. Since 2026-10-17 this site's change-password route puts that token in the
-  // HttpOnly cookie and answers `X-Session-Rotated: 1` instead: the page learns only that it happened.
   installFakeWindow("/settings", "a-token-the-change-will-retire");
   answer(200, { ok: true }, undefined, { [SESSION_ROTATED_HEADER]: "1" });
   expect(await changeOwnPassword("old-password", "new-password")).toBe(true);
 
-  // An older server, or no renewal: nothing changed hands.
   answer(200, { ok: true });
   expect(await changeOwnPassword("old-password", "new-password")).toBe(false);
-  // The API's own header, should one ever slip past the site, is not something the page takes.
   answer(200, { ok: true }, undefined, { "X-Session-Token": "a-fresh-token" });
   expect(await changeOwnPassword("old-password", "new-password"), "the page never takes a token").toBe(false);
 });
 
 test("a token in the change-password BODY is never adopted, whatever a server puts there", async () => {
-  /*
-    THE CONTRACT IS THE HEADER, and the body is `{"ok": true}` exactly — handsets 0.0.6–0.0.15 decode
-    it as a map of booleans, and a string beside `ok` makes them throw and print the token on screen.
-    A client that went on reading `accessToken` out of the body would keep a server that put it back
-    looking healthy on the web while every shipped phone broke.
-  */
   installFakeWindow("/settings", "a-token-the-change-will-retire");
   answer(200, { ok: true, accessToken: "a-token-in-the-body" });
   expect(await changeOwnPassword("old-password", "new-password")).toBe(false);
 
   expect(SESSION_TOKEN_HEADER, "spelled once, lower-case: Headers.get is case-insensitive").toBe("x-session-token");
-  // From the declaration to the first closing brace at the start of a line — `^` under the `m` flag, so
-  // a CRLF checkout matches exactly as an LF one does.
   const body = /export async function changeOwnPassword\([\s\S]*?^\}/m.exec(SIGN_IN)?.[0] ?? "";
   expect(body, "the helper was located").toContain('apiFetchWithHeaders<unknown>("/auth/change-password"');
   expect(body).toContain("sessionRotated(headers)");
@@ -378,7 +273,6 @@ test("apiFetchWithHeaders is apiFetch with the headers kept: same body, same ref
   expect(headers.get(SESSION_TOKEN_HEADER)).toBe("t-2");
   expect(await apiFetch("/auth/change-password", { method: "POST" }), "apiFetch drops only the headers").toEqual({ ok: true });
 
-  // A refusal is apiFetch's: the server's sentence, and a dead session handled exactly as before.
   const recorded = installFakeWindow("/settings", "a-token-the-server-no-longer-honours");
   respond(401, "This session is no longer valid. Sign in again.");
   const refused = await apiFetchWithHeaders("/preferences/me").catch((error: unknown) => error);
@@ -389,17 +283,10 @@ test("apiFetchWithHeaders is apiFetch with the headers kept: same body, same ref
 });
 
 test("the API lets a browser read the session header — or every web password change costs a sign-in", () => {
-  /*
-    A cross-origin response shows JavaScript only the headers named in CORS `expose_headers`. Hidden,
-    the fresh session never reaches this client, which keeps the retired token and is signed out by
-    its next request: safe, and invisible to every server test. Read off `backend/app/main.py`, with a
-    named constant resolved to its value wherever in `app/` it is declared.
-  */
   const main = readBackend("app", "main.py");
   const list = /expose_headers\s*=\s*\[([^\]]*)\]/.exec(main)?.[1];
   expect(list, "expose_headers was located in backend/app/main.py").toBeTruthy();
   const exposed = list!
-    // A comment between two entries is prose, not a header.
     .replace(/#[^\r\n]*/g, "")
     .split(",")
     .map((entry) => entry.trim())
@@ -414,8 +301,6 @@ test("the API lets a browser read the session header — or every web password c
 });
 
 test("the server sends the session in the header this client reads, and the body stays {\"ok\": true}", () => {
-  // Two halves of one contract, read where each is written: the route sets a header whose name is the
-  // one `changeOwnPassword` asks for, and answers with nothing a map of booleans cannot decode.
   const auth = readBackend("app", "api", "routes", "auth.py");
   const from = auth.indexOf("async def change_password(");
   expect(from, "the change-password route was located").toBeGreaterThan(-1);
@@ -428,12 +313,6 @@ test("the server sends the session in the header this client reads, and the body
 });
 
 test("a 401 for a token this tab has since replaced keeps the session that replaced it", async () => {
-  /*
-    THE RACE R1 OPENS. A request sent with the old token — a theme save, a drain, the gate's own /me
-    re-read — is answered 401 "no longer valid" because the change retired it, and lands after the
-    fresh token was adopted. Reading that as a dead session would clear the FRESH token and bounce
-    the person to /login the moment they complied.
-  */
   const recorded = installFakeWindow("/settings", "the-retired-token");
   answer(401, { detail: "This session is no longer valid. Sign in again." }, () => setStoredToken("the-fresh-token"));
   let told = 0;
@@ -446,7 +325,6 @@ test("a 401 for a token this tab has since replaced keeps the session that repla
     expect(tokenNow(), "the session that replaced it is kept").toBe("the-fresh-token");
     expect(recorded.replace, "and nobody is sent to /login").toEqual([]);
 
-    // A gated answer for the retired token is not the fresh session's either.
     answer(401, { detail: "Choose a new password to continue." }, () => setStoredToken("a-fresher-token"), GATED);
     setStoredToken("the-fresh-token");
     await apiFetch("/artisans?page=1").catch(() => undefined);
