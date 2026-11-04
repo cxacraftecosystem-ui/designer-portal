@@ -32,8 +32,10 @@ object ReadCache {
     fun root(context: Context): File = File(context.filesDir, "read-cache")
 
     internal fun fileFor(root: File, ownerUserId: String?, key: String): File {
-        val safe = key.replace(Regex("[^A-Za-z0-9_.-]"), "_").take(120)
-        return File(File(root, FormDraftStore.ownerSegment(ownerUserId)), "$safe.json")
+        val safe = key.replace(Regex("[^A-Za-z0-9_.-]"), "_").take(80)
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }.take(16)
+        return File(File(root, FormDraftStore.ownerSegment(ownerUserId)), "$safe-$digest.json")
     }
 
     suspend fun <T> read(

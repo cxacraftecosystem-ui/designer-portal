@@ -197,4 +197,18 @@ class DwDictationAllowanceTest {
         val note = plan.suppressed!!
         assertFalse("No invented ceiling on the panel either: $note", note.any { it.isDigit() })
     }
+
+    @Test
+    fun theAllowanceIsReadAtMostEveryTenMinutesOnTheSameDay() {
+        val today = "2026-11-05"
+        val stored = DwDictationAllowance(userId = "u", day = today, limit = 20, remaining = 5)
+        val fetched = 1_000_000L
+        assertFalse(dwDictationAllowanceDue(stored, fetched, today, fetched + 60_000))
+        assertFalse(dwDictationAllowanceDue(stored, fetched, today, fetched + DW_DICTATION_REFRESH_MS - 1))
+        assertTrue(dwDictationAllowanceDue(stored, fetched, today, fetched + DW_DICTATION_REFRESH_MS))
+        assertTrue(dwDictationAllowanceDue(stored, fetched, "2026-11-06", fetched + 1))
+        assertTrue(dwDictationAllowanceDue(null, fetched, today, fetched + 1))
+        assertTrue(dwDictationAllowanceDue(stored, 0L, today, fetched))
+        assertTrue(dwDictationAllowanceDue(stored, fetched, today, fetched + 1, force = true))
+    }
 }
