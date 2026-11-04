@@ -336,10 +336,26 @@ async def run_export(row: Any) -> None:
     )
 
 
+PURGE_INTERVAL_SECONDS = 600.0
+_last_purge = {"at": float("-inf")}
+
+
+def _purge_due() -> bool:
+    import time
+
+    moment = time.monotonic()
+    if moment - _last_purge["at"] < PURGE_INTERVAL_SECONDS:
+        return False
+    _last_purge["at"] = moment
+    return True
+
+
 async def recover_and_purge(now: datetime | None = None, *, recover: bool = True) -> None:
     now = now or datetime.now(UTC)
     if recover:
         await _recover_stale(now)
+    if not _purge_due():
+        return
     await db.ministrydataexport.update_many(
         where={"status": READY, "expiresAt": {"lt": now}},
         data={"content": None, "status": EXPIRED},

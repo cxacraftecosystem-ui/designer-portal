@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { dwDictationAllowance, forgetDictationAllowanceInFlight } from "@/lib/designWorkshops";
+import { dwDictationAllowance, forgetDictationAllowanceInFlight, rememberDictationAllowance } from "@/lib/designWorkshops";
 
 const ROOT = join(__dirname, "..");
 const read = (relative: string) => readFileSync(join(ROOT, relative), "utf8").split("\r\n").join("\n");
@@ -77,13 +77,30 @@ test("eleven microphones on one stage ask the server ONCE between them", async (
   }
 });
 
-test("the shared request is released once it settles, so a later stage gets a fresh count", async () => {
+test("a later stage reuses the answer for ten minutes instead of polling the server", async () => {
   forgetDictationAllowanceInFlight();
   const net = interceptFetch(() => Promise.resolve(jsonResponse(ALLOWANCE)));
   try {
     await dwDictationAllowance();
     await dwDictationAllowance();
-    expect(net.calls.length, "two separate mounts, two requests").toBe(2);
+    expect(net.calls.length, "two separate mounts, one request").toBe(1);
+    forgetDictationAllowanceInFlight();
+    await dwDictationAllowance();
+    expect(net.calls.length, "a forgotten answer asks again").toBe(2);
+  } finally {
+    net.restore();
+    forgetDictationAllowanceInFlight();
+  }
+});
+
+test("a dictation's own count replaces the remembered allowance without a request", async () => {
+  forgetDictationAllowanceInFlight();
+  const net = interceptFetch(() => Promise.resolve(jsonResponse(ALLOWANCE)));
+  try {
+    rememberDictationAllowance({ ...ALLOWANCE, dictationsUsed: 4, dictationsRemaining: 16 });
+    const answer = await dwDictationAllowance();
+    expect(net.calls.length).toBe(0);
+    expect(answer?.dictationsRemaining).toBe(16);
   } finally {
     net.restore();
     forgetDictationAllowanceInFlight();

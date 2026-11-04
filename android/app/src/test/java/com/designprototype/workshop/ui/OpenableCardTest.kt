@@ -50,7 +50,7 @@ class OpenableCardTest {
         assertTrue("review queue routes", main.contains("onOpenRecord = reviewOpenRecord"))
         assertTrue("admin tools", main.contains(".openable(entry.label, RoundedCornerShape(12.dp)) { onSectionChange(entry) }"))
         assertTrue("search hits", mainSource("ui/SearchScreen.kt").contains(".openable(row.title, MaterialTheme.shapes.medium, enabled = openable, onOpen = onOpen)"))
-        assertTrue("data browser folders", mainSource("ui/DataBrowserScreen.kt").contains(".openable(folder.name, MaterialTheme.shapes.medium, onOpen = onOpen)"))
+        assertTrue("data browser folders", mainSource("explorer/ui/ExplorerRows.kt").contains("onClickLabel = if (selecting) ExplorerText.select else ExplorerText.open,"))
         assertTrue("inspection list", mainSource("ui/designworkshop/InspectionListScreen.kt").contains(".openable(shownTitle, RoundedCornerShape(12.dp), onOpen = onOpen)"))
         assertTrue("stage index", mainSource("ui/designworkshop/StageIndexScreen.kt").contains(".openable(stage.title, RoundedCornerShape(8.dp), onOpen = onOpen)"))
     }
@@ -58,7 +58,7 @@ class OpenableCardTest {
     @Test
     fun noCardPutsAnUnlabelledClickOnItsOuterModifier() {
         val pattern = Regex("""modifier = Modifier\.fillMaxWidth\(\)\.clickable\(onClick = onOpen\)""")
-        for (path in listOf("MainActivity.kt", "ui/DataBrowserScreen.kt", "ui/designworkshop/InspectionListScreen.kt", "ui/designworkshop/StageIndexScreen.kt")) {
+        for (path in listOf("MainActivity.kt", "explorer/ui/ExplorerRows.kt", "ui/designworkshop/InspectionListScreen.kt", "ui/designworkshop/StageIndexScreen.kt")) {
             assertFalse(path, pattern.containsMatchIn(mainSource(path)))
         }
     }

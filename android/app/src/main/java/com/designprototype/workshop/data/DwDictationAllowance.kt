@@ -67,6 +67,20 @@ fun dwDictationCapSpentRecord(
     remaining = 0,
 )
 
+const val DW_DICTATION_REFRESH_MS: Long = 10L * 60L * 1000L
+
+fun dwDictationAllowanceDue(
+    stored: DwDictationAllowance?,
+    fetchedAtMillis: Long,
+    today: String,
+    nowMillis: Long,
+    force: Boolean = false,
+): Boolean {
+    if (force || stored == null || stored.day != today) return true
+    if (fetchedAtMillis <= 0L || nowMillis < fetchedAtMillis) return true
+    return nowMillis - fetchedAtMillis >= DW_DICTATION_REFRESH_MS
+}
+
 object DwDictationAllowanceStore {
 
     private const val PREFS = "dw_dictation_allowance"
@@ -104,6 +118,15 @@ object DwDictationAllowanceStore {
         if (userId.isNullOrBlank()) return
         preferences(context).edit().remove(key(userId)).apply()
     }
+
+    fun fetchedAt(context: Context, userId: String): Long =
+        runCatching { preferences(context).getLong(FETCHED_PREFIX + userId, 0L) }.getOrDefault(0L)
+
+    fun markFetched(context: Context, userId: String, nowMillis: Long = System.currentTimeMillis()) {
+        preferences(context).edit().putLong(FETCHED_PREFIX + userId, nowMillis).apply()
+    }
+
+    private const val FETCHED_PREFIX = "fetchedAt:"
 
     private fun key(userId: String) = "$KEY_PREFIX$userId"
 }

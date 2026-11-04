@@ -413,8 +413,12 @@ before transcribing any of them. Decoded PCM is several times the compressed siz
 multi-hundred-megabyte input this cannot fit and never will.
 
 The same pattern sat in the *web* process: `/data/media/{id}/download?format=mp4` read the object
-whole and re-encoded it, guarded only by `MAX_CONVERT_BYTES` (`data_browser.py:163`). Three live
-files (131, 151, 156 MiB) were under that cap.
+whole and re-encoded it, guarded only by a size constant in `data_browser.py`. Three live
+files (131, 151, 156 MiB) were under that cap. **Since 0.0.12 the route streams instead**
+(`data_explorer/downloads.py::converted_audio`): the object goes to a temporary file, ffmpeg
+reads it and writes fragmented mp4 straight to the response, AAC is copied rather than re-encoded,
+one conversion runs at a time, and nothing is decoded into the heap. See
+[DATA_EXPLORER.md](DATA_EXPLORER.md).
 
 #### The six read sites, and the one this section did not name
 
@@ -422,8 +426,8 @@ Traced route function → read. Only the first had a cap of any kind before this
 
 | # | Entry point | Read site | Process |
 |---|---|---|---|
-| 1 | `GET /data/media/{id}/download?format=mp4` | `data_browser.py::download_media` | web |
-| 2 | Same function, the non-audio fallback when `media.url` is falsy | `data_browser.py::download_media` | web |
+| 1 | `GET /data/media/{id}/download?format=mp4` | `data_explorer/downloads.py::converted_audio` (was `data_browser.py::download_media`) | web |
+| 2 | Same route, the original file | `data_explorer/downloads.py::original_redirect`: a signed `307`, no bytes through the box since 0.0.12 | web |
 | 3 | **`POST /design-workshops/{id}/report`** | `design_workshops.py::MediaIndex.prefetch` (`:5095`) | **web** |
 | 4 | `POST /media/{id}/transcribe-now` | `media_queue.py::transcribe_media_now` (`:596`) | web |
 | 5 | The queue drain | `media_queue.py::_process_job` (`:795`, `:883`) | worker |
@@ -473,14 +477,14 @@ one p99 object (97 MiB) among them doubles it.
    > (`-f segment`) writing chunk files to disk. The size gates are what keep such a file from
    > reaching it.
 3. ~~Replace `MAX_CONVERT_BYTES` with a limit derived from free memory, and lower the constant to
-   32 MiB until then.~~ **DONE, both parts.** `MAX_CONVERT_BYTES` is 32 MiB (`data_browser.py:163`)
-   and `convert_ceiling_bytes()` (`:3147`) is what the route actually asks;
+   32 MiB until then.~~ **DONE, both parts, and then superseded in 0.0.12** by the streaming
+   conversion above, which holds no recording in memory and so needs no memory-derived ceiling;
    `services/memory_budget.py` is the derivation — `MemAvailable` from `/proc/meminfo`, **and** the
    cgroup's own `memory.max - memory.current`, whichever is smaller, because a container does not
    get its own `/proc/meminfo` and this repository ships a container. `psutil` was avoidable and was
    avoided. It only ever lowers a caller's constant, never raises it, and returns the constant
    unchanged where no source exists (every development box), so a roomy machine behaves exactly as
-   it did. Fed to `MAX_CONVERT_BYTES`, `MAX_MEASUREMENT_BYTES`, `MAX_CAPTION_BYTES` and the report
+   it did. Fed to `MAX_MEASUREMENT_BYTES`, `MAX_CAPTION_BYTES` and the report
    image budget.
 
 **And a fourth fix, for site 3 — absent from the three-point list above because this section did

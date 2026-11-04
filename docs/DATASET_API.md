@@ -125,6 +125,9 @@ of the request would name a host the client cannot reach).
 `media` has no CSV form: the shared field registry describes *records*, and a media file is not one.
 Use `media.ndjson`, whose rows carry every column.
 
+**Removed recordings are left out everywhere.** Since 0.0.12 a media file whose `removedAt` is set is
+not a row of `media`, and is not in the media columns of any other dataset, in either portal.
+
 **The two feedback tables reach CSV a different way, and it is worth knowing which.** They are not
 records either, so they have no registry `kind` — but unlike `media` they declare their own columns
 (`Dataset.flat_columns`), which is what gives them a `.csv`. The difference from a registry-backed

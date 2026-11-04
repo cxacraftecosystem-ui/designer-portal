@@ -34,6 +34,7 @@ import {
   dictateAudio,
   dictationAnswerSentence,
   dwDictationAllowance,
+  rememberDictationAllowance,
   serverOffersRoute,
   type DwDictationAllowance
 } from "@/lib/designWorkshops";
@@ -186,12 +187,14 @@ export function DictationButton({
         try {
           const result = await dictateAudio(blob, languageRef.current, workshopId);
           if (typeof result.dictationDay === "string") {
-            setAllowance({
+            const next: DwDictationAllowance = {
               dictationsLimit: result.dictationsLimit ?? null,
               dictationsUsed: result.dictationsUsed ?? 0,
               dictationsRemaining: result.dictationsRemaining ?? null,
               dictationDay: result.dictationDay
-            });
+            };
+            rememberDictationAllowance(next);
+            setAllowance(next);
           }
           setLastMediaId(result.mediaId ?? null);
           const text = (result.text ?? "").trim();

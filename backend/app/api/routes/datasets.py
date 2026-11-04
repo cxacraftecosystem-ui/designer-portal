@@ -104,7 +104,7 @@ DATASETS: dict[str, Dataset] = {
         include={
             "location": True,
             "createdBy": True,
-            "media": True,
+            "media": {"where": {"removedAt": None}},
             "artisans": {"include": {"artisan": True}},
             "crafts": {"include": {"craft": True}},
         },
@@ -120,7 +120,7 @@ DATASETS: dict[str, Dataset] = {
             "workshop": True,
             "workshops": {"include": {"workshop": True}},
             "createdBy": True,
-            "media": True,
+            "media": {"where": {"removedAt": None}},
         },
         workshop_filter="craft",
     ),
@@ -134,7 +134,7 @@ DATASETS: dict[str, Dataset] = {
             "craft": True,
             "location": True,
             "createdBy": True,
-            "media": True,
+            "media": {"where": {"removedAt": None}},
             "workshops": {"include": {"workshop": True}},
         },
         workshop_filter="artisan",
@@ -145,7 +145,7 @@ DATASETS: dict[str, Dataset] = {
         label="Products",
         description="Product documentation: materials, dimensions, pricing and process links.",
         kind="product",
-        include={"workshop": True, "createdBy": True, "media": True, "location": True},
+        include={"workshop": True, "createdBy": True, "media": {"where": {"removedAt": None}}, "location": True},
     ),
     "tools": Dataset(
         name="tools",
@@ -156,7 +156,7 @@ DATASETS: dict[str, Dataset] = {
             "and every workshop its linked artisans belong to."
         ),
         kind="tool",
-        include=with_tool_scope({"createdBy": True, "media": True, "location": True}),
+        include=with_tool_scope({"createdBy": True, "media": {"where": {"removedAt": None}}, "location": True}),
         workshop_filter="tool",
     ),
     "processes": Dataset(
@@ -176,7 +176,7 @@ DATASETS: dict[str, Dataset] = {
         kind="interview",
         include={
             "createdBy": True,
-            "media": True,
+            "media": {"where": {"removedAt": None}},
             "artisans": {"include": {"artisan": True}},
             "responses": {"include": {"question": True}},
         },
@@ -301,6 +301,8 @@ def _build_where(
             )
             clauses.append(clause if clause is not None else {"id": {"in": []}})
 
+    if dataset.delegate == "mediafile":
+        clauses.append({"removedAt": None})
     if created_by:
         clauses.append({dataset.owner_field: created_by})
     if created_since:
@@ -374,6 +376,7 @@ async def _media_by_tag(dataset: Dataset, rows: list[Any]) -> dict[str, list[Any
             "AND": [
                 {"linkedRecordType": {"in": list(dataset.media_tags)}},
                 {"linkedRecordId": {"in": ids}},
+                {"removedAt": None},
             ]
         }
     )

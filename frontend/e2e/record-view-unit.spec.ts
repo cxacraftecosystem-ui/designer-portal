@@ -267,8 +267,10 @@ test.describe("every record list opens its rows read-only", () => {
 
   test("the folder browser's file cards open the stored file's page", () => {
     const data = read("app/(protected)/data/page.tsx");
-    expect(data).toContain('<OpenableCard as="li"');
-    expect(data).toContain("RECORD_VIEW_HREF.media(file.mediaId)");
+    expect(data).toContain("fileHref: (mediaId) => RECORD_VIEW_HREF.media(mediaId)");
+    const rows = read("components/dataExplorer/FolderContents.tsx");
+    expect(rows).toContain("const href = file.mediaId ? fileHref(file.mediaId) : null;");
+    expect(rows).toContain("onClick={(event) => openRow(event, href)}");
   });
 
   test("sanction orders and the two rosters open a read-only view of the entry", () => {

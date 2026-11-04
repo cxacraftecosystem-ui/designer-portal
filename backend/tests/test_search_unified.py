@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -11,7 +12,7 @@ from search_support import index_world, new_stamp, seed, user_ns
 
 from app.api.routes import search as routes
 from app.core.db import db
-from app.services import cross_portal, search_query
+from app.services import cross_portal, search_indexer, search_query
 
 pytestmark = [needs_db, pytest.mark.asyncio(loop_scope="module")]
 
@@ -188,3 +189,45 @@ def test_build_sql_applies_the_permission_predicate_in_every_list():
     assert sql.count("FROM base b") >= 4
     assert "d.\"audience\" = 'ALL'" in sql and "<=> " in sql
     assert params[0] == "indigo"
+
+
+async def test_a_workshop_filter_finds_a_tool_through_its_linked_artisan(world, settings):
+    token = new_stamp()
+    other = await db.workshop.create(
+        data={
+            "title": f"Akola meet {token}",
+            "date": datetime(2026, 9, 3, tzinfo=UTC),
+            "place": "Akola",
+            "createdById": world.professor.id,
+        }
+    )
+    artisan = await db.artisan.create(
+        data={
+            "name": f"Kamla Devi {token}",
+            "workshopId": other.id,
+            "place": "Akola",
+            "createdById": world.professor.id,
+        }
+    )
+    tool = await db.tooldocumentation.create(
+        data={
+            "toolkitName": f"Dabu block {token}",
+            "craftName": world.craft.name,
+            "artisanName": artisan.name,
+            "craftId": world.craft.id,
+            "place": "Akola",
+            "createdById": world.professor.id,
+        }
+    )
+    await db.toolartisan.create(data={"toolId": tool.id, "artisanId": artisan.id})
+    try:
+        for kind, record_id in (("workshops", other.id), ("artisans", artisan.id), ("tools", tool.id)):
+            await search_indexer.index_one(kind, record_id)
+        there = await _search(world.professor, token, workshopIds=[other.id])
+        assert _ids(there, "tools") == [tool.id]
+        elsewhere = await _search(world.professor, token, workshopIds=[world.workshop.id])
+        assert _ids(elsewhere, "tools") == []
+    finally:
+        await db.tooldocumentation.delete(where={"id": tool.id})
+        await db.artisan.delete(where={"id": artisan.id})
+        await db.workshop.delete(where={"id": other.id})

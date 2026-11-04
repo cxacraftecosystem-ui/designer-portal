@@ -625,8 +625,11 @@ class WorkshopRepository(
             DwRetentionDecisionBody(mediaId = mediaId, decision = parseRetention(decision))
         )
 
-    suspend fun refreshDictationAllowance(context: Context) {
+    suspend fun refreshDictationAllowance(context: Context, force: Boolean = false) {
         val userId = cachedUser()?.id?.takeIf { it.isNotBlank() } ?: return
+        val stored = DwDictationAllowanceStore.read(context, userId)
+        if (!dwDictationAllowanceDue(stored, DwDictationAllowanceStore.fetchedAt(context, userId), dwDictationIstDay(), System.currentTimeMillis(), force)) return
+        DwDictationAllowanceStore.markFetched(context, userId)
         val dto = runCatching { api.designWorkshopDictationAllowance() }.getOrNull() ?: return
         dwDictationAllowanceOf(dto, userId)?.let { DwDictationAllowanceStore.write(context, it) }
     }
@@ -2309,6 +2312,7 @@ class WorkshopRepository(
         runCatching { DwQuestionnaireFormCache.forgetAll(context) }
         runCatching { NotificationSync.signOut(context, signedOut) }
         runCatching { ReadCache.evictAll(context) }
+        runCatching { com.designprototype.workshop.explorer.data.ExplorerDownloads.forgetAll(context) }
     }
 
     suspend fun currentUser(): UserDto = api.me()

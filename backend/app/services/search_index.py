@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 from app.core.db import db
 from app.services import design_workshop_data as dw_data
+from app.services.tool_scope import tool_workshop_ids, with_tool_scope
 
 BODY_LIMIT = 100_000
 
@@ -481,7 +482,7 @@ async def _product(entity_id: str) -> dict[str, Any] | None:
 
 async def _tool(entity_id: str) -> dict[str, Any] | None:
     row = await db.tooldocumentation.find_unique(
-        where={"id": entity_id}, include={"craft": True, "location": True}
+        where={"id": entity_id}, include=with_tool_scope({"craft": True, "location": True})
     )
     if row is None:
         return None
@@ -495,7 +496,7 @@ async def _tool(entity_id: str) -> dict[str, Any] | None:
         place=_place_of(row),
         craftIds=_ids(row.craftId),
         craftCodes=_codes(row.craft),
-        workshopIds=_ids(row.workshopId),
+        workshopIds=tool_workshop_ids(row),
         artisanIds=artisan_ids,
         designWorkshopId=row.designWorkshopId,
         shareable=await _shareable(
@@ -579,7 +580,11 @@ def _tagged(kind: str, ids: list[str]) -> list[dict[str, Any]]:
 
 async def dependents_of_artisan(artisan_id: str) -> list[tuple[str, str]]:
     products = await db.productdocumentation.find_many(where={"artisanId": artisan_id})
-    tools = await db.tooldocumentation.find_many(where={"artisanId": artisan_id})
+    tools = await db.tooldocumentation.find_many(
+        where={
+            "OR": [{"artisanId": artisan_id}, {"artisanLinks": {"some": {"artisanId": artisan_id}}}]
+        }
+    )
     interviews = await db.questionnaireinterviewartisan.find_many(where={"artisanId": artisan_id})
     product_ids = [p.id for p in products]
     tool_ids = [t.id for t in tools]

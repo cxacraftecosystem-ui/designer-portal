@@ -64,6 +64,7 @@ flowchart TD
 | [RELEASE.md](RELEASE.md) | Every release from 0.0.1 to 0.0.11 and what it shipped, and the data steps a release takes on production after its migrations, such as mapping crafts onto the master list |
 | [INVARIANTS.md](INVARIANTS.md) | The reasons and traps that used to be code comments, kept since the 0.0.10 no-comments rule: the queue unit name, the Prisma split, additive migrations under blue/green, memory ceilings, the work directory, rank gaps, the one rule for where a tool shows up |
 | [MEDIA_PIPELINE.md](MEDIA_PIPELINE.md) | Every tactic both clients use to get a photograph off a phone on a bad network without losing it, and the on-device quality checks that run before it leaves |
+| [DATA_EXPLORER_WEB.md](DATA_EXPLORER_WEB.md) | The `/data` page on the web, shared by both portals: the tree-first layout, every download in one place, the worker that keeps zips going in a background tab, browser limits, resume into a folder, and the tables memory |
 | [TRANSCRIPT_PIPELINE.md](TRANSCRIPT_PIPELINE.md) | Scribe v2 turns, Gemini 3.8 Flash English, the transcript API, its switches, budget, keys and backfill |
 | [EDGE-COMPUTE-SPLIT.md](EDGE-COMPUTE-SPLIT.md) | Which work runs on the machine a designer is holding and which needs the server, feature by feature — the measurement paths, sketch rectification, the vendored tracer — and what is still doable with no signal |
 | [SECURITY.md](SECURITY.md) | Transport, secrets, PII and Aadhaar handling, sessions and how they are revoked — including, since 2026-10-09, every session ending when the password it was opened with changes — Google sign-in and which account it opens, passwords one person types for another and the server's hold on them until they are replaced, password links, the authorisation model's security properties, and the open risk register |
@@ -90,6 +91,8 @@ flowchart TD
 |---|---|
 | [ARTISAN_DUPLICATES.md](ARTISAN_DUPLICATES.md) | Duplicate artisans — the server-side score and its bands, the hold at save time on web and Android (offline creates are asked on sync), the admin review and merge screen, the 30-day undo and redirect, and the ids-only cross-portal match |
 | [DATASET_API.md](DATASET_API.md) | Mass download for a **machine** — the `dataset:read` token, the catalogue, the streamed `.ndjson` / `.csv` with no row cap, and how artisan identity numbers are masked |
+| [DATA_EXPLORER.md](DATA_EXPLORER.md) | The data page's server side for **people**: folders, sizes before a download, multi-select, streaming zips, previews, thumbnails, table search, transcript zips, and why none of it holds a whole archive in memory |
+| [ANDROID_BACKGROUND_DOWNLOADS.md](ANDROID_BACKGROUND_DOWNLOADS.md) | The Android *Data* screen and its background downloads: the layout, how a zip keeps going when the app is left, the permissions, and the exact Play Console declaration text |
 
 ### Engineering results
 
