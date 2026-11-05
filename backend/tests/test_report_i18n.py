@@ -1,5 +1,8 @@
+import ast
 import asyncio
+import importlib
 import re
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -8,7 +11,7 @@ from app.services.datareport import contract, i18n
 
 PORTALS = ("designer", "fieldRepository")
 FORBIDDEN = set("[]:*?/\\")
-PLACEHOLDER = re.compile(r"\{[a-zA-Z_]+\}")
+PLACEHOLDER = re.compile(r"\{[a-zA-Z_]+(?::[^}]*)?\}")
 DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 LATIN_ONLY_OK = {
     "Design Workshop",
@@ -17,6 +20,8 @@ LATIN_ONLY_OK = {
     "URL",
     "SHA-256 चेकसम",
 }
+
+WRITER_SHEET_TEXT = {"sheet.banner_download", "sheet.empty", "sheet.back"}
 
 REQUIRED_KEYS = [
     *(
@@ -148,7 +153,9 @@ def test_hindi_is_devanagari():
 def test_sheet_names_are_valid_excel_names():
     for locale in i18n.LOCALES:
         table = i18n.strings(locale)
-        names = {k: v for k, v in table.items() if k.startswith("sheet.")}
+        names = {
+            k: v for k, v in table.items() if k.startswith("sheet.") and k not in WRITER_SHEET_TEXT
+        }
         for key, name in names.items():
             assert 0 < len(name) <= 31, (locale, key, name)
             assert not FORBIDDEN & set(name), (locale, key, name)
@@ -157,9 +164,21 @@ def test_sheet_names_are_valid_excel_names():
     en, hi = i18n.strings("en"), i18n.strings("hi")
     by_hindi: dict[str, set[str]] = {}
     for key in en:
-        if key.startswith("sheet."):
+        if key.startswith("sheet.") and key not in WRITER_SHEET_TEXT:
             by_hindi.setdefault(hi[key].casefold(), set()).add(en[key].casefold())
     assert {h: e for h, e in by_hindi.items() if len(e) > 1} == {}
+
+
+def test_generated_descriptions_follow_patterns():
+    hi = i18n.translator("hi")
+    out = hi("describe.artisans.dateOfBirth", "Date of birth of the artisan (Artisan.dateOfBirth).")
+    assert out.endswith("(Artisan.dateOfBirth)।") and DEVANAGARI.search(out)
+    assert "Artisan.craftId" in hi("x.y", "Identifier of the linked craft (Artisan.craftId).")
+    assert hi("x.y", "Translating 40%") == "अनुवाद जारी 40%"
+    assert (
+        hi("x.y", "Notes of the made-up thing (X.notes).")
+        == "Notes of the made-up thing (X.notes)."
+    )
 
 
 def test_translator_contract():
@@ -267,9 +286,26 @@ def _plugin_sheets(plugin: Any, portal: str) -> list[tuple[str, str, list[contra
     return [(s.key, s.name, list(s.columns)) for s in built]
 
 
-def _pairs(portal: str) -> tuple[list[tuple[str, str]], dict[str, list[str]], list[str]]:
+DYNAMIC_SHEET = re.compile(r"[^A-Za-z0-9_]")
+
+
+def _schema_docs() -> frozenset[str]:
+    try:
+        schema = importlib.import_module("app.services.datareport.schema")
+    except ImportError:
+        return frozenset()
+    return frozenset(
+        f.doc for p in PORTALS for m in schema.load(p).values() for f in m.fields if f.doc
+    )
+
+
+def _pairs(
+    portal: str,
+) -> tuple[list[tuple[str, str]], dict[str, list[tuple[str, str]]], list[str]]:
+    docs = _schema_docs()
+    hi = i18n.translator("hi")
     pairs: list[tuple[str, str]] = []
-    headings: dict[str, list[str]] = {}
+    headings: dict[str, list[tuple[str, str]]] = {}
     broken: list[str] = []
     for plugin in contract.plugins(portal):
         pairs.append((f"sheet.{plugin.key}", plugin.title))
@@ -279,11 +315,14 @@ def _pairs(portal: str) -> tuple[list[tuple[str, str]], dict[str, list[str]], li
             broken.append(f"{plugin.key}: {type(error).__name__}: {error}")
             continue
         for key, name, columns in sheets:
-            pairs.append((f"sheet.{key}", name))
+            if not DYNAMIC_SHEET.search(key):
+                pairs.append((f"sheet.{key}", name))
             for column in columns:
                 pairs.append((f"col.{key}.{column.key}", column.label))
+                if column.description and column.description not in docs:
+                    pairs.append((f"describe.{key}.{column.key}", column.description))
                 headings.setdefault(key, []).append(
-                    i18n.translator("hi")(f"col.{key}.{column.key}", column.label)
+                    (column.label, hi(f"col.{key}.{column.key}", column.label))
                 )
     return pairs, headings, broken
 
@@ -296,9 +335,60 @@ def test_every_registered_sheet_and_column_has_hindi(portal):
         "returning (sheet key, columns) so their Hindi can be checked"
     )
     assert i18n.missing("hi", pairs) == []
-    duplicated = {
-        key: sorted({h for h in names if names.count(h) > 1})
-        for key, names in headings.items()
-        if len(set(names)) != len(names)
-    }
-    assert duplicated == {}
+    hi = i18n.translator("hi")
+    titles = {(f"sheet.{p.key}", p.title) for p in contract.plugins(portal)}
+    names = [
+        hi(key, default)
+        for key, default in pairs
+        if key.startswith("sheet.") and (key, default) not in titles
+    ]
+    assert [n for n in names if len(n) > 31 or FORBIDDEN & set(n)] == []
+    clashes = {}
+    for key, labels in headings.items():
+        by_hindi: dict[str, set[str]] = {}
+        for english, hindi in labels:
+            by_hindi.setdefault(hindi, set()).add(english)
+        found = {h: sorted(e) for h, e in by_hindi.items() if len(e) > 1}
+        if found:
+            clashes[key] = found
+    assert clashes == {}
+
+
+TRANSLATING_CALLS = {"t", "say", "text", "_t", "translate"}
+KEY_SHAPE = re.compile(r"^[a-z][A-Za-z0-9_]*(\.[A-Za-z0-9_-]+)+$")
+REPORT_CODE = Path(i18n.__file__).resolve().parent
+
+
+def _literal_calls() -> list[tuple[str, str, str]]:
+    found = []
+    for path in sorted(REPORT_CODE.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if name not in TRANSLATING_CALLS:
+                continue
+            args = node.args
+            for index, arg in enumerate(args):
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    if not KEY_SHAPE.match(arg.value):
+                        break
+                    nxt = args[index + 1] if index + 1 < len(args) else None
+                    default = (
+                        nxt.value
+                        if isinstance(nxt, ast.Constant) and isinstance(nxt.value, str)
+                        else ""
+                    )
+                    found.append((f"{path.name}:{node.lineno}", arg.value, default))
+                    break
+    return found
+
+
+def test_every_literal_key_in_report_code_has_hindi():
+    calls = _literal_calls()
+    missing = [
+        f"{where} {key}" for where, key, default in calls if i18n.lookup("hi", key, default) is None
+    ]
+    assert missing == []
