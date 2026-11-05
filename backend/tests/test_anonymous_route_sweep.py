@@ -29,6 +29,8 @@ PUBLIC_ALLOWLIST: dict[tuple[str, str], str] = {
     ("GET", "/api/app/download"): "a browser link to an object that is public anyway.",
     ("POST", "/api/report-deliveries/lookup"): "the office holding an e-mailed report link has no account; the link is the credential.",
     ("POST", "/api/report-deliveries/download"): "same: it hands back a five-minute signed URL for that one file.",
+    ("POST", "/api/report-schedule/unsubscribe/lookup"): "an e-mailed unsubscribe link works without signing in; the token is the credential.",
+    ("POST", "/api/report-schedule/unsubscribe"): "same: it only pauses the one schedule that token names.",
     ("GET", "/health"): "CloudFront origin check and the uptime monitor; a 401 here reads as an outage.",
     ("GET", "/health/ready"): "the same, plus the database probe alerting is meant to watch.",
 }

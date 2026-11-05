@@ -22,6 +22,7 @@ from app.services.design_workshop_review_aids import purge_expired_snapshots
 from app.services.email_outbox import process_next_email_jobs
 from app.services.media_queue import acquire_queue_worker_lock, process_next_media_jobs
 from app.services.ministry_export import process_next_ministry_exports
+from app.services.report_schedules import run_report_schedules
 from app.services.search_indexer import (
     compact_queue as compact_search_queue,
     drain as drain_search_index,
@@ -90,6 +91,10 @@ async def drain_pass(settings: Any, *, recover: bool, search: bool) -> bool:
         await run_weekly_digests(settings=settings)
     except Exception:
         logger.exception("Weekly digest pass failed")
+    try:
+        await run_report_schedules(settings=settings)
+    except Exception:
+        logger.exception("Scheduled report pass failed")
     if search:
         try:
             await run_search_index_pass(settings)
