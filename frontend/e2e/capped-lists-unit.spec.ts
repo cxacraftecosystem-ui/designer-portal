@@ -303,7 +303,7 @@ test("the craft picker in every record form can draw its own current value", () 
   }
 });
 
-test("View Data's browse panel has a pager, a total and a notice", () => {
+test("Data's browse panel has a pager, a total and a notice", () => {
   const panel = read("components", "dataExplorer", "BrowseByType.tsx");
   expect(panel, "the cut is stated in words").toContain("const cut = current ? browseCutLine(current, noun) : null;");
   expect(panel, "no pager was the finding").toContain("aria-label={`${def.label} pages`}");

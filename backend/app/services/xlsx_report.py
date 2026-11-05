@@ -1,7 +1,7 @@
 import re
 from functools import cache
 from io import BytesIO
-from math import ceil
+from math import ceil, isfinite
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -69,8 +69,13 @@ _XML_UNSAFE_RE = re.compile(
 
 
 
+_HEX_RE = re.compile(r"[0-9A-F]+")
+
+
 def _rgb(color: str | None) -> str:
-    hexpart = (color or "").lstrip("#").strip().upper()
+    hexpart = (color or "").strip().lstrip("#").strip().upper()
+    if not _HEX_RE.fullmatch(hexpart):
+        return f"FF{_OVERVIEW_COLOR}"
     if len(hexpart) == 6:
         return f"FF{hexpart}"
     if len(hexpart) == 8:
@@ -95,8 +100,12 @@ def _clean(value: Any) -> Any:
         return None
     if isinstance(value, CellRichText):
         return _clean_runs(value) or ""
-    if isinstance(value, (int, float)):
+    if isinstance(value, bool):
         return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if isfinite(value) else None
     return _sanitise(value if isinstance(value, str) else str(value))
 
 
@@ -115,14 +124,23 @@ def _clean_runs(value: CellRichText) -> CellRichText:
             budget = 0
         else:
             budget -= len(text)
-        if block:
-            font = run.font if isinstance(run.font, InlineFont) else _styles().plain_font
+        font = run.font if block and isinstance(run.font, InlineFont) else None
+        if font is not None and _styled(font):
             cleaned.append(TextBlock(font, text))
+        elif cleaned and isinstance(cleaned[-1], str):
+            cleaned[-1] = cleaned[-1] + text
         else:
             cleaned.append(text)
         if not budget:
             break
     return cleaned
+
+
+def _styled(font: Any) -> bool:
+    try:
+        return len(font.to_tree(tagname="rPr")) > 0
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _put(ws: Worksheet, row: int, column: int, value: Any) -> Cell:

@@ -1,4 +1,4 @@
-# Data explorer on the web (0.0.12)
+# Data explorer on the web (0.0.13)
 
 The `/data` page in both portals is one shared client: `frontend/lib/dataExplorer/**` and
 `frontend/components/dataExplorer/**`, byte-identical, edited in designer-portal and copied with
@@ -9,15 +9,36 @@ in the designer portal, the record links). Proposal and owner decisions:
 
 ## Layout
 
+Approved mockups: `Main`, `WebTables`, `WebSearch`, `WebTablet`, `WebPhone`, `WebPreview`,
+`WebTranscripts`, `States`, `WebTrayQueue`, `PhoneTables`, `WorkshopOverview`, `CommandPalette`,
+`ReportOptions`, `WebAudio` and `SearchBoth` (owner-approved 2026-11-05).
+
 | Place | What it holds |
 |---|---|
-| Left (top on a phone) | the folder tree, with search, Organise by and (documentation portal) Review status as its toolbar |
-| Right, first | **Downloads**: this folder (zip, all transcript formats, the `.xlsx` report), the selection, the whole dataset, with sizes before anything starts |
-| Right, below | the record card, then **Files** or **Tables** |
-| Under both | Browse by type (paged, searched on the server) and Transcripts |
+| Top | the search card (each portal's own panel, `ExplorerConfig.renderSearch`): one box, always-visible filters, This portal / Both portals, grouped result pills, highlighted snippets, *Play from mm:ss*, *Open in Data*, *Show 20 more*; it falls back to the legacy search when unified search is off |
+| Left (behind *Folders* below `lg`) | Organise by, then the folder tree (40 px rows, item counts once a folder is known) |
+| Right | the folder card (breadcrumb, size, *Report (.xlsx)*, *Download folder · size*, the size-by-type tiles that choose what a download includes), the record details, the workshop overview on a workshop folder, then one tab strip: **Files**, **Tables**, **Transcripts** |
+| Bottom | the sticky selection bar, the downloads tray, the mini player |
+| Under both | Browse by type and Transcripts data |
 
-The folder, view, sheet, table search, browse type, page and search live in the URL, so Back works and a
-folder can be shared as a link. The scroll position is kept per URL in the tab's session storage.
+Active and selected states are a full background tint; nothing draws a side stripe. Saved files and
+rows are green (`bg-success-100`, `border-green-300`, `text-green-900`), failed ones red
+(`bg-error-100`, `border-red-300`, `text-red-900`); work in progress stays neutral.
+
+The folder, view, sheet, table search, browse type, page, preview, time (`t`) and find term live in
+the URL, so Back works and a moment in a recording can be shared as a link. Every navigation builds on
+the last one still in flight, so two quick changes (a table search and a Browse-by-type search) never
+overwrite each other. A saved view (`/data?viewId=`) restores folder, tab, sheet and search for anyone
+who can see the folder.
+
+## One downloads tray
+
+Every download goes through the tray: folder and selection zips (the worker below), the `.xlsx`
+report, a sheet's CSV, a single file, a transcript in every format. One job runs at a time, the rest
+wait with *Start now*; a failed job says what happened and *Retry* picks up a file from the byte it
+stopped at (never a report, which is rebuilt). The report is fetched, its status and zip signature are
+checked, and only then is it saved, so an error page can never land on disk as a `.xlsx`. A busy server
+retries by itself with a countdown and *Try now*. Closing the tab while anything runs asks first.
 
 ## Downloads keep going in a background tab
 
@@ -54,12 +75,15 @@ flowchart LR
 
 ## Tables
 
-Subfolder tables load on their own; the repository root still loads on click. Each answer is kept in
-memory and in session storage per folder, review status and viewer (16 folders, 24 MB, 10 minutes), so
-going back costs no request. The search box searches every row on the server (`q`); against an older
-server it searches the 200 rows shown and says so. Each sheet has a CSV; the folder's `.xlsx` report is under
-Downloads, as on Android. A busy report reads
-"Busy, retrying in 60 s" and retries once.
+Subfolder tables load on their own; the repository root loads on click. Moving between folders keeps
+the previous folder's tables on screen with a spinner until the new ones arrive; nothing remounts.
+Answers are kept per folder, review status and viewer (16 folders, 24 MB, 10 minutes). The search box
+searches every row of every sheet on the server and shows each sheet's matches; the server answers it
+from the report it already built for that folder and data version, so a search never rebuilds the
+report. On a phone a sheet picker replaces the side list and rows read as cards.
+
+*Report (.xlsx)* opens the options: sheets, answers in Original / English / Both, every row or only the
+filtered ones, file links, the file name, and *Remember these choices* (stored per account).
 
 ## How this document is kept true
 
@@ -77,6 +101,9 @@ Downloads, as on Android. A busy report reads
 | `frontend/e2e/data-explorer-engine-unit.spec.ts` | zip and zip64 records, resume, the failed list, 4 + 1 concurrency, streaming without holding a file, folder resume, selection, URL state, table memory, one request per file |
 | `frontend/e2e/data-explorer.spec.ts` | the layout on desktop, tablet and phone in light and dark, the tree keyboard, downloads to disk, bytes still arriving with the tab hidden, Cancel, previews, thumbnails, table search, browse paging, languages |
 | `frontend/e2e/data-explorer-web-imports-unit.spec.ts` | the shared trees import only what both portals carry, and match the other portal |
+| `frontend/e2e/data-explorer-redesign-unit.spec.ts` | the tray's states and colours, the fetched-and-checked `.xlsx`, Range resume for files only, paging, the navigation merge, report options, saved views, workshop coverage sorting, the palette's search |
+| `frontend/e2e/data-explorer-preview-unit.spec.ts` | find N of M, the line at a playback time, talk time, waveform peaks, transcript status mapping |
+| `frontend/e2e/data-search-panel-unit.spec.ts` (designer portal) | the search card's times, groups, portal counts, filters and legacy fallback |
 
 Feature ids for the parity registry are `X1`–`X12` (`shared/data-explorer-contract.json`); the web
 tests carry `@qf:<id>`.

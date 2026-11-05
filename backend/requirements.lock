@@ -193,6 +193,8 @@ typing-inspection==0.4.4
     #   fastapi
     #   pydantic
     #   pydantic-settings
+uharfbuzz==0.57.0
+    # via design-workshop-backend (pyproject.toml)
 urllib3==2.8.0
     # via
     #   botocore
@@ -205,3 +207,5 @@ watchfiles==1.3.0
     # via uvicorn
 websockets==17.4
     # via uvicorn
+xlsxwriter==3.3.1
+    # via design-workshop-backend (pyproject.toml)

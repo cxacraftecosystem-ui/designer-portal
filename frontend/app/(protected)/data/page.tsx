@@ -1,6 +1,7 @@
 "use client";
 
 import { Database, Lock } from "lucide-react";
+import Link from "next/link";
 import { Suspense } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
@@ -12,7 +13,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { TranscriptDataPanel } from "@/components/transcript/TranscriptDataPanel";
 import { listResource } from "@/lib/api";
 import type { BrowsePage, ReportResponse } from "@/lib/dataExplorer/contract";
-import { canDownloadDataset, canExportDesignWorkshopData, canViewDesignWorkshopData } from "@/lib/permissions";
+import { canCreateRecords, canDownloadDataset, canExportDesignWorkshopData, canViewDesignWorkshopData } from "@/lib/permissions";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { toolRowLabel } from "@/lib/toolArtisans";
 import type { Artisan, Craft, MediaFile, PageResult, ProductDocumentation, QuestionnaireInterview, ToolDocumentation, User, Workshop } from "@/lib/types";
@@ -163,7 +164,7 @@ function tablesNotice(report: ReportResponse): string | null {
 }
 
 const header = (
-  <PageHeader title="Data Browser" description="Browse records and download folders." icon={<Database className="h-5 w-5" aria-hidden />} />
+  <PageHeader title="Data" description="Browse, check and download everything you can see." icon={<Database className="h-5 w-5" aria-hidden />} />
 );
 
 function Explorer({ user }: { user: User }) {
@@ -174,8 +175,13 @@ function Explorer({ user }: { user: User }) {
     statusKey: "",
     viewer: user.id,
     fileHref: (mediaId) => RECORD_VIEW_HREF.media(mediaId),
-    renderSearch: (reveal) => <DataSearchPanel onReveal={reveal} toolbar />,
-    emptyBody: "This folder has no files or subfolders.",
+    renderSearch: (reveal, openPreview) => <DataSearchPanel onReveal={reveal} onPreview={openPreview} />,
+    emptyBody: "Files appear here as soon as someone records for this folder.",
+    emptyAction: canCreateRecords(user) ? (
+      <Link href="/media" className="field-button">
+        Record now
+      </Link>
+    ) : undefined,
     browseTypes: BROWSE,
     datasetLine: datasetLine(user),
     tablesNotice,

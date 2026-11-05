@@ -73,8 +73,8 @@ test("no ministry row is gated on canRunDesignWorkshops", () => {
   expect(ministrySurface("/design-workshops/ckq12345")).toBe(false);
 });
 
-test("the guard table still has twenty-six rows", () => {
-  expect(ROUTE_GUARDS.length).toBe(27);
+test("the guard table still has twenty-eight rows", () => {
+  expect(ROUTE_GUARDS.length).toBe(28);
 });
 
 test("the scoped block never reaches a utility class", () => {

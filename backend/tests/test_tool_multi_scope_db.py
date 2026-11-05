@@ -426,6 +426,7 @@ def test_a_workshop_report_costs_the_same_statements_for_one_shared_tool_or_six(
                 await data_browser.data_report(
                     path=path, format="json", current_user=seed["researcher"]
                 )
+                data_browser.REPORT_CACHE.clear()
                 async with count_statements() as counted:
                     await data_browser.data_report(
                         path=path, format="json", current_user=seed["researcher"]

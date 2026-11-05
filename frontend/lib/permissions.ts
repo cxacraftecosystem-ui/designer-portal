@@ -123,6 +123,10 @@ export function canEditOthersRecord(user: User | null | undefined, creatorRole: 
   return roleRank(user) > creatorRank;
 }
 
+export function anySignedIn(user: User | null | undefined) {
+  return !!user;
+}
+
 export function canDownloadDataset(user: User | null | undefined) {
   return hasRank(user, "PROFESSOR") || !!user?.canDownloadDataset;
 }
@@ -278,6 +282,14 @@ export const ROUTE_GUARDS: RouteGuard[] = [
     title: "Dataset access required",
     message:
       "Needs Professor access or dataset access. Use Search instead."
+  },
+  {
+    path: "/data/go",
+    can: anySignedIn,
+    gate: "get_current_user + the record's own visibility (data_report go routes)",
+    title: "Access required",
+    message:
+      "You need access to this record. Ask its owner or an admin."
   },
   {
     path: "/design-workshops/:id/provenance",

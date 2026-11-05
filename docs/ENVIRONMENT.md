@@ -306,6 +306,7 @@ Emitted by `app.main.SecurityHeadersMiddleware`. Defaults are correct for local 
 | Variable | Required | Default | Secret | Notes |
 |---|---|---|---|---|
 | `NEXT_PUBLIC_APP_URL` | **Yes** in production (2026-10-09; this row said "No" until then) | `http://localhost:3000` | No | Public origin of the web app, and **the base of every set-password, invite and sanction link** the API issues (`link_for` in `backend/app/services/credential_links.py`). The default is right only on a laptop: in production a missing or wrong value issues links that open on `localhost` or on an origin `BACKEND_CORS_ORIGINS` refuses, and nothing else fails. Production is `https://designer-repository.vercel.app`, pinned by `.github/workflows/deploy-backend.yml` on every deploy beside the CORS origins, whatever `BACKEND_ENV` says. It must be an origin that list allows. Same name as the frontend variable so one `.env` can feed both, but only this backend copy is read by anything. |
+| `APP_ENV` | **Yes** in production (pinned) | `development` | No | `production` turns on the start-up guard in `backend/app/core/config.py` (`verify_app_url_configuration`): the API refuses to boot when `NEXT_PUBLIC_APP_URL` is not https, or points at localhost or a private address. Pinned to `production` by `.github/workflows/deploy-backend.yml` beside the link origin. Leave it unset on a laptop and in CI. |
 | `BACKEND_CORS_ORIGINS` | No | `http://localhost:3000` | No | **Comma-separated exact origins** allowed to call the API from a browser. No trailing slash, no path, no wildcard. Every Vercel production/preview/custom domain must be listed or the browser blocks the preflight. Production's value is pinned by `.github/workflows/deploy-backend.yml` (`https://designer-repository.vercel.app,http://localhost:3000`) and overrides `BACKEND_ENV`, so a change goes in that workflow. |
 
 ### Identity and roles
@@ -379,6 +380,8 @@ Mail is **on exactly when `MAIL_FROM_ADDRESS` is set**. Unset, nothing is queued
 | `MAIL_MAX_ATTEMPTS` | No | `5` | No | Sends per message before it is marked `FAILED`. A throttle or SES fault is retried after 1, 2, 4, 8 … minutes (capped at an hour); a rejected message or an unverified sender fails at once. |
 | `MAIL_BATCH_SIZE` | No | `10` | No | Messages sent per queue sweep (`MEDIA_QUEUE_INTERVAL_SECONDS` apart). The SES sandbox allows 1 a second; production access usually 14. |
 | `WEEKLY_DIGEST_ENABLED` | No | `true` | No | The Monday 08:00 IST summary for reviewers and officials (`services/weekly_digest.py`), sent in-app and, when mail is on, by e-mail. `false` stops the queue worker sending new ones; the Settings switch and past summaries keep working. Deployed from the Actions **variable** of the same name (`true`/`false`; unset leaves the value `BACKEND_ENV` gives, or the default). |
+| `REPORT_SCHEDULES_ENABLED` | No | `true` | No | Scheduled data reports (`services/report_schedules.py`): each saved-view schedule is e-mailed as Excel by the queue worker, only while mail is on. `false` stops new sends; schedules stay and can still be managed. |
+| `REPORT_SCHEDULE_ATTACH_MAX_BYTES` | No | `7340032` | No | The largest scheduled workbook sent as an attachment (7 MB, about 9.3 MB once encoded). A larger one is linked to a signed download that only its owner can open. |
 
 **The owner's steps to turn it on** (nothing in this repository creates AWS resources): verify the sending domain (its DKIM records) or the single sender address in SES **ap-south-1**; request SES production access for that region (until then SES delivers only to verified addresses); grant the backend IAM user `ses:SendEmail` on that identity; then add `MAIL_FROM_ADDRESS` (and optionally `MAIL_REPLY_TO`, `MAIL_FROM_NAME`, `MAIL_SES_CONFIGURATION_SET`) to the `BACKEND_ENV` secret and let the next deploy restart both units.
 
@@ -473,7 +476,7 @@ single element. The method, the compliance choices and the operator runbook are 
 | `AADHAAR_LOG_ARCHIVE_KMS_KEY_ID` | No | — | No | SSE-KMS key for archive objects; unset uses SSE-S3 (AES-256). |
 | `AADHAAR_LOG_ARCHIVE_YEARS` | No | `5` | No | Years an archive is kept after its newest entry; at least 5 (Regulation 18(3)(b)). |
 
-### Cross-portal artisan identity (C27) — shipped OFF
+### Cross-portal artisan identity (C27) — ON in production
 
 One artisan across the two portals. A designer types the Aadhaar or Pehchan number, confirms the
 artisan agreed, and the designer portal's server asks the documentation portal's server for the
@@ -501,7 +504,7 @@ box `.env`; none is created by this repository.
 | `AADHAAR_FINGERPRINT_KEY` | With the flag on | — | **Yes** | Not a cross-portal variable: the artisan register's Aadhaar fingerprint key (SSM `/iit/shared/aadhaar-fingerprint-key`, the same value on both servers), which the lookup reuses. Without it the feature stays off. Never rotate it: every stored fingerprint, and so every cross-portal match, depends on it. There is no `AADHAAR_FINGERPRINT_KEY`. |
 | `FIELD_REPOSITORY_API_URL` | With the flag on | — | No | The documentation portal's API base up to `/api`, e.g. `https://<docs-api-host>/api`. The designer portal calls it; with cross-portal search on, the Field Repository also calls this portal back at its own `DESIGNER_PORTAL_API_URL`. |
 
-### One search across both portals — shipped OFF
+### One search across both portals — ON in production
 
 One index per portal (`SearchDocument`), kept current by database triggers and drained by the queue
 worker every 15 seconds; ranked by Postgres full-text and trigram, and by meaning when embeddings
@@ -545,7 +548,7 @@ cards for existing artisans with `python -m scripts.backfill_artisan_cards --app
 |---|---|---|---|---|
 | `ARTISAN_DUPLICATE_HOLD` | No | `true` | No | The hold at save time (`app/services/artisan_duplicates.py`): a create that sends `duplicateAcknowledged` is answered 409 `artisan_possible_duplicate` while a likely duplicate (score 0.75 or more) was not shown to the person saving it. `false` is a kill switch for the hold only; scoring, `POST /api/artisan-duplicates/check` and the admin review screen stay on. The nightly scan and the 30-day merge-snapshot purge run from the queue worker; the Field Repository half of the scan rides the cross-portal settings above and needs nothing new. |
 
-### Cross-portal coverage counts — shipped OFF
+### Cross-portal coverage counts — ON in production
 
 The coverage map (`/map?view=coverage`, ministry readers) has no flag of its own. This one switches on
 its "Field Repository" toggle: the designer portal asks the documentation portal for its AGGREGATE
@@ -841,3 +844,17 @@ variable of its own — the "Not read by `config.py`" table is the only index of
 **Known unverified:** every value stated as a *production* value — the bucket name, the region, the
 CloudFront hostname, the Vercel org and project ids — is recorded from a deployment, not read from
 code. They are correct as of 2026-07-27 to the extent the deployment has not changed under them.
+
+## Cross-portal search and identity are ON in production (since 5 Nov 2026)
+
+Both boxes run with `UNIFIED_SEARCH_ENABLED=true`, `CROSS_PORTAL_IDENTITY_ENABLED=true`,
+`CROSS_PORTAL_SEARCH_ENABLED=true` and `CROSS_PORTAL_COVERAGE_ENABLED=true`, verified end to end with
+signed peer calls in both directions. This box also carries the Field Repository's addresses, `FIELD_REPOSITORY_API_URL=https://d2b34i3e92al6i.cloudfront.net/api` and `FIELD_REPOSITORY_WEB_URL=https://field-repository.vercel.app`. `CROSS_PORTAL_TOKEN` is the GitHub
+Actions secret `CROSS_PORTAL_TOKEN` (the same value in both repositories) and the SSM SecureString
+`/iit/shared/cross-portal-token`. Embeddings stay off.
+
+`deploy-backend.yml` rewrites `.env` from `BACKEND_ENV` on every release, so the step *Pin cross-portal
+search and identity* appends these lines afterwards (delete, then `printf`, then a `grep` check, the way
+the CORS origins are pinned). The token is piped from the secret over SSH and never appears on a command
+line. A release without the `CROSS_PORTAL_TOKEN` secret stops before it boots, rather than switching
+the Field Repository off.

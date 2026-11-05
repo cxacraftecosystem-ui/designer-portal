@@ -35,14 +35,14 @@ the bus on the way to the village.
 
 The screens carry the **same names on the web and in the Android app**. Wherever this document
 names a screen — *Artisan*, *Product*, *Process*, *Tool*, *Questionnaire*, *Miscellaneous Media*,
-*View Data* — that is the name on the dashboard tile in both places.
+*Data* — that is the name on the dashboard tile in both places.
 
 ---
 
 ## The process in one line
 
 **Workshop → Craft → Artisan → Product → Process → Tool → Questionnaire → Miscellaneous Media →
-Review → View Data → Scan a code**
+Review → Data → Scan a code**
 
 Then, for the fortnight that those records feed:
 
@@ -106,7 +106,7 @@ Open the workshop you are documenting under — or create it — before you reco
 artisans, Crafts covered, Workshop media, Location (GPS fix or map pin).
 
 **Why it exists.** The workshop is the container everything else drops into. Products, tools and
-interviews all link to one, and *View Data* opens on **By workshop**, which files the whole
+interviews all link to one, and *Data* opens on **By workshop**, which files the whole
 repository under the workshop each record was made in.
 
 **Watch out for:**
@@ -299,7 +299,7 @@ and searchable text without typing during the interview.
 
 
 **Correcting one afterwards.** A recorded interview can be reopened from the browser: press
-**Edit** on its row in the table below the form, or on its row in *View Data*, and the sitting
+**Edit** on its row in the table below the form, or on its row in *Data*, and the sitting
 comes back into the form above with its answers, its artisans and its workshop already filled in.
 Saving corrects that sitting rather than filing a second one. Three things a correction
 deliberately does not change: the recordings already attached to it are kept and are not

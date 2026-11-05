@@ -874,7 +874,7 @@ private enum class EntryMode(
     TOOL("Tool", "Record tool", editable = true, group = DashGroup.RECORDS),
     QUESTIONNAIRE("Questionnaire", "Take interview", editable = true, group = DashGroup.RECORDS),
     MEDIA("Miscellaneous Media", "Upload media", group = DashGroup.RECORDS),
-    VIEW_DATA("View Data", "Browse records", group = DashGroup.MISC),
+    VIEW_DATA("Data", "Browse records", group = DashGroup.MISC),
     SEARCH("Search", "Search", onDashboard = false, group = null),
     DATA_BROWSER("Data Browser", "Data Browser", onDashboard = false, group = null),
     MAP("Map", "Map", group = DashGroup.MISC),
