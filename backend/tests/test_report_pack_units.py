@@ -261,7 +261,11 @@ def test_quotes_come_from_the_quotes_helper_when_the_builder_hands_back_a_contex
             {"mediaId": "m1", "file": "talk.m4a", "artisan": "", "speaker": "", "original": " ", "english": ""},
         ]
 
-    monkeypatch.setitem(sys.modules, "app.services.datareport.sheets.ai_quotes", SimpleNamespace(top_quotes=top_quotes))
+    from app.services.datareport import sheets as sheet_package
+
+    helper = SimpleNamespace(top_quotes=top_quotes)
+    monkeypatch.setitem(sys.modules, "app.services.datareport.sheets.ai_quotes", helper)
+    monkeypatch.setattr(sheet_package, "ai_quotes", helper, raising=False)
     ctx = object()
     quotes = asyncio.run(pack._ctx_quotes(ctx, {"m1"}))
     assert seen["ctx"] is ctx
