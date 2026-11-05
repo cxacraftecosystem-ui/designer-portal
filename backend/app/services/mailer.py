@@ -150,7 +150,7 @@ def raw_message(
     from email.message import EmailMessage
     from email.policy import SMTP
 
-    message = EmailMessage(policy=SMTP)
+    message = EmailMessage(policy=SMTP.clone(max_line_length=998))
     message["From"] = _from_header(settings)
     message["To"] = to
     message["Subject"] = subject
