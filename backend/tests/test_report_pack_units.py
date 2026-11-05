@@ -246,3 +246,24 @@ def test_delivery_hooks_run_only_after_the_whole_zip_streamed(monkeypatch):
 
     asyncio.run(run())
     assert calls == ["delivered"]
+
+
+def test_quotes_come_from_the_quotes_helper_when_the_builder_hands_back_a_context(monkeypatch):
+    import sys
+
+    seen: dict[str, Any] = {}
+
+    async def top_quotes(ctx: Any, limit: int = 40) -> list[dict[str, Any]]:
+        seen["ctx"], seen["limit"] = ctx, limit
+        return [
+            {"mediaId": "m1", "file": "talk.m4a", "artisan": "Kamla", "speaker": "K", "original": "नील", "english": "Indigo"},
+            {"mediaId": "hidden", "file": "x", "artisan": "", "speaker": "", "original": "secret", "english": ""},
+            {"mediaId": "m1", "file": "talk.m4a", "artisan": "", "speaker": "", "original": " ", "english": ""},
+        ]
+
+    monkeypatch.setitem(sys.modules, "app.services.datareport.sheets.ai_quotes", SimpleNamespace(top_quotes=top_quotes))
+    ctx = object()
+    quotes = asyncio.run(pack._ctx_quotes(ctx, {"m1"}))
+    assert seen["ctx"] is ctx
+    assert [(q.original, q.english, q.speaker, q.source) for q in quotes] == [("नील", "Indigo", "K", "Kamla · talk.m4a")]
+    assert asyncio.run(pack._ctx_quotes(None, {"m1"})) is None

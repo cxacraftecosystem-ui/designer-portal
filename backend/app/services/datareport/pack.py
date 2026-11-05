@@ -268,12 +268,12 @@ async def _ctx_quotes(ctx: Any, allowed: set[str]) -> list[pdf_summary.Quote] | 
     try:
         from app.services.datareport.sheets import ai_quotes
 
-        found = await ai_quotes.collect(ctx)
+        found = await ai_quotes.top_quotes(ctx, limit=QUOTES_MAX * 2)
     except Exception:
         logger.warning("report pack: the quotes helper failed; reading stored quotes", exc_info=True)
         return None
     out: list[pdf_summary.Quote] = []
-    for row in (found or {}).get("rows") or []:
+    for row in found or []:
         original = str(row.get("original") or "").strip()
         if not original or str(row.get("mediaId") or "") not in allowed:
             continue
