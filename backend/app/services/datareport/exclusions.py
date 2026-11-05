@@ -151,6 +151,8 @@ SENSITIVE_ALLOWED = frozenset(
         "SanctionOrder.sanctionOrderKey",
         "QuestionnaireInterview.artisanSetKey",
         "TranscriptVersion.keytermCount",
+        "TranscriptSpend.inputTokens",
+        "TranscriptSpend.outputTokens",
         "Artisan.aadhaarVerifyStatus",
         "Artisan.aadhaarVerifyMethod",
         "Artisan.aadhaarVerifiedAt",

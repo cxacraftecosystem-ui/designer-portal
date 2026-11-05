@@ -55,12 +55,15 @@ class FakeDB:
         return []
 
 
+NAMES = ("Kamla Devi", "Sita Verma", "Mohan Lal")
+
+
 def material(n_artisans: int = 3, n_media: int = 4) -> dict[str, Any]:
     now = datetime(2026, 11, 5, 10, 30, tzinfo=UTC)
     workshop = SimpleNamespace(id="w1", title="Bagru block print", status="APPROVED", createdAt=now, createdById="u1", locationId=None, startDate=now, endDate=now + timedelta(days=3), place="Bagru")
     craft = SimpleNamespace(id="c1", name="Block printing", createdAt=now, createdById="u1", status="APPROVED", subCategoryId=None)
     artisans = [
-        SimpleNamespace(id=f"a{i}", name=f"Kamla Devi {i}", craftId="c1", workshopId="w1", status="PENDING" if i % 2 else "APPROVED", phone="9999999999", aadhaarLast4="1234", aadhaarFingerprint="secret", createdAt=now, createdById="u1", locationId=None, dateOfBirth=datetime(1970, 1, 1, tzinfo=UTC))
+        SimpleNamespace(id=f"a{i}", name=NAMES[i % len(NAMES)] + (f" {i}" if i >= len(NAMES) else ""), craftId="c1", workshopId="w1", status="PENDING" if i % 2 else "APPROVED", phone="9999999999", aadhaarLast4="1234", aadhaarFingerprint="secret", createdAt=now, createdById="u1", locationId=None, dateOfBirth=datetime(1970, 1, 1, tzinfo=UTC))
         for i in range(n_artisans)
     ]
     media = [

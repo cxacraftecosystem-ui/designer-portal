@@ -11,7 +11,6 @@ from app.services.datareport.contract import (
     ReportContext,
     Sheet,
     query_words,
-    record_matches,
     register,
 )
 from app.services.datareport.sheets.core_transcripts import attached_to
@@ -99,8 +98,6 @@ class MediaPlugin:
                             setattr(row, name, None)
                         except (AttributeError, TypeError, ValueError):
                             object.__setattr__(row, name, None)
-                if wanted and not record_matches(row, wanted):
-                    continue
                 out: dict[str, Any] = {}
                 if ctx.options.links:
                     out["open"] = Link(t("link.openInPortal", "Open in portal"), ctx.links.open_media(mid))
@@ -126,6 +123,8 @@ class MediaPlugin:
                         out["mapLink"] = Link(t("link.map", "Open in Google Maps"), f"https://www.google.com/maps/search/?api=1&query={lat},{lng}")
                 if ctx.options.thumbnails and mid in ctx.thumbnails:
                     out["thumbnail"] = Image(mid, str(getattr(row, "originalFilename", "") or ""))
+                if wanted and not tables.row_matches(out, wanted):
+                    continue
                 yield out
             found.clear()
 

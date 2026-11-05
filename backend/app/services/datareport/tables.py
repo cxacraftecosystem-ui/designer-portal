@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -474,8 +475,21 @@ def _kind_of(f: schema.Field) -> str:
     return f.kind
 
 
+_DEV_NOTE = re.compile(r"`|──|\||migration|\b(19|20)\d\d\b|\bNULL\b|[A-Za-z_]+\.[a-z_]+\(|\b[a-z]+[A-Z][A-Za-z]*\b")
+_SHOUT = re.compile(r"\b[A-Z][A-Z0-9_-]{2,}\b")
+_ACRONYMS = frozenset({"URL", "SHA", "IST", "USD", "LGD", "PDF", "GPS", "BCP", "STT", "OTP", "UTC", "JSON", "CSV", "DOCX", "SRT", "XLSX", "MIME", "UUID", "IFSC", "PAN", "API", "SMS", "ASR", "GST"})
+
+
+def user_doc(doc: str) -> str:
+    if not doc or _DEV_NOTE.search(doc):
+        return ""
+    if any(word not in _ACRONYMS for word in _SHOUT.findall(doc)):
+        return ""
+    return doc
+
+
 def _describe(table: Table, f: schema.Field, label: str) -> str:
-    if f.doc:
+    if user_doc(f.doc):
         return f.doc
     return f"{label} of the {table.title.lower().rstrip('s')} ({table.model}.{f.name})."
 
@@ -514,7 +528,7 @@ def plan(table: Table, portal: str, skip: tuple[str, ...] = ()) -> Plan:
         if target and target in NAME_FIELDS:
             base = f.name.removesuffix("Id")
             name_label = schema.humanize(base)
-            columns.append(Column(f"{f.name}Name", name_label, "text", f.doc or f"Name of the linked {schema.humanize(target).lower()}.", source=f.source))
+            columns.append(Column(f"{f.name}Name", name_label, "text", user_doc(f.doc) or f"Name of the linked {schema.humanize(target).lower()}.", source=f.source))
             fields.append((f"{f.name}Name", f.name, target, "name"))
             ids.append(Column(f.name, f"{name_label} ID", "id", f"Identifier of the linked {schema.humanize(target).lower()} ({f.source}).", hidden=True, group="ids", source=f.source))
             fields.append((f.name, f.name, None, "id"))
@@ -559,13 +573,11 @@ def table_rows(ctx: ReportContext, table: Table, store: Store, p: Plan) -> Itera
     kind = OPEN_KINDS.get(table.model)
     wanted = None
     if ctx.options.rows == "filtered":
-        from app.services.datareport.contract import query_words, record_matches
+        from app.services.datareport.contract import query_words
 
         wanted = query_words(ctx.options.q) or None
     links = ctx.options.links
     for row in store.rows.get(table.model, ()):
-        if wanted and not record_matches(row, wanted):
-            continue
         out: dict[str, Any] = {}
         rid = _id(row)
         if kind and rid and links:
@@ -582,7 +594,14 @@ def table_rows(ctx: ReportContext, table: Table, store: Store, p: Plan) -> Itera
             attached = store.media_index.get(rid, [])
             out["files"] = len(attached)
             out["filesBytes"] = sum(int(_value(m, "sizeBytes") or 0) for m in attached)
+        if wanted and not row_matches(out, wanted):
+            continue
         yield out
+
+
+def row_matches(row: dict[str, Any], wanted: list[str]) -> bool:
+    text = " ".join(str(v.text if isinstance(v, Link) else v) for k, v in row.items() if not k.startswith("_") and v is not None).lower()
+    return all(w in text for w in wanted)
 
 
 def media_of(table: Table, store: Store) -> tuple[list[str], int]:

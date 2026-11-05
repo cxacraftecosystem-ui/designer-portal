@@ -49,6 +49,15 @@ def _browser() -> Any:
     return importlib.import_module("app.api.routes.data_browser")
 
 
+def _db(browser: Any) -> Any:
+    found = getattr(browser, "db", None)
+    if found is not None:
+        return found
+    from app.core.db import db
+
+    return db
+
+
 def _report_options() -> Any:
     from app.services.data_explorer import report_options
 
@@ -496,11 +505,11 @@ async def delivered(user: Any, path: str) -> None:
 
 
 async def build_report(user: Any, path: str, options: contract.ReportOptions, *, status: str | None = None) -> BuiltReport:
-    from app.core.db import db
     from app.services import transcript_portal
     from app.services.data_explorer import report_cache
 
     browser = _browser()
+    db = _db(browser)
     scope = await _scope(browser, user, status)
     norm = browser._norm(path)
     sees_spend = bool(transcript_portal.may_see_spend(user))
@@ -554,11 +563,11 @@ def _count(sheet: Sheet) -> int | None:
 
 
 async def catalog(user: Any, path: str, *, status: str | None = None) -> dict[str, Any]:
-    from app.core.db import db
     from app.services import transcript_portal
     from app.services.data_explorer import report_cache
 
     browser = _browser()
+    db = _db(browser)
     scope = await _scope(browser, user, status)
     norm = browser._norm(path)
     sees_spend = bool(transcript_portal.may_see_spend(user))

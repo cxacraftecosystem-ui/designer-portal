@@ -78,7 +78,7 @@ class ReportOptions:
             "links": self.links,
             "thumbnails": self.thumbnails,
             "locale": self.locale,
-            "extras": {key: True for key in self.extras},
+            "extras": dict.fromkeys(self.extras, True),
         }
 
 
