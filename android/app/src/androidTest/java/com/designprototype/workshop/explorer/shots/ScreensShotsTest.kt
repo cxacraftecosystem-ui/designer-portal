@@ -111,7 +111,7 @@ class ScreensShotsTest {
         compose.waitForIdle()
         prepare()
         compose.waitForIdle()
-        Thread.sleep(700)
+        Thread.sleep(1500)
         compose.waitForIdle()
         val bitmap = compose.onNodeWithTag("design.frame").captureToImage().asAndroidBitmap()
         val root = File(InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null), "design-fidelity/$board")

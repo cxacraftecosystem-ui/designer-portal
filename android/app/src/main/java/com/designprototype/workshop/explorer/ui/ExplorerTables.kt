@@ -374,7 +374,7 @@ private fun TableSearch(state: ExplorerTablesState, sheet: ExplorerSheet?, showC
         value = state.query,
         onValueChange = state::search,
         singleLine = true,
-        textStyle = TextStyle(style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface),
+        textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }.testTag("explorer.tables.search"),
         decorationBox = { field ->
