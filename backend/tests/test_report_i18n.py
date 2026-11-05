@@ -18,6 +18,8 @@ LATIN_ONLY_OK = {
     "SHA-256 चेकसम",
 }
 
+WRITER_SHEET_TEXT = {"sheet.banner_download", "sheet.empty", "sheet.back"}
+
 REQUIRED_KEYS = [
     *(
         f"status.{s}"
@@ -148,7 +150,9 @@ def test_hindi_is_devanagari():
 def test_sheet_names_are_valid_excel_names():
     for locale in i18n.LOCALES:
         table = i18n.strings(locale)
-        names = {k: v for k, v in table.items() if k.startswith("sheet.")}
+        names = {
+            k: v for k, v in table.items() if k.startswith("sheet.") and k not in WRITER_SHEET_TEXT
+        }
         for key, name in names.items():
             assert 0 < len(name) <= 31, (locale, key, name)
             assert not FORBIDDEN & set(name), (locale, key, name)
@@ -157,7 +161,7 @@ def test_sheet_names_are_valid_excel_names():
     en, hi = i18n.strings("en"), i18n.strings("hi")
     by_hindi: dict[str, set[str]] = {}
     for key in en:
-        if key.startswith("sheet."):
+        if key.startswith("sheet.") and key not in WRITER_SHEET_TEXT:
             by_hindi.setdefault(hi[key].casefold(), set()).add(en[key].casefold())
     assert {h: e for h, e in by_hindi.items() if len(e) > 1} == {}
 
@@ -267,9 +271,15 @@ def _plugin_sheets(plugin: Any, portal: str) -> list[tuple[str, str, list[contra
     return [(s.key, s.name, list(s.columns)) for s in built]
 
 
-def _pairs(portal: str) -> tuple[list[tuple[str, str]], dict[str, list[str]], list[str]]:
+DYNAMIC_SHEET = re.compile(r"[^A-Za-z0-9_]")
+
+
+def _pairs(
+    portal: str,
+) -> tuple[list[tuple[str, str]], dict[str, list[tuple[str, str]]], list[str]]:
+    hi = i18n.translator("hi")
     pairs: list[tuple[str, str]] = []
-    headings: dict[str, list[str]] = {}
+    headings: dict[str, list[tuple[str, str]]] = {}
     broken: list[str] = []
     for plugin in contract.plugins(portal):
         pairs.append((f"sheet.{plugin.key}", plugin.title))
@@ -279,11 +289,14 @@ def _pairs(portal: str) -> tuple[list[tuple[str, str]], dict[str, list[str]], li
             broken.append(f"{plugin.key}: {type(error).__name__}: {error}")
             continue
         for key, name, columns in sheets:
-            pairs.append((f"sheet.{key}", name))
+            if not DYNAMIC_SHEET.search(key):
+                pairs.append((f"sheet.{key}", name))
             for column in columns:
                 pairs.append((f"col.{key}.{column.key}", column.label))
+                if column.description:
+                    pairs.append((f"describe.{key}.{column.key}", column.description))
                 headings.setdefault(key, []).append(
-                    i18n.translator("hi")(f"col.{key}.{column.key}", column.label)
+                    (column.label, hi(f"col.{key}.{column.key}", column.label))
                 )
     return pairs, headings, broken
 
@@ -296,9 +309,15 @@ def test_every_registered_sheet_and_column_has_hindi(portal):
         "returning (sheet key, columns) so their Hindi can be checked"
     )
     assert i18n.missing("hi", pairs) == []
-    duplicated = {
-        key: sorted({h for h in names if names.count(h) > 1})
-        for key, names in headings.items()
-        if len(set(names)) != len(names)
-    }
-    assert duplicated == {}
+    hi = i18n.translator("hi")
+    names = [hi(key, default) for key, default in pairs if key.startswith("sheet.")]
+    assert [n for n in names if len(n) > 31 or FORBIDDEN & set(n)] == []
+    clashes = {}
+    for key, labels in headings.items():
+        by_hindi: dict[str, set[str]] = {}
+        for english, hindi in labels:
+            by_hindi.setdefault(hindi, set()).add(english)
+        found = {h: sorted(e) for h, e in by_hindi.items() if len(e) > 1}
+        if found:
+            clashes[key] = found
+    assert clashes == {}
