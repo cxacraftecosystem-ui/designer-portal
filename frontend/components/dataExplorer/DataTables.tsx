@@ -522,7 +522,7 @@ export function DataTables({
             <div className="grid gap-3 border-b border-line-200 px-4 py-3 lg:hidden max-sm:contents">
               <SheetPicker sheets={sheets} sheet={sheet} onChoose={choose} />
               {needle ? (
-                <div className="flex gap-2 overflow-x-auto" aria-label="Matches per sheet">
+                <div className="flex min-w-0 gap-2 overflow-x-auto" aria-label="Matches per sheet">
                   {[...sheets]
                     .map((entry) => ({ entry, hits: matchOf(entry.name) }))
                     .sort((a, b) => (b.hits ?? -1) - (a.hits ?? -1))

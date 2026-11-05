@@ -416,9 +416,9 @@ export function FolderContents({
       ) : null}
       {files.length ? (
         <>
-          <div className={`flex flex-wrap items-center gap-2 border-b border-line-200 px-4 py-3 max-sm:border-0 max-sm:p-0 ${selecting ? "" : "max-lg:hidden"}`}>
+          <div className={`flex flex-wrap items-center gap-2 border-b border-line-200 px-4 py-3 max-lg:hidden max-sm:min-w-0 max-sm:flex-nowrap max-sm:border-0 max-sm:p-0 ${selecting ? "max-sm:flex" : ""}`}>
             <span className="text-xs text-ink-500 max-sm:hidden">Show</span>
-            <div role="group" aria-label="Show file types" className="flex flex-wrap gap-2 max-sm:flex-nowrap max-sm:overflow-x-auto">
+            <div role="group" aria-label="Show file types" className="flex min-w-0 flex-wrap gap-2 max-sm:flex-1 max-sm:flex-nowrap max-sm:overflow-x-auto">
               {TYPE_FILTERS.filter((option) => option.value === "all" || counts[option.value] > 0).map((option) => (
                 <button
                   key={option.value}

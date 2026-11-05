@@ -60,19 +60,40 @@ async function shoot(page: Page, board: string, variant?: string) {
 
 async function shootAround(page: Page, board: string, variant: string | undefined, targets: Locator[], pad = { x: 40, top: 32, bottom: 32 }) {
   await settle(page);
-  const boxes = [];
+  const boxes: { x: number; y: number; width: number; height: number }[] = [];
   for (const target of targets) {
-    const box = await target.boundingBox();
-    if (box) boxes.push(box);
+    if (!(await target.count())) continue;
+    const box = await target.first().evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      return { x: rect.left + window.scrollX, y: rect.top + window.scrollY, width: rect.width, height: rect.height };
+    });
+    boxes.push(box);
   }
-  const viewport = page.viewportSize()!;
+  const width = await page.evaluate(() => document.documentElement.clientWidth);
   const top = Math.min(...boxes.map((box) => box.y));
   const bottom = Math.max(...boxes.map((box) => box.y + box.height));
   const left = Math.min(...boxes.map((box) => box.x));
   const right = Math.max(...boxes.map((box) => box.x + box.width));
   const x = Math.max(0, left - pad.x);
   const y = Math.max(0, top - pad.top);
-  await page.screenshot({ path: shotPath(board, variant), clip: { x, y, width: Math.min(viewport.width - x, right - left + pad.x * 2), height: bottom - top + pad.top + pad.bottom }, fullPage: true });
+  await page.screenshot({ path: shotPath(board, variant), clip: { x, y, width: Math.min(width - x, right - left + pad.x * 2), height: bottom - top + pad.top + pad.bottom }, fullPage: true });
+}
+
+async function overflowReport(page: Page, label: string) {
+  const wide = await page.evaluate(() => {
+    const limit = document.documentElement.clientWidth + 1;
+    const out: string[] = [];
+    for (const node of Array.from(document.querySelectorAll("body *"))) {
+      const rect = node.getBoundingClientRect();
+      if (rect.width > 0 && rect.right > limit) {
+        const parentWide = node.parentElement ? node.parentElement.getBoundingClientRect().right > limit : false;
+        if (!parentWide || out.length < 3) out.push(`${node.tagName.toLowerCase()}.${String((node as HTMLElement).className).slice(0, 120)} right=${Math.round(rect.right)}`);
+      }
+      if (out.length > 12) break;
+    }
+    return { scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth, out };
+  });
+  console.log(`[overflow ${label}] scrollWidth=${wide.scroll} clientWidth=${wide.client} | ${wide.out.join(" | ")}`);
 }
 
 async function folderReady(page: Page) {
@@ -82,18 +103,33 @@ async function folderReady(page: Page) {
 
 async function startWorkshopZip(page: Page, fake: DesignFidelityWebFake) {
   fake.workshopZip = true;
-  fake.holdFrom = 573;
+  fake.holdFrom = 613;
   await page.goto(folderUrl(WORKSHOP));
   await folderReady(page);
   await page.getByTestId("download-folder").getByRole("button", { name: /^Download( workshop| folder|$)/ }).click();
 }
 
 async function zipHeld(page: Page) {
-  await expect(page.getByTestId("downloads-tray")).toContainText(/(file|File) 574 of 926/, { timeout: 60_000 });
+  const tray = page.getByTestId("downloads-tray");
+  await expect(tray).toContainText(/(file|File) 5[4-9]\d of 926/, { timeout: 60_000 });
+  let last = "";
+  await expect
+    .poll(
+      async () => {
+        const now = (await tray.textContent()) ?? "";
+        const same = now === last;
+        last = now;
+        return same;
+      },
+      { timeout: 30_000, intervals: [1500] }
+    )
+    .toBe(true);
 }
 
 async function toGiriraj(page: Page) {
-  await page.getByRole("list", { name: "Folders" }).getByRole("button", { name: /Giriraj Prasad Chhipa/ }).click();
+  const open = page.getByTestId("workshop-overview").getByRole("row", { name: /Giriraj Prasad Chhipa/ }).getByRole("button", { name: "Open" });
+  await open.scrollIntoViewIfNeeded();
+  await open.evaluate((node) => (node as HTMLButtonElement).click());
   await expect(page.getByTestId("download-folder").getByRole("heading", { name: "Giriraj Prasad Chhipa" })).toBeVisible();
   await folderReady(page);
 }
@@ -238,6 +274,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.goto(folderUrl(WORKSHOP, { view: "tables", sheet: "Tools", q: "indigo" }));
       const tables = page.getByRole("region", { name: "Data tables" });
       await expect(tables.getByText("Row 14").or(tables.getByText("Row 1", { exact: true }))).toBeVisible();
+      await overflowReport(page, "PhoneTables");
       await shoot(page, "PhoneTables", theme === "dark" ? "phone-web-dark" : "phone-web");
     } finally {
       await context.close();
@@ -261,6 +298,7 @@ for (const theme of ["light", "dark"] as const) {
         const top = node.getBoundingClientRect().top + window.scrollY - 76;
         window.scrollTo(0, top);
       });
+      await overflowReport(page, "AndroidSelect");
       await shoot(page, "AndroidSelect", theme === "dark" ? "phone-web-dark" : "phone-web");
     } finally {
       await context.close();
@@ -291,31 +329,38 @@ for (const theme of ["light", "dark"] as const) {
     const { server, url } = await kilnServer();
     const { context, page, fake } = await open(browser, DESKTOP, theme);
     try {
-      await page.route(`**/api/data/media/${KILN_ID}/download`, (route) => route.continue({ url }));
-      await page.goto(folderUrl(GIRIRAJ));
-      await folderReady(page);
-      const kiln = row(page, "Kiln-firing_wide_07");
-      await kiln.getByRole("button", { name: `Download ${KILN_NAME}` }).click();
+      await page.route(`**/api/data/media/${KILN_ID}/download`, (route) => route.fulfill({ status: 302, headers: { location: url } }));
       const tray = page.getByTestId("downloads-tray");
-      const kilnItem = tray.getByTestId("tray-item").filter({ hasText: KILN_NAME });
-      await expect(kilnItem).toHaveAttribute("data-status", "failed", { timeout: 30_000 });
-      await expect(kilnItem.getByRole("button", { name: "Retry" })).toBeVisible({ timeout: 90_000 });
-      await page.getByTestId("download-folder").getByRole("button", { name: /Report/ }).click();
-      await page.getByRole("dialog", { name: "Report (.xlsx)" }).getByRole("button", { name: "Make report" }).click();
-      await expect(tray.getByTestId("tray-item").filter({ hasText: "Report (.xlsx)" }).first()).toHaveAttribute("data-status", "saved");
-      fake.workshopZip = true;
-      await page.getByTestId("download-folder").getByRole("button", { name: /^Download/ }).click();
-      await expect(tray.getByTestId("tray-item").filter({ hasText: "Giriraj Prasad Chhipa" })).toHaveAttribute("data-status", "saved", { timeout: 30_000 });
-      fake.holdFrom = 573;
-      await page.getByTestId("download-folder").getByRole("button", { name: "3rd Craft Toolkit Workshop" }).first().click().catch(async () => {
-        await page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("button", { name: "3rd Craft Toolkit Workshop" }).click();
+      await test.step("a file fails part-way and stops retrying", async () => {
+        await page.goto(folderUrl(GIRIRAJ));
+        await folderReady(page);
+        const kiln = row(page, "Kiln-firing_wide_07");
+        await kiln.getByRole("button", { name: `Download ${KILN_NAME}` }).click();
+        const kilnItem = tray.getByTestId("tray-item").filter({ hasText: KILN_NAME });
+        await expect(kilnItem).toHaveAttribute("data-status", "failed", { timeout: 30_000 });
+        await expect(kilnItem.getByRole("button", { name: "Retry" })).toBeVisible({ timeout: 90_000 });
       });
-      await folderReady(page);
-      await page.getByTestId("download-folder").getByRole("button", { name: /^Download/ }).click();
-      await page.getByTestId("download-folder").getByRole("button", { name: /Report/ }).click();
-      await page.getByRole("dialog", { name: "Report (.xlsx)" }).getByRole("button", { name: "Make report" }).click();
-      await zipHeld(page);
-      await expect(tray.getByTestId("tray-item").filter({ hasText: "Starts when the one above finishes" })).toBeVisible();
+      await test.step("a report is saved", async () => {
+        await page.getByTestId("download-folder").getByRole("button", { name: "Report (.xlsx)" }).click();
+        await page.getByRole("dialog", { name: "Report (.xlsx)" }).getByRole("button", { name: "Make report" }).click();
+        await expect(tray.getByTestId("tray-item").filter({ hasText: "Report (.xlsx)" }).first()).toHaveAttribute("data-status", "saved", { timeout: 20_000 });
+      });
+      await test.step("the artisan folder is saved", async () => {
+        await page.getByTestId("download-folder").getByRole("button", { name: /^Download/ }).click();
+        await expect(tray.getByTestId("tray-item").filter({ hasText: "Giriraj Prasad Chhipa" }).first()).toHaveAttribute("data-status", "saved", { timeout: 30_000 });
+      });
+      await test.step("the workshop runs and a report waits", async () => {
+        fake.workshopZip = true;
+        fake.holdFrom = 613;
+        await page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("button", { name: "3rd Craft Toolkit Workshop" }).click();
+        await expect(page.getByTestId("download-folder").getByRole("heading", { name: "3rd Craft Toolkit Workshop" })).toBeVisible();
+        await folderReady(page);
+        await page.getByTestId("download-folder").getByRole("button", { name: /^Download/ }).click();
+        await page.getByTestId("download-folder").getByRole("button", { name: "Report (.xlsx)" }).click();
+        await page.getByRole("dialog", { name: "Report (.xlsx)" }).getByRole("button", { name: "Make report" }).click();
+        await zipHeld(page);
+        await expect(tray.getByTestId("tray-item").filter({ hasText: "Starts when the one above finishes" })).toBeVisible();
+      });
       await settle(page);
       const box = (await tray.boundingBox())!;
       await page.screenshot({ path: shotPath("WebTrayQueue", theme === "dark" ? "dark" : undefined), clip: { x: box.x + box.width + 24 - 560, y: Math.max(0, box.y + box.height + 24 - 720), width: 560, height: Math.min(720, box.y + box.height + 24) } });

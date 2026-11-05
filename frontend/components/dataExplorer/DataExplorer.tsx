@@ -163,7 +163,7 @@ function ViewTabs({ view, counts, onView, trailing }: { view: ExplorerView; coun
         })}
       </div>
       <span className="flex-1 max-sm:hidden" />
-      {trailing ? <div className="flex items-center gap-1.5 pb-1.5 max-sm:hidden">{trailing}</div> : null}
+      {trailing ? <div className="flex items-center gap-1.5 pb-1.5 max-lg:hidden">{trailing}</div> : null}
     </div>
   );
 }
