@@ -14,11 +14,8 @@ from datetime import UTC, date, datetime, time, timedelta, timezone, tzinfo
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import HTTPException
-
 from app.core.config import Settings, get_settings
 from app.core.db import db
-from app.core.deps import can_download_dataset, is_break_glass_master
 from app.services import app_settings, email_outbox, mailer, naming, s3
 from app.services.data_explorer import report_options, saved
 from prisma import Json
@@ -310,6 +307,8 @@ async def mark_delivered(owner: Any, path: str) -> None:
 
 
 async def _visible(scope: Any, path: str) -> bool:
+    from fastapi import HTTPException
+
     try:
         await _browser()._list_level(path, scope)
     except HTTPException:
@@ -318,6 +317,7 @@ async def _visible(scope: Any, path: str) -> bool:
 
 
 async def _barred(owner: Any) -> bool:
+    from app.core.deps import is_break_glass_master
     from app.services import access_roster
 
     if is_break_glass_master(owner):
@@ -337,6 +337,8 @@ async def may_schedule(user: Any, view: Any) -> bool:
 
 
 async def check_access(owner: Any, view: Any) -> None:
+    from app.core.deps import can_download_dataset
+
     if owner is None or not can_download_dataset(owner) or await _barred(owner):
         raise AccessLost(LOST_DOWNLOAD)
     if view is None or (str(view.ownerId) != str(owner.id) and not view.shared):
@@ -369,6 +371,8 @@ async def _record(row_id: str, data: dict[str, Any]) -> None:
 
 
 async def deliver(row: Any, now: datetime, settings: Settings) -> Outcome:
+    from fastapi import HTTPException
+
     owner = await db.user.find_unique(where={"id": row.ownerId})
     view = await db.datasavedview.find_unique(where={"id": row.savedViewId})
     try:
@@ -538,6 +542,8 @@ async def run_report_schedules(
 
 
 async def owned(schedule_id: str, user_id: str) -> Any:
+    from fastapi import HTTPException
+
     row = await db.datareportschedule.find_unique(
         where={"id": schedule_id}, include={"savedView": True}
     )
