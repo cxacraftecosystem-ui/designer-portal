@@ -75,17 +75,11 @@ export function fetchScheduleFile(id: string): Promise<ScheduleFileLink> {
 }
 
 export function lookupUnsubscribe(token: string): Promise<UnsubscribeInfo> {
-  return apiFetch<UnsubscribeInfo>("/report-schedule/unsubscribe/lookup", {
-    method: "POST",
-    body: JSON.stringify({ token })
-  }, { redirectOn401: false });
+  return apiFetch<UnsubscribeInfo>("/report-schedule/unsubscribe/lookup", { method: "POST", body: JSON.stringify({ token }) });
 }
 
 export function confirmUnsubscribe(token: string): Promise<UnsubscribeInfo> {
-  return apiFetch<UnsubscribeInfo>("/report-schedule/unsubscribe", {
-    method: "POST",
-    body: JSON.stringify({ token })
-  }, { redirectOn401: false });
+  return apiFetch<UnsubscribeInfo>("/report-schedule/unsubscribe", { method: "POST", body: JSON.stringify({ token }) });
 }
 
 export function hourLabel(hour: number): string {
