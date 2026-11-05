@@ -151,6 +151,7 @@ test.describe("@qf:X1 layout", () => {
           const card = await folder.boundingBox();
           expect(search!.y).toBeLessThan(card!.y);
           if (size.name === "desktop") {
+            await showTree(page);
             const tree = await page.getByTestId("explorer-tree-panel").boundingBox();
             expect(tree!.x).toBeLessThan(card!.x);
             await expect(folderDownload(page)).toHaveAccessibleName(/^Download (folder|workshop) · \d/);

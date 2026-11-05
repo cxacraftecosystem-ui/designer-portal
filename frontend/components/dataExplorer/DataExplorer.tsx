@@ -22,7 +22,7 @@ import { TranscriptsTab } from "@/components/dataExplorer/TranscriptsTab";
 import { useDownloads } from "@/components/dataExplorer/useDownloads";
 import { useExplorerTree } from "@/components/dataExplorer/useExplorerTree";
 import { WorkshopOverview } from "@/components/dataExplorer/WorkshopOverview";
-import { bundleManifestEndpoint, fetchBundle, fetchSavedView, includeParam, recordVisit, reportFileUrl, reportOptionParams, reportPackUrl, transcriptBundleUrl } from "@/lib/dataExplorer/api";
+import { bundleManifestEndpoint, fetchBundle, fetchReportSheets, fetchSavedView, includeParam, recordVisit, reportFileUrl, reportOptionParams, reportPackUrl, transcriptBundleUrl } from "@/lib/dataExplorer/api";
 import { INCLUDE_KEYS, type Crumb, type FolderVisit, type IncludeKey, type ReportBundle, type ReportOptions, type ReportResponse, type SavedView, type Taxonomy, type TreeEntry } from "@/lib/dataExplorer/contract";
 import { formatBytes, limitSentence, overLimit } from "@/lib/dataExplorer/plan";
 import { ActionGroup } from "@/components/ui/ActionGroup";
@@ -191,6 +191,7 @@ export function DataExplorer({ config }: { config: ExplorerConfig }) {
   const [layout, setLayout] = useState<"list" | "grid">("list");
   const [visit, setVisit] = useState<FolderVisit | null>(null);
   const [transcriptCount, setTranscriptCount] = useState<{ path: string; count: number } | null>(null);
+  const [tableCount, setTableCount] = useState<{ path: string; count: number } | null>(null);
   const [miniTrack, setMiniTrack] = useState<{ mediaId: string; name: string; src: string; startMs?: number } | null>(null);
   const [miniAt, setMiniAt] = useState<{ ms: number; durationMs: number | null } | null>(null);
   const [viewError, setViewError] = useState<string | null>(null);
@@ -346,6 +347,19 @@ export function DataExplorer({ config }: { config: ExplorerConfig }) {
     return () => window.clearTimeout(timer);
   }, [url.path]);
 
+  const extraText = JSON.stringify(config.extra);
+  useEffect(() => {
+    if (!url.path) return;
+    const abort = new AbortController();
+    const path = url.path;
+    fetchReportSheets(path, JSON.parse(extraText) as QueryParams, abort.signal)
+      .then((list) => {
+        if (!abort.signal.aborted && list) setTableCount({ path, count: list.sheets.filter((sheet) => (sheet.count ?? 0) > 0).length });
+      })
+      .catch(() => undefined);
+    return () => abort.abort();
+  }, [url.path, extraText]);
+
   const crumbs = useMemo<Crumb[]>(() => {
     const fromServer = current?.crumbs ?? [];
     if (fromServer.some((crumb) => crumb.path === "")) return fromServer;
@@ -360,6 +374,7 @@ export function DataExplorer({ config }: { config: ExplorerConfig }) {
   const depth = url.path.split("/").filter(Boolean).length;
   const wholeRepository = depth <= 1;
   const isWorkshop = recordType === "workshop";
+  const wide = url.view !== "files" || isWorkshop;
 
   const folderSize = useFolderSize(url.path, config.extra, config.downloadExtra, downloads.measure);
   const selectionSize = useSelectionSize(selection, config.extra, config.downloadExtra, downloads.measure);
@@ -502,7 +517,7 @@ export function DataExplorer({ config }: { config: ExplorerConfig }) {
 
   const sidePanel = (
     <aside
-      className={`panel flex flex-col gap-2 p-3 lg:sticky lg:top-24 lg:max-h-[calc(100dvh-7.5rem)] lg:overflow-y-auto lg:overscroll-contain ${showTree ? "" : "max-lg:hidden"}`}
+      className={`panel flex flex-col gap-2 p-3 lg:sticky lg:top-24 lg:max-h-[calc(100dvh-7.5rem)] lg:overflow-y-auto lg:overscroll-contain ${showTree ? "" : wide ? "hidden" : "max-lg:hidden"}`}
       aria-label="Folders"
       data-testid="explorer-tree-panel"
     >
@@ -547,7 +562,7 @@ export function DataExplorer({ config }: { config: ExplorerConfig }) {
               actions={
                 <>
                   <span className="contents max-sm:hidden">{config.headerExtra}</span>
-                  <span className="hidden sm:max-lg:contents">
+                  <span className={wide ? "hidden sm:contents" : "hidden sm:max-lg:contents"}>
                     <button type="button" className="inline-flex min-h-11 items-center rounded-md border border-line-200 bg-card px-3.5 text-sm text-ink-900 hover:border-purple-300" aria-expanded={showTree} onClick={() => setShowTree((value) => !value)}>
               {showTree ? "Hide folders" : "Folders"}
             </button>
@@ -589,7 +604,7 @@ export function DataExplorer({ config }: { config: ExplorerConfig }) {
             </Problem>
           )
         ) : null}
-        <div className="grid items-start gap-4 max-lg:gap-3.5 max-sm:gap-3 lg:grid-cols-[326px_minmax(0,1fr)]">
+        <div className={`grid items-start gap-4 max-lg:gap-3.5 max-sm:gap-3 ${wide && !showTree ? "" : "lg:grid-cols-[326px_minmax(0,1fr)]"}`}>
           {sidePanel}
           <div className="grid min-w-0 gap-4 max-lg:gap-3.5 max-sm:gap-3">
             <FolderHeader
@@ -622,7 +637,7 @@ export function DataExplorer({ config }: { config: ExplorerConfig }) {
             {current?.info ? <RecordDetails info={current.info} recordHref={current.info.record && config.recordHref ? config.recordHref(current.info.record.kind, current.info.record.id) : null} /> : null}
             {isWorkshop ? <WorkshopOverview path={url.path} extra={config.extra} visit={visit && visit.path === url.path ? visit : null} onOpen={open} onShowNew={() => navigate({ view: "files" })} /> : null}
             <section className="panel overflow-hidden max-sm:grid max-sm:gap-3 max-sm:overflow-visible max-sm:rounded-none max-sm:border-0 max-sm:bg-transparent max-sm:shadow-none" aria-label="Contents">
-              <ViewTabs view={url.view} counts={{ files: folderSize.sized ? `${folderSize.sized.files.toLocaleString("en-IN")}${folderSize.sized.truncated ? "+" : ""}` : filesCount, transcripts: transcriptsKnown !== null ? transcriptsKnown.toLocaleString("en-IN") : null }} onView={(view) => navigate({ view })} trailing={tabTrailing} />
+              <ViewTabs view={url.view} counts={{ files: folderSize.sized ? `${folderSize.sized.files.toLocaleString("en-IN")}${folderSize.sized.truncated ? "+" : ""}` : filesCount, tables: tableCount && tableCount.path === url.path && tableCount.count > 0 ? tableCount.count.toLocaleString("en-IN") : null, transcripts: transcriptsKnown !== null ? transcriptsKnown.toLocaleString("en-IN") : null }} onView={(view) => navigate({ view })} trailing={tabTrailing} />
               <div id="explorer-view" role="tabpanel" aria-label={VIEW_TABS.find((tab) => tab.value === url.view)?.label} className="min-w-0">
                 <div hidden={url.view !== "files"}>
                   <FolderContents
