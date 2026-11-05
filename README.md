@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-0.0.13-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Release: 0.0.13">
+  <img src="https://img.shields.io/badge/Release-0.0.14-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Release: 0.0.14">
   <img src="https://img.shields.io/badge/Web-Next.js_16-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Web: Next.js 16">
   <img src="https://img.shields.io/badge/API-FastAPI_·_Python_3.15-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="API: FastAPI on Python 3.15">
   <img src="https://img.shields.io/badge/Android-Kotlin_+_Compose-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Android: Kotlin and Compose">
@@ -310,7 +310,7 @@ stateDiagram-v2
 
 | Android | |
 |---|---|
-| Version | **0.0.13**, versionCode 38 (the line restarted at 0.0.1 on 21 Oct 2026; codes keep rising) |
+| Version | **0.0.14**, versionCode 39 (the line restarted at 0.0.1 on 21 Oct 2026; codes keep rising) |
 | Toolchain | AGP 9.5, Gradle 9.8.2, Kotlin 2.4, Compose, R8 with a 4 GB Gradle heap |
 | Network | CloudFront over HTTPS, dual-stack, so IPv6-only mobile networks work |
 | Updates | in-app release check against the published APK; `publish-android.yml` refuses a code at or below the live one |
@@ -436,6 +436,7 @@ One release per platform at a time: everything is batched, checked once and depl
 | 0.0.11 | 4 Nov 2026 | 36 | a tool linked to several artisans shows under every workshop those artisans belong to, on every read surface; web and Android tool rows name every linked artisan |
 | 0.0.12 | 5 Nov 2026 | 37 | the data explorer: tree first with search as its toolbar and every download in one place, sizes before a download, multi-select, thumbnails and previews, table search and a CSV per sheet, all transcript formats in one zip, removed recordings never ship, audio as `.mp4` with the original as fallback, downloads that stream and resume |
 | 0.0.13 | 5 Nov 2026 | 38 | the data explorer redesign: report queue and options, saved views, new-since-you-looked counts, live report links, waveforms and clear voices, the workshop overview, a transcripts `.docx`, folder counts and sizes, resumable folders, scheduled reports; Android background downloads |
+| 0.0.14 | 6 Nov 2026 | 39 | every list reaches its last record on web and Android, with paging where the server stopped short; screens true to their approved design boards; the Data report shows its status filter in its options, with root questionnaires in the report; the Android publish waits for the live backend |
 
 ## <img src="docs/readme-kit/assets/icons/box.svg" width="32" align="top" alt="">&nbsp; Built with
 
