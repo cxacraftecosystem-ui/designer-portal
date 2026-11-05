@@ -9,4 +9,4 @@ Still different, and why:
 - A "…" menu next to Download holds Save to a folder and Whole dataset (both real features the board has no room for), and a bookmark icon on the tab row opens Saved views.
 - Tray numbers are KB/MB, not GB: CI streams real bytes from the fixture; the file counter and current file come from a live run.
 - The board tints only the first checked row; the build tints every checked row.
-- "+38 new since you looked" pill shows on the tab row when the visit API reports new files.
+- "+38 new since you looked" shows as a pill in the folder facts when the visit API reports new files (the board has no slot for it).

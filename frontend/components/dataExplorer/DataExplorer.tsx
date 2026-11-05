@@ -520,7 +520,6 @@ export function DataExplorer({ config }: { config: ExplorerConfig }) {
 
   const tabTrailing = (
     <>
-      {newHere && url.view === "files" ? <span className="rounded-full bg-purple-100 px-2.5 py-0.5 text-xs font-semibold text-purple-800 dark:bg-purple-950/60 dark:text-purple-200">+{newHere} new since you looked</span> : null}
       {url.view === "files" ? (
         <div className="flex gap-1.5" role="group" aria-label="Layout">
           <button type="button" aria-pressed={layout === "list"} aria-label="List view" onClick={() => setLayout("list")} className={iconToggle(layout === "list")}>
@@ -609,6 +608,7 @@ export function DataExplorer({ config }: { config: ExplorerConfig }) {
               loading={!current && tree.loading.has(url.path)}
               onWholeDataset={wholeRepository ? () => downloadDataset("zip") : null}
               info={current?.info ?? null}
+              fresh={newHere ? `+${newHere} new since you looked` : null}
               parent={shownCrumbs.length > 1 ? shownCrumbs[shownCrumbs.length - 2] : null}
               foldersButton={
                 <button type="button" className="inline-flex min-h-11 items-center rounded-full border border-line-200 bg-card px-3 text-[13px] text-ink-700 hover:border-purple-300" aria-expanded={showTree} onClick={() => setShowTree((value) => !value)}>
