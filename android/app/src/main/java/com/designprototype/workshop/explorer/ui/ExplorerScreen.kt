@@ -791,7 +791,7 @@ fun ExplorerScreen(
                 RecentFilesCard(job, onAll = { allFilesFor = job.id })
                 Text(
                     ExplorerText.savingTo(ExplorerSaver.location(job.request.fileName)),
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -901,7 +901,7 @@ fun ExplorerScreen(
                             val first = index == 0
                             val last = index == pairs.lastIndex
                             Box(Modifier.fillMaxWidth().padding(bottom = if (last) 12.dp else 0.dp)) {
-                                Row(Modifier.fillMaxWidth().explorerCell(first, last).height(IntrinsicSize.Min)) {
+                                Row(Modifier.fillMaxWidth().explorerCell(first, last), verticalAlignment = Alignment.CenterVertically) {
                                     pair.forEach { file -> Box(Modifier.weight(1f)) { fileRow(file, first, last, false) } }
                                     if (pair.size == 1) Spacer(Modifier.weight(1f))
                                 }
@@ -913,7 +913,7 @@ fun ExplorerScreen(
                         block("shown") {
                             Text(
                                 ExplorerText.showing(state.entries.size, total),
-                                fontSize = 12.sp,
+                                style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.fillMaxWidth().testTag("explorer.shown"),
@@ -1068,7 +1068,7 @@ fun ExplorerScreen(
                 } else if (!link.online && state.tree == null) {
                     Text(
                         ExplorerText.offline,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         color = explorerWarnTone().content,
                         modifier = Modifier.fillMaxWidth().background(explorerWarnTone().container).padding(horizontal = 16.dp, vertical = 8.dp).testTag("explorer.offline"),
                     )
@@ -1186,7 +1186,7 @@ private fun DownloadsButton(count: Int, size: Dp, onClick: () -> Unit) {
                 Modifier.align(Alignment.TopEnd).heightIn(min = 18.dp).widthIn(min = 18.dp).background(MaterialTheme.colorScheme.primary, CircleShape).padding(horizontal = 4.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("$count", fontSize = 11.sp, lineHeight = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+                Text("$count", style = MaterialTheme.typography.labelSmall, lineHeight = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
             }
         }
     }
@@ -1219,8 +1219,8 @@ private fun TopBar(
                 Icon(Icons.Filled.Close, contentDescription = ExplorerUiText.stopSelecting, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
             }
             Column(Modifier.weight(1f)) {
-                Text(ExplorerText.selected(selectedCount), fontSize = 17.sp, lineHeight = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.semantics { heading() })
-                Text(listOfNotNull(selectedSize, ExplorerUiText.selectHint).joinToString(" · "), fontSize = 12.sp, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(ExplorerText.selected(selectedCount), style = MaterialTheme.typography.titleLarge, lineHeight = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.semantics { heading() })
+                Text(listOfNotNull(selectedSize, ExplorerUiText.selectHint).joinToString(" · "), style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             ExplorerLinkButton(ExplorerUiText.selectAll(selectableCount), onClick = onSelectAll, modifier = Modifier.heightIn(min = 40.dp).padding(horizontal = 4.dp).testTag("explorer.selectall"))
         }
@@ -1236,8 +1236,7 @@ private fun TopBar(
         }
         Text(
             ExplorerText.title,
-            fontFamily = MaterialTheme.typography.titleLarge.fontFamily,
-            fontSize = 20.sp,
+            style = MaterialTheme.typography.titleLarge,
             lineHeight = 26.sp,
             fontWeight = FontWeight.ExtraBold,
             color = MaterialTheme.colorScheme.onBackground,
@@ -1259,7 +1258,7 @@ private fun hasOrganise(state: ExplorerState): Boolean = state.taxonomies.size >
 
 @Composable
 private fun Eyebrow(text: String) {
-    Text(text.uppercase(), fontSize = 11.sp, lineHeight = 14.sp, letterSpacing = 0.06.em, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text(text.uppercase(), style = MaterialTheme.typography.labelSmall, lineHeight = 14.sp, letterSpacing = 0.06.em, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -1286,7 +1285,7 @@ private fun OrganiseCard(state: ExplorerState) {
             }
             Text(
                 state.activeTaxonomy?.description?.takeIf { it.isNotBlank() } ?: ExplorerUiText.organiseHint,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.testTag("explorer.organise.about"),
@@ -1324,10 +1323,10 @@ private fun reviewColor(value: String): Color? {
 private fun DetailCell(label: String, value: String, modifier: Modifier, large: Boolean) {
     val tint = reviewColor(value)
     Column(modifier) {
-        Text(label, fontSize = 11.sp, lineHeight = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(label, style = MaterialTheme.typography.labelSmall, lineHeight = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(
             value,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodyMedium,
             lineHeight = 18.sp,
             color = tint ?: MaterialTheme.colorScheme.onSurface,
             fontWeight = if (tint != null) FontWeight.SemiBold else FontWeight.Normal,
@@ -1350,10 +1349,10 @@ private fun FolderCard(state: ExplorerState, size: SizeLoad?, visit: ExplorerVis
         if (trail.isNotEmpty()) {
             FlowRow(Modifier.fillMaxWidth().testTag("explorer.crumbs"), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 trail.forEachIndexed { index, crumb ->
-                    if (index > 0) Text(" › ", fontSize = 12.sp, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (index > 0) Text(" › ", style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
                         crumb.name,
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         lineHeight = 16.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.clickable(role = Role.Button) { state.open(crumb.path) },
@@ -1364,8 +1363,7 @@ private fun FolderCard(state: ExplorerState, size: SizeLoad?, visit: ExplorerVis
         val title: @Composable (Modifier) -> Unit = { m ->
             Text(
                 info?.title?.ifBlank { null } ?: state.folderName,
-                fontFamily = MaterialTheme.typography.titleLarge.fontFamily,
-                fontSize = 18.sp,
+                style = MaterialTheme.typography.titleLarge,
                 lineHeight = 24.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -1377,7 +1375,7 @@ private fun FolderCard(state: ExplorerState, size: SizeLoad?, visit: ExplorerVis
             else -> ExplorerText.folderCount(state.folders.size, state.files.size)
         }
         val count: @Composable (Modifier) -> Unit = { m ->
-            Text(line, fontSize = if (large) 14.sp else 12.sp, lineHeight = 16.sp, color = if (large) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, modifier = m.testTag("explorer.count"))
+            Text(line, style = if (large) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall, color = if (large) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant, modifier = m.testTag("explorer.count"))
         }
         if (large) {
             title(Modifier)
@@ -1436,10 +1434,10 @@ private fun DownloadCard(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(ExplorerUiText.download, fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f).semantics { heading() })
+            Text(ExplorerUiText.download, style = MaterialTheme.typography.bodyLarge, lineHeight = 20.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f).semantics { heading() })
             size?.let { s ->
                 ExplorerBytes.format(includedSize(s, include).bytes.takeIf { it > 0 })?.let {
-                    Text(ExplorerUiText.selectedSize(it), fontSize = 12.sp, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("explorer.download.selected"))
+                    Text(ExplorerUiText.selectedSize(it), style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("explorer.download.selected"))
                 }
             }
         }
@@ -1453,7 +1451,7 @@ private fun DownloadCard(
                     selected = on,
                     onClick = { onInclude(kind.token) },
                     minHeight = 34.dp,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     horizontal = 10.dp,
                     modifier = Modifier.testTag("explorer.include.${kind.token}"),
                 )
@@ -1499,7 +1497,7 @@ private fun Tabs(tab: ExplorerTab, files: Int, tables: Int?, transcripts: Int?, 
                     .testTag(tag),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(label, fontSize = 14.sp, lineHeight = 20.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium, color = if (on) accent else MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(label, style = MaterialTheme.typography.bodyMedium, lineHeight = 20.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium, color = if (on) accent else MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -1509,10 +1507,10 @@ private fun Tabs(tab: ExplorerTab, files: Int, tables: Int?, transcripts: Int?, 
 private fun KindPills(files: List<ExplorerEntry>, current: String?, onPick: (String?) -> Unit) {
     val counts = files.groupingBy { ExplorerKind.ofMediaType(it.mediaType) }.eachCount()
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ExplorerPill("${ExplorerUiText.all} ${files.size}", selected = current == null, onClick = { onPick(null) }, ink = true, minHeight = 32.dp, fontSize = 12.sp, role = Role.RadioButton, modifier = Modifier.testTag("explorer.kind.all"))
+        ExplorerPill("${ExplorerUiText.all} ${files.size}", selected = current == null, onClick = { onPick(null) }, ink = true, minHeight = 32.dp, style = MaterialTheme.typography.bodySmall, role = Role.RadioButton, modifier = Modifier.testTag("explorer.kind.all"))
         listOf(ExplorerKind.VIDEOS, ExplorerKind.IMAGES, ExplorerKind.AUDIOS, ExplorerKind.DOCUMENTS, ExplorerKind.OTHER).forEach { kind ->
             val n = counts[kind] ?: 0
-            if (n > 0) ExplorerPill("${kind.label} $n", selected = current == kind.token, onClick = { onPick(kind.token) }, ink = true, minHeight = 32.dp, fontSize = 12.sp, role = Role.RadioButton, modifier = Modifier.testTag("explorer.kind.${kind.token}"))
+            if (n > 0) ExplorerPill("${kind.label} $n", selected = current == kind.token, onClick = { onPick(kind.token) }, ink = true, minHeight = 32.dp, style = MaterialTheme.typography.bodySmall, role = Role.RadioButton, modifier = Modifier.testTag("explorer.kind.${kind.token}"))
         }
     }
 }
@@ -1530,8 +1528,8 @@ private fun SelectBar(count: Int, breakdown: String, size: String?, online: Bool
                 .testTag("explorer.selectbar"),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            if (breakdown.isNotBlank()) Text(breakdown, fontSize = 12.sp, lineHeight = 16.sp, color = Color(0xFFCFCBE0), modifier = Modifier.testTag("explorer.select.breakdown"))
-            if (!online) Text(ExplorerText.offline, fontSize = 12.sp, color = ExplorerTones.warnDark.content)
+            if (breakdown.isNotBlank()) Text(breakdown, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp, color = Color(0xFFCFCBE0), modifier = Modifier.testTag("explorer.select.breakdown"))
+            if (!online) Text(ExplorerText.offline, style = MaterialTheme.typography.bodySmall, color = ExplorerTones.warnDark.content)
             val share: @Composable (Modifier) -> Unit = { m ->
                 ExplorerSecondaryButton(ExplorerUiText.share, onClick = onShare, enabled = online && count > 0, line = ExplorerInk.darkControlLine, content = Color.White, container = Color.Transparent, modifier = m.testTag("explorer.select.share"))
             }
@@ -1583,7 +1581,7 @@ private fun TreePane(
         modifier.background(MaterialTheme.colorScheme.surface).drawBehind { drawLine(line, Offset(size.width - 0.5f, 0f), Offset(size.width - 0.5f, size.height), 1.dp.toPx()) },
     ) {
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(ExplorerText.title, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f).semantics { heading() })
+            Text(ExplorerText.title, style = MaterialTheme.typography.titleLarge, lineHeight = 26.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f).semantics { heading() })
             if (state.loading) FieldCircularProgressIndicator(modifier = Modifier.size(16.dp).padding(end = 4.dp), strokeWidth = 2.dp)
             DownloadsButton(activeDownloads, 40.dp, onDownloads)
         }
@@ -1606,7 +1604,7 @@ private fun TreePane(
                                     .testTag("explorer.taxonomy.${t.id}"),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Text(t.name, fontSize = 13.sp, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal, color = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
+                                Text(t.name, style = MaterialTheme.typography.bodyMedium, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal, color = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface)
                             }
                         }
                     }
@@ -1644,10 +1642,10 @@ private fun TreeRow(folder: ExplorerEntry, depth: Int, open: Boolean, here: Bool
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (branch && depth == 0) Text(if (open) "▾" else "▸", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+        if (branch && depth == 0) Text(if (open) "▾" else "▸", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
         Text(
             folder.name,
-            fontSize = 14.sp,
+            style = MaterialTheme.typography.bodyMedium,
             lineHeight = 19.sp,
             fontWeight = if (open || here) FontWeight.SemiBold else FontWeight.Normal,
             color = if (here) accent else MaterialTheme.colorScheme.onSurface,
@@ -1656,7 +1654,7 @@ private fun TreeRow(folder: ExplorerEntry, depth: Int, open: Boolean, here: Bool
             modifier = Modifier.weight(1f),
         )
         folder.count?.let {
-            Text(String.format(java.util.Locale.ROOT, "%,d", it), fontSize = 12.sp, fontWeight = if (here || open) FontWeight.SemiBold else FontWeight.Normal, color = if (here) accent else MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(String.format(java.util.Locale.ROOT, "%,d", it), style = MaterialTheme.typography.bodySmall, fontWeight = if (here || open) FontWeight.SemiBold else FontWeight.Normal, color = if (here) accent else MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -1671,8 +1669,8 @@ private fun Restricted() {
         Box(Modifier.size(56.dp).background(MaterialTheme.colorScheme.primaryContainer, ExplorerShapes.card), contentAlignment = Alignment.Center) {
             Icon(Icons.Filled.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(22.dp))
         }
-        Text(ExplorerText.restrictedTitle, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
-        Text(ExplorerText.restrictedBody, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        Text(ExplorerText.restrictedTitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
+        Text(ExplorerText.restrictedBody, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
     }
 }
 

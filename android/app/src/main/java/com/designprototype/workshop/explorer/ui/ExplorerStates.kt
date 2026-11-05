@@ -53,9 +53,9 @@ internal fun StatusCard(status: ExplorerStatus, text: String, action: String? = 
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text(text, fontSize = 13.sp, lineHeight = 18.sp, color = tone?.content ?: MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+        Text(text, style = MaterialTheme.typography.bodyMedium, lineHeight = 18.sp, color = tone?.content ?: MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
         if (action != null && onAction != null) {
-            ExplorerPrimaryButton(action, onClick = onAction, container = tone?.accent ?: MaterialTheme.colorScheme.primary, content = tone?.onAccent ?: MaterialTheme.colorScheme.onPrimary, minHeight = 40.dp, fontSize = 13.sp)
+            ExplorerPrimaryButton(action, onClick = onAction, container = tone?.accent ?: MaterialTheme.colorScheme.primary, content = tone?.onAccent ?: MaterialTheme.colorScheme.onPrimary, minHeight = 40.dp, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
@@ -85,8 +85,8 @@ private fun StateCard(
         Box(Modifier.size(56.dp).background(tile, ExplorerShapes.card), contentAlignment = Alignment.Center) {
             Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(24.dp))
         }
-        Text(title, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.ExtraBold, color = content, textAlign = TextAlign.Center, modifier = Modifier.semantics { heading() })
-        Text(body, fontSize = 13.sp, lineHeight = 19.sp, color = content, textAlign = TextAlign.Center)
+        Text(title, style = MaterialTheme.typography.titleLarge, lineHeight = 24.sp, fontWeight = FontWeight.ExtraBold, color = content, textAlign = TextAlign.Center, modifier = Modifier.semantics { heading() })
+        Text(body, style = MaterialTheme.typography.bodyMedium, lineHeight = 19.sp, color = content, textAlign = TextAlign.Center)
         footer()
     }
 }
@@ -121,7 +121,7 @@ internal fun OfflineCard(age: String?) {
         iconTint = tone.muted,
         tag = "explorer.offline.card",
     ) {
-        Text(ExplorerUiText.savedStillOpen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = tone.muted)
+        Text(ExplorerUiText.savedStillOpen, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold, color = tone.muted)
     }
 }
 

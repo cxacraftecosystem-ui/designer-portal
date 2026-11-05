@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -86,7 +87,7 @@ fun ExplorerPill(
     modifier: Modifier = Modifier,
     ink: Boolean = false,
     minHeight: Dp = 36.dp,
-    fontSize: TextUnit = 13.sp,
+    style: TextStyle = MaterialTheme.typography.bodyMedium,
     horizontal: Dp = 12.dp,
     role: Role = Role.Checkbox,
     enabled: Boolean = true,
@@ -113,7 +114,7 @@ fun ExplorerPill(
             .padding(horizontal = horizontal),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, fontSize = fontSize, lineHeight = fontSize * 1.3f, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, color = content, textAlign = TextAlign.Center)
+        Text(text, style = style, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal, color = content, textAlign = TextAlign.Center)
     }
 }
 
@@ -126,7 +127,7 @@ fun ExplorerPrimaryButton(
     container: Color = MaterialTheme.colorScheme.primary,
     content: Color = MaterialTheme.colorScheme.onPrimary,
     minHeight: Dp = 48.dp,
-    fontSize: TextUnit = 14.sp,
+    style: TextStyle = MaterialTheme.typography.bodyMedium,
     shape: androidx.compose.ui.graphics.Shape = ExplorerShapes.control,
     bold: Boolean = MaterialTheme.field.isDark,
 ) {
@@ -138,7 +139,7 @@ fun ExplorerPrimaryButton(
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
         modifier = modifier.heightIn(min = minHeight),
     ) {
-        Text(text, fontSize = fontSize, lineHeight = fontSize * 1.3f, fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold, textAlign = TextAlign.Center)
+        Text(text, style = style, fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold, textAlign = TextAlign.Center)
     }
 }
 
@@ -152,7 +153,7 @@ fun ExplorerSecondaryButton(
     content: Color = MaterialTheme.colorScheme.onSurface,
     container: Color = MaterialTheme.colorScheme.surface,
     minHeight: Dp = 48.dp,
-    fontSize: TextUnit = 14.sp,
+    style: TextStyle = MaterialTheme.typography.bodyMedium,
     shape: androidx.compose.ui.graphics.Shape = ExplorerShapes.control,
 ) {
     OutlinedButton(
@@ -164,17 +165,17 @@ fun ExplorerSecondaryButton(
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
         modifier = modifier.heightIn(min = minHeight),
     ) {
-        Text(text, fontSize = fontSize, lineHeight = fontSize * 1.3f, fontWeight = FontWeight.Normal, textAlign = TextAlign.Center)
+        Text(text, style = style, fontWeight = FontWeight.Normal, textAlign = TextAlign.Center)
     }
 }
 
 @Composable
-fun ExplorerLinkButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary, fontSize: TextUnit = 13.sp, enabled: Boolean = true) {
+fun ExplorerLinkButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary, style: TextStyle = MaterialTheme.typography.bodyMedium, enabled: Boolean = true) {
     Box(
         modifier.heightIn(min = 36.dp).clip(ExplorerShapes.tile).clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.CenterStart,
     ) {
-        Text(text, fontSize = fontSize, lineHeight = fontSize * 1.3f, fontWeight = if (MaterialTheme.field.isDark) FontWeight.Bold else FontWeight.SemiBold, color = color)
+        Text(text, style = style, fontWeight = if (MaterialTheme.field.isDark) FontWeight.Bold else FontWeight.SemiBold, color = color)
     }
 }
 
@@ -228,7 +229,7 @@ internal fun ExplorerTypeTile(entry: ExplorerEntry, size: Dp = 48.dp) {
     val kind = tileKind(entry)
     val (bg, fg) = tileColors(kind)
     Box(Modifier.size(size).background(bg, ExplorerShapes.tile).testTag("explorer.tile.${kind.label.lowercase()}"), contentAlignment = Alignment.Center) {
-        Text(kind.label, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = fg)
+        Text(kind.label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = fg)
     }
 }
 

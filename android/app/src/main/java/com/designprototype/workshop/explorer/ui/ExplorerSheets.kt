@@ -242,8 +242,7 @@ internal fun DownloadsSheetBody(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 ExplorerText.downloads,
-                fontFamily = MaterialTheme.typography.titleLarge.fontFamily,
-                fontSize = 18.sp,
+                style = MaterialTheme.typography.titleLarge,
                 lineHeight = 24.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -255,7 +254,7 @@ internal fun DownloadsSheetBody(
         }
         Spacer(Modifier.height(12.dp))
         if (jobs.isEmpty()) {
-            Text(ExplorerText.noDownloads, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 24.dp))
+            Text(ExplorerText.noDownloads, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 24.dp))
         } else {
             LazyColumn(Modifier.fillMaxWidth().heightIn(max = 600.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(jobs, key = { it.id }) { job ->
@@ -307,28 +306,28 @@ internal fun JobCard(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         val title: @Composable (String, Modifier) -> Unit = { text, m ->
-            Text(text, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Bold, color = content, maxLines = if (large) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis, modifier = m)
+            Text(text, style = MaterialTheme.typography.bodyMedium, lineHeight = 19.sp, fontWeight = FontWeight.Bold, color = content, maxLines = if (large) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis, modifier = m)
         }
         val accent = tone?.accent ?: MaterialTheme.colorScheme.primary
         val openButton: @Composable (Modifier) -> Unit = { m ->
-            ExplorerPrimaryButton(ExplorerText.open, onClick = onOpen, container = accent, content = tone?.onAccent ?: MaterialTheme.colorScheme.onPrimary, minHeight = 44.dp, fontSize = 13.sp, modifier = m.testTag("explorer.job.open"))
+            ExplorerPrimaryButton(ExplorerText.open, onClick = onOpen, container = accent, content = tone?.onAccent ?: MaterialTheme.colorScheme.onPrimary, minHeight = 44.dp, style = MaterialTheme.typography.bodyMedium, modifier = m.testTag("explorer.job.open"))
         }
         when (job.state) {
             ExplorerJobState.QUEUED, ExplorerJobState.RUNNING, ExplorerJobState.PAUSED -> {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     title(job.request.title, Modifier.weight(1f))
                     val end = if (job.state == ExplorerJobState.PAUSED) ExplorerText.paused else jobPercent(job)?.let { ExplorerUiText.percent(it) }
-                    end?.let { Text(it, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) }
+                    end?.let { Text(it, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary) }
                 }
                 ExplorerBar(if (job.state == ExplorerJobState.QUEUED) null else job.fraction, height = 6.dp, modifier = Modifier.testTag("explorer.job.progress"))
                 Text(
                     jobLine(job),
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                     color = muted,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("explorer.job.status"),
                 )
-                if (job.retrying > 0) Text(ExplorerText.retryNote(job.retrying), fontSize = 12.sp, color = explorerWarnTone().muted)
+                if (job.retrying > 0) Text(ExplorerText.retryNote(job.retrying), style = MaterialTheme.typography.bodySmall, color = explorerWarnTone().muted)
                 Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
                     when {
                         job.state == ExplorerJobState.PAUSED -> JobAction(ExplorerText.resume, onResume, "explorer.job.resume")
@@ -343,22 +342,22 @@ internal fun JobCard(
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             title("✓ ${job.request.title}", Modifier)
-                            Text(jobSavedLine(job), fontSize = 12.sp, lineHeight = 16.sp, color = muted, modifier = Modifier.testTag("explorer.job.done"))
+                            Text(jobSavedLine(job), style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp, color = muted, modifier = Modifier.testTag("explorer.job.done"))
                         }
                         openButton(Modifier)
                     }
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         title(job.request.title, Modifier.weight(1f))
-                        Text(ExplorerUiText.saved, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = accent)
+                        Text(ExplorerUiText.saved, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = accent)
                     }
-                    Text(jobSavedLine(job), fontSize = 12.sp, lineHeight = 16.sp, color = muted, modifier = Modifier.testTag("explorer.job.done"))
+                    Text(jobSavedLine(job), style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp, color = muted, modifier = Modifier.testTag("explorer.job.done"))
                     if (result != null && result.failedCount > 0) {
                         ExplorerLinkButton("${ExplorerText.failedFiles(result.failedCount)} · ${if (showFailed) ExplorerText.hide else ExplorerText.show}", onClick = { showFailed = !showFailed }, color = content)
                         if (showFailed) {
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.testTag("explorer.job.failed")) {
-                                result.failed.forEach { Text(it, fontSize = 11.sp, color = muted) }
-                                if (result.failedCount > result.failed.size) Text("…", fontSize = 11.sp, color = muted)
+                                result.failed.forEach { Text(it, style = MaterialTheme.typography.labelSmall, color = muted) }
+                                if (result.failedCount > result.failed.size) Text("…", style = MaterialTheme.typography.labelSmall, color = muted)
                             }
                         }
                     }
@@ -366,7 +365,7 @@ internal fun JobCard(
                     if (canOpen) {
                         Spacer(Modifier.height(2.dp))
                         val share: @Composable (Modifier) -> Unit = { m ->
-                            ExplorerSecondaryButton(ExplorerText.share, onClick = onShare, line = tone?.border ?: explorerControlLine(), content = content, minHeight = 44.dp, fontSize = 13.sp, modifier = m.testTag("explorer.job.share"))
+                            ExplorerSecondaryButton(ExplorerText.share, onClick = onShare, line = tone?.border ?: explorerControlLine(), content = content, minHeight = 44.dp, style = MaterialTheme.typography.bodyMedium, modifier = m.testTag("explorer.job.share"))
                         }
                         if (large) {
                             openButton(Modifier.fillMaxWidth())
@@ -386,19 +385,19 @@ internal fun JobCard(
                 val failed = job.state == ExplorerJobState.FAILED
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(job.request.title, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Bold, color = content, maxLines = if (large) Int.MAX_VALUE else 1, overflow = TextOverflow.Ellipsis)
+                        Text(job.request.title, style = MaterialTheme.typography.bodyMedium, lineHeight = 19.sp, fontWeight = FontWeight.Bold, color = content, maxLines = if (large) Int.MAX_VALUE else 1, overflow = TextOverflow.Ellipsis)
                         Text(
                             if (failed) "${ExplorerUiText.failed} · ${job.error ?: ExplorerText.fileFailed}" else ExplorerText.cancelled,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodySmall,
                             lineHeight = 16.sp,
                             color = muted,
                             modifier = Modifier.testTag(if (failed) "explorer.job.error" else "explorer.job.cancelled"),
                         )
                     }
                     if (failed) {
-                        ExplorerPrimaryButton(ExplorerText.retry, onClick = onRetry, container = accent, content = tone?.onAccent ?: MaterialTheme.colorScheme.onPrimary, minHeight = 44.dp, fontSize = 13.sp, modifier = Modifier.testTag("explorer.job.retry"))
+                        ExplorerPrimaryButton(ExplorerText.retry, onClick = onRetry, container = accent, content = tone?.onAccent ?: MaterialTheme.colorScheme.onPrimary, minHeight = 44.dp, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("explorer.job.retry"))
                     } else {
-                        ExplorerSecondaryButton(ExplorerText.retry, onClick = onRetry, minHeight = 44.dp, fontSize = 13.sp, modifier = Modifier.testTag("explorer.job.retry"))
+                        ExplorerSecondaryButton(ExplorerText.retry, onClick = onRetry, minHeight = 44.dp, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("explorer.job.retry"))
                     }
                 }
             }

@@ -222,7 +222,7 @@ internal fun ExplorerCheck(checked: Boolean, onToggle: () -> Unit, tag: String, 
                 .let { if (checked) it else it.border(2.dp, if (dark) MaterialTheme.field.placeholder else Color(0xFFA7A3BC), RoundedCornerShape(7.dp)) },
             contentAlignment = Alignment.Center,
         ) {
-            if (checked) Text("✓", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+            if (checked) Text("✓", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
         }
     }
 }
@@ -263,9 +263,9 @@ internal fun FolderRow(
             Icon(recordIcon(folder.recordType), contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(20.dp))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(folder.name, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+            Text(folder.name, style = MaterialTheme.typography.bodyMedium, lineHeight = 19.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
             folderMeta(folder)?.let { line ->
-                Text(line, fontSize = 12.sp, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("explorer.folder.meta.${folder.path}"))
+                Text(line, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("explorer.folder.meta.${folder.path}"))
             }
         }
         if (!selecting) Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
@@ -347,7 +347,7 @@ internal fun FileRow(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     displayName(entry),
-                    fontSize = 14.sp,
+                    style = MaterialTheme.typography.bodyMedium,
                     lineHeight = 19.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = tone?.content ?: if (playing != null) markFg else MaterialTheme.colorScheme.onSurface,
@@ -356,7 +356,7 @@ internal fun FileRow(
                 )
                 Text(
                     playing ?: fileMeta(entry),
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp,
                     color = tone?.muted ?: MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = if (playing != null) Modifier.testTag("explorer.playing.$id") else Modifier,
@@ -377,7 +377,7 @@ internal fun FileRow(
                     ExplorerBar(job.fraction, height = 4.dp)
                     Text(
                         listOfNotNull(jobPercent(job)?.let { ExplorerUiText.percent(it) }, jobLine(job)).joinToString(" · "),
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.testTag("explorer.save.progress.$id"),
                     )
@@ -450,7 +450,7 @@ private fun SaveAction(
         saveJob != null -> OutlinedButton(onClick = onCancelSave, shape = shape, border = BorderStroke(1.dp, explorerControlLine()), contentPadding = pad, modifier = modifier.heightIn(min = 40.dp).testTag("explorer.save.cancel.$id")) {
             FieldCircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
             Spacer(Modifier.width(8.dp))
-            Text(ExplorerText.cancel, fontSize = 13.sp)
+            Text(ExplorerText.cancel, style = MaterialTheme.typography.bodyMedium)
         }
         finished != null && finished.state == ExplorerJobState.DONE -> Button(
             onClick = onOpenSaved,
@@ -458,7 +458,7 @@ private fun SaveAction(
             contentPadding = pad,
             colors = ButtonDefaults.buttonColors(containerColor = tone?.accent ?: MaterialTheme.colorScheme.primary, contentColor = tone?.onAccent ?: MaterialTheme.colorScheme.onPrimary),
             modifier = modifier.heightIn(min = 40.dp).testTag("explorer.save.open.$id"),
-        ) { Text(ExplorerText.open, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+        ) { Text(ExplorerText.open, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold) }
         finished != null && finished.state == ExplorerJobState.FAILED -> Button(
             onClick = onSave,
             shape = shape,
@@ -466,7 +466,7 @@ private fun SaveAction(
             contentPadding = pad,
             colors = ButtonDefaults.buttonColors(containerColor = tone?.accent ?: MaterialTheme.colorScheme.error, contentColor = tone?.onAccent ?: MaterialTheme.colorScheme.onError),
             modifier = modifier.heightIn(min = 40.dp).testTag("explorer.save.retry.$id"),
-        ) { Text(ExplorerText.retry, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+        ) { Text(ExplorerText.retry, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold) }
         else -> OutlinedButton(
             onClick = onSave,
             shape = shape,
@@ -475,7 +475,7 @@ private fun SaveAction(
             colors = ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface),
             contentPadding = pad,
             modifier = modifier.heightIn(min = 40.dp).testTag("explorer.save.$id"),
-        ) { Text(ExplorerText.save, fontSize = 13.sp) }
+        ) { Text(ExplorerText.save, style = MaterialTheme.typography.bodyMedium) }
     }
 }
 
@@ -584,19 +584,17 @@ private const val INFO_VALUE_COLLAPSED_LINES = 8
 internal fun RecordInfoTable(info: ExplorerInfo) {
     val fields = info.fields.filter { it.value.isNotBlank() }
     if (fields.isEmpty()) return
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val labelWidth = (maxWidth * 0.34f).coerceIn(88.dp, 132.dp)
-        SelectionContainer {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(MaterialTheme.shapes.small)
-                    .border(1.dp, MaterialTheme.field.hairline, MaterialTheme.shapes.small),
-            ) {
-                fields.forEachIndexed { index, field ->
-                    if (index > 0) HorizontalDivider(color = MaterialTheme.field.hairline)
-                    InfoRow(field.label, field.value, labelWidth)
-                }
+    val labelWidth = 120.dp
+    SelectionContainer {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(ExplorerShapes.control)
+                .border(1.dp, MaterialTheme.field.hairline, ExplorerShapes.control),
+        ) {
+            fields.forEachIndexed { index, field ->
+                if (index > 0) HorizontalDivider(color = MaterialTheme.field.hairline)
+                InfoRow(field.label, field.value, labelWidth)
             }
         }
     }

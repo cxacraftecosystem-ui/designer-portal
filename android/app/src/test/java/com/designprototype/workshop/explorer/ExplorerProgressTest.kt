@@ -141,7 +141,7 @@ class ExplorerProgressTest {
         val running = job(total = 7322 * mb).copy(current = "W/Interview_Take-1.mp4", currentBytes = 266 * mb, currentTotal = 701 * mb, speedBps = 6 * mb)
         assertEquals(266f / 701f, running.currentFraction!!, 0.0001f)
         assertNull(job().currentFraction)
-        assertEquals("Interview_Take-1.mp4 · 6.0 MB/s", ExplorerNotifications.currentText(running))
+        assertEquals("Interview_Take-1.mp4 · 6 MB/s", ExplorerNotifications.currentText(running))
     }
 
     @Test fun `finished notifications say what was saved, and failed ones name the file`() {

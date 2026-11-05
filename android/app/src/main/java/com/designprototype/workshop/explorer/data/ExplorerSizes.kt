@@ -80,7 +80,7 @@ object ExplorerBytes {
 
     private fun parts(size: Long): Pair<String, String> {
         if (size < 1024) return "$size" to "B"
-        if (size < 100L * 1024) return String.format(Locale.ROOT, "%.1f", size / 1024.0) to "KB"
+        if (size < 100L * 1024) return String.format(Locale.ROOT, "%.1f", size / 1024.0).removeSuffix(".0") to "KB"
         val units = listOf("MB", "GB", "TB")
         var value = size.toDouble() / (1024.0 * 1024.0)
         var unit = 0
@@ -90,7 +90,8 @@ object ExplorerBytes {
         }
         val text = when {
             value >= 100 -> String.format(Locale.ROOT, "%.0f", value)
-            unit == 0 || value >= 10 -> String.format(Locale.ROOT, "%.1f", value)
+            unit == 0 -> String.format(Locale.ROOT, "%.1f", value).removeSuffix(".0")
+            value >= 10 -> String.format(Locale.ROOT, "%.1f", value)
             else -> String.format(Locale.ROOT, "%.2f", value).let { if (it.endsWith("0")) it.dropLast(1) else it }
         }
         return text to units[unit]

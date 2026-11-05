@@ -273,17 +273,17 @@ class ScreensShotsTest {
         folderShot("WorkshopOverview", "tablet", tablet = true, start = ScreenBoards.WORKSHOP) { scrollTo("explorer.overview") }
     }
 
-    @Test fun statesLoading() = folderShot("States", "android-loading", mode = ScreenBoards.Mode.HANG)
+    @Test fun statesLoading() = folderShot("States", "loading", mode = ScreenBoards.Mode.HANG)
 
-    @Test fun statesLoadingDark() = folderShot("States", "android-loading-dark", dark = true, mode = ScreenBoards.Mode.HANG)
+    @Test fun statesLoadingDark() = folderShot("States", "loading-dark", dark = true, mode = ScreenBoards.Mode.HANG)
 
-    @Test fun statesEmpty() = folderShot("States", "android-empty", start = ScreenBoards.EMPTY) { scrollTo("explorer.empty") }
+    @Test fun statesEmpty() = folderShot("States", "empty", start = ScreenBoards.EMPTY) { scrollTo("explorer.empty") }
 
-    @Test fun statesEmptyDark() = folderShot("States", "android-empty-dark", dark = true, start = ScreenBoards.EMPTY) { scrollTo("explorer.empty") }
+    @Test fun statesEmptyDark() = folderShot("States", "empty-dark", dark = true, start = ScreenBoards.EMPTY) { scrollTo("explorer.empty") }
 
-    @Test fun statesError() = folderShot("States", "android-error", mode = ScreenBoards.Mode.FAIL) { waitTag("explorer.error") }
+    @Test fun statesError() = folderShot("States", "error", mode = ScreenBoards.Mode.FAIL) { waitTag("explorer.error") }
 
-    @Test fun statesErrorDark() = folderShot("States", "android-error-dark", dark = true, mode = ScreenBoards.Mode.FAIL) { waitTag("explorer.error") }
+    @Test fun statesErrorDark() = folderShot("States", "error-dark", dark = true, mode = ScreenBoards.Mode.FAIL) { waitTag("explorer.error") }
 
     private fun offline(dark: Boolean, variant: String) {
         val owner = ExplorerPortal.userId(app)
@@ -295,9 +295,9 @@ class ScreensShotsTest {
         shoot("States", variant, dark = dark, prepare = { waitTag("explorer.offline.card") }) { folder(api) }
     }
 
-    @Test fun statesOffline() = offline(false, "android-offline")
+    @Test fun statesOffline() = offline(false, "offline")
 
-    @Test fun statesOfflineDark() = offline(true, "android-offline-dark")
+    @Test fun statesOfflineDark() = offline(true, "offline-dark")
 
     @Composable
     private fun sheetFrame(scrim: Boolean, top: @Composable () -> Unit = {}, content: @Composable () -> Unit) {
@@ -377,5 +377,5 @@ class ScreensShotsTest {
 
     @Test fun searchBothDark() = shoot("SearchBoth", "dark", dark = true, prepare = { both() }) { search("indigo vat", ScreenBoards.SEARCH_BOTH) }
 
-    @Test fun statesNoResults() = shoot("States", "android-noresults", prepare = { waitTag("data.search.none") }) { search("indgo", ScreenBoards.SEARCH_NONE) }
+    @Test fun statesNoResults() = shoot("States", "noresults", prepare = { waitTag("data.search.none") }) { search("indgo", ScreenBoards.SEARCH_NONE) }
 }

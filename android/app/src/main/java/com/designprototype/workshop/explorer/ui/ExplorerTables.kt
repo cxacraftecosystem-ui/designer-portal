@@ -275,8 +275,8 @@ internal fun TablesScreen(
             IconButton(onClick = onBack, modifier = Modifier.size(44.dp).testTag("explorer.tables.back")) {
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = ExplorerText.back, tint = MaterialTheme.colorScheme.onBackground, modifier = Modifier.size(26.dp))
             }
-            Text(ExplorerText.tables, fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.weight(1f).semantics { heading() })
-            Text(folder, fontSize = 12.sp, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End, modifier = Modifier.widthIn(max = 180.dp))
+            Text(ExplorerText.tables, style = MaterialTheme.typography.titleLarge, lineHeight = 26.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.weight(1f).semantics { heading() })
+            Text(folder, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End, modifier = Modifier.widthIn(max = 180.dp))
         }
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth().testTag("explorer.tree"),
@@ -321,7 +321,7 @@ internal fun ExplorerTables(
         state.busySeconds?.let { seconds ->
             Text(
                 ExplorerText.busy(seconds),
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }.testTag("explorer.tables.busy"),
             )
@@ -329,7 +329,7 @@ internal fun ExplorerTables(
         if (state.refreshing && state.busySeconds == null) LoadingLine(ExplorerUiText.refreshing)
         if (state.refreshFailed) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(ExplorerText.tablesFailed, fontSize = 12.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
+                Text(ExplorerText.tablesFailed, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
                 ExplorerLinkButton(ExplorerText.retry, onClick = state::retry)
             }
         }
@@ -353,7 +353,7 @@ internal fun ExplorerTables(
                     }
                     val shown = rows.size
                     val total = ExplorerTablesState.count(sheet, words.isNotBlank())
-                    if (total > shown) Text(ExplorerUiText.showingRows(shown, total), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                    if (total > shown) Text(ExplorerUiText.showingRows(shown, total), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                     if (buttons) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ExplorerSecondaryButton(ExplorerUiText.thisTable, onClick = { onCsv(sheet.name) }, enabled = online, modifier = Modifier.weight(1f).testTag("explorer.csv.${sheet.name}"))
@@ -374,7 +374,7 @@ private fun TableSearch(state: ExplorerTablesState, sheet: ExplorerSheet?, showC
         value = state.query,
         onValueChange = state::search,
         singleLine = true,
-        textStyle = TextStyle(fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface),
+        textStyle = TextStyle(style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }.testTag("explorer.tables.search"),
         decorationBox = { field ->
@@ -385,13 +385,13 @@ private fun TableSearch(state: ExplorerTablesState, sheet: ExplorerSheet?, showC
             ) {
                 Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
                 Box(Modifier.weight(1f)) {
-                    if (state.query.isEmpty()) Text(ExplorerUiText.searchRows, fontSize = 15.sp, color = MaterialTheme.field.placeholder)
+                    if (state.query.isEmpty()) Text(ExplorerUiText.searchRows, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.field.placeholder)
                     field()
                 }
                 if (showCount && sheet != null) {
                     Text(
                         ExplorerUiText.matchCount(ExplorerTablesState.count(sheet, true), sheet.totalRows ?: sheet.rows.size),
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(end = if (state.query.isEmpty()) 8.dp else 0.dp).testTag("explorer.tables.count"),
                     )
@@ -419,11 +419,11 @@ private fun SheetPicker(sheets: List<ExplorerSheet>, current: ExplorerSheet, sea
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text(ExplorerUiText.sheet, fontSize = 11.sp, lineHeight = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(ExplorerUiText.sheet, style = MaterialTheme.typography.labelSmall, lineHeight = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
                     buildAnnotatedString {
-                        withStyle(SpanStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)) { append(current.name) }
-                        withStyle(SpanStyle(fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)) { append(" · ${ExplorerText.rows(current.totalRows ?: current.rows.size)}") }
+                        withStyle(SpanStyle(fontSize = MaterialTheme.typography.bodyLarge.fontSize, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)) { append(current.name) }
+                        withStyle(SpanStyle(fontSize = MaterialTheme.typography.bodyMedium.fontSize, color = MaterialTheme.colorScheme.onSurfaceVariant)) { append(" · ${ExplorerText.rows(current.totalRows ?: current.rows.size)}") }
                     },
                     lineHeight = 20.sp,
                     maxLines = 2,
@@ -450,7 +450,7 @@ private fun SheetPicker(sheets: List<ExplorerSheet>, current: ExplorerSheet, sea
                 onClick = { onPick(s.name) },
                 ink = true,
                 minHeight = 32.dp,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 role = Role.RadioButton,
                 modifier = Modifier.testTag("explorer.tables.pill.${s.name}"),
             )
@@ -478,13 +478,13 @@ private fun RowCard(headers: List<String>, row: List<kotlinx.serialization.json.
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 markWords(cells.firstOrNull().orEmpty().ifBlank { "—" }, query, markBg, markFg),
-                fontSize = 15.sp,
+                style = MaterialTheme.typography.bodyLarge,
                 lineHeight = 21.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f),
             )
-            number?.let { Text(ExplorerUiText.row(it), fontSize = 11.sp, lineHeight = 21.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            number?.let { Text(ExplorerUiText.row(it), style = MaterialTheme.typography.labelSmall, lineHeight = 21.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
         if (open) {
             val shown = if (every) rest else rest.take(4)
@@ -494,8 +494,8 @@ private fun RowCard(headers: List<String>, row: List<kotlinx.serialization.json.
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         pair.forEach { (label, value) ->
                             Column(Modifier.weight(1f)) {
-                                Text(label, fontSize = 11.sp, lineHeight = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(markWords(value, query, markBg, markFg), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurface)
+                                Text(label, style = MaterialTheme.typography.labelSmall, lineHeight = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(markWords(value, query, markBg, markFg), style = MaterialTheme.typography.bodyMedium, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurface)
                             }
                         }
                         repeat(perRow - pair.size) { Spacer(Modifier.weight(1f)) }
@@ -507,7 +507,7 @@ private fun RowCard(headers: List<String>, row: List<kotlinx.serialization.json.
             }
         } else {
             val summary = rest.map { it.second }.take(4).joinToString(" · ")
-            if (summary.isNotBlank()) Text(markWords(summary, query, markBg, markFg), fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.field.body, maxLines = if (large) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis)
+            if (summary.isNotBlank()) Text(markWords(summary, query, markBg, markFg), style = MaterialTheme.typography.bodyMedium, lineHeight = 18.sp, color = MaterialTheme.field.body, maxLines = if (large) Int.MAX_VALUE else 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }

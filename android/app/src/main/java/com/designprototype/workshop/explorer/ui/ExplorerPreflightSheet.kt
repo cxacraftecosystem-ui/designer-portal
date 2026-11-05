@@ -124,8 +124,8 @@ private fun PreflightRow(modifier: Modifier = Modifier, container: Color = Mater
 @Composable
 private fun RowText(title: String, note: String, modifier: Modifier, titleColor: Color = MaterialTheme.colorScheme.onSurface, noteColor: Color = MaterialTheme.colorScheme.onSurfaceVariant, noteTag: String? = null) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(title, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Bold, color = titleColor)
-        Text(note, fontSize = 12.sp, lineHeight = 16.sp, color = noteColor, modifier = if (noteTag != null) Modifier.testTag(noteTag) else Modifier)
+        Text(title, style = MaterialTheme.typography.bodyMedium, lineHeight = 19.sp, fontWeight = FontWeight.Bold, color = titleColor)
+        Text(note, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp, color = noteColor, modifier = if (noteTag != null) Modifier.testTag(noteTag) else Modifier)
     }
 }
 
@@ -148,10 +148,10 @@ internal fun PreflightBody(
         modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 8.dp, bottom = 20.dp).testTag("explorer.preflight"),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(PreflightText.title(title), fontFamily = MaterialTheme.typography.titleLarge.fontFamily, fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.semantics { heading() })
+        Text(PreflightText.title(title), style = MaterialTheme.typography.titleLarge, lineHeight = 26.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.semantics { heading() })
         Text(
             PreflightText.headline(if (smaller && skip != null) skip.files else plan.files, ExplorerBytes.format(bytes), PreflightText.minutes(if (smaller && skip != null) skip.seconds else plan.seconds), plan.metered),
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodyMedium,
             lineHeight = 18.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -173,8 +173,8 @@ internal fun PreflightBody(
             val ok = plan.enoughSpace || smaller
             val tone = explorerTone(if (ok) ExplorerStatus.SAVED else ExplorerStatus.FAILED)!!
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(PreflightText.storage, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
-                Text(if (ok) PreflightText.enough else PreflightText.notEnough, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = tone.accent)
+                Text(PreflightText.storage, style = MaterialTheme.typography.bodyMedium, lineHeight = 19.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+                Text(if (ok) PreflightText.enough else PreflightText.notEnough, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = tone.accent)
             }
             val free = plan.freeBytes
             if (free != null && bytes > 0) {
@@ -191,15 +191,15 @@ internal fun PreflightBody(
             }
             Text(
                 PreflightText.storageLine(ExplorerBytes.format(bytes), plan.freeBytes?.let { ExplorerBytes.format((it - bytes).coerceAtLeast(0)) }),
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodySmall,
                 lineHeight = 16.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         PreflightRow {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(PreflightText.saveTo, fontSize = 14.sp, lineHeight = 19.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                Text(plan.location, fontSize = 12.sp, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("explorer.preflight.location"))
+                Text(PreflightText.saveTo, style = MaterialTheme.typography.bodyMedium, lineHeight = 19.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                Text(plan.location, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("explorer.preflight.location"))
                 if (onResetFolder != null) {
                     ExplorerLinkButton(PreflightText.useDownloads, onClick = onResetFolder, modifier = Modifier.heightIn(min = 40.dp).testTag("explorer.preflight.reset"))
                 }
@@ -215,7 +215,7 @@ internal fun PreflightBody(
             }
         }
         val notNow: @Composable (Modifier) -> Unit = { m ->
-            ExplorerSecondaryButton(PreflightText.notNow, onClick = onDismiss, minHeight = 52.dp, fontSize = 15.sp, shape = ExplorerShapes.inner, modifier = m.testTag("explorer.preflight.cancel"))
+            ExplorerSecondaryButton(PreflightText.notNow, onClick = onDismiss, minHeight = 52.dp, style = MaterialTheme.typography.bodyLarge, shape = ExplorerShapes.inner, modifier = m.testTag("explorer.preflight.cancel"))
         }
         val start: @Composable (Modifier) -> Unit = { m ->
             ExplorerPrimaryButton(
@@ -223,7 +223,7 @@ internal fun PreflightBody(
                 onClick = { onStart(wait, if (smaller) skip?.include else null) },
                 enabled = plan.enoughSpace || smaller,
                 minHeight = 52.dp,
-                fontSize = 15.sp,
+                style = MaterialTheme.typography.bodyLarge,
                 bold = true,
                 shape = ExplorerShapes.inner,
                 modifier = m.testTag("explorer.preflight.start"),
@@ -238,6 +238,6 @@ internal fun PreflightBody(
                 start(Modifier.weight(2f))
             }
         }
-        Text(PreflightText.shownWhen, fontSize = 12.sp, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        Text(PreflightText.shownWhen, style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
     }
 }
