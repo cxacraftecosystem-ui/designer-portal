@@ -949,7 +949,7 @@ function LayerRow({
       </div>
 
       {node.children.length ? (
-        <ul className="mt-3 grid gap-3 border-l-2 border-line-200 pl-3">
+        <ul className="mt-3 grid gap-3 rounded-lg bg-surface-50 p-3">
           {node.children.map((child) => (
             <LayerRow
               key={child.layer.id}
