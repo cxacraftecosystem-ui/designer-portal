@@ -51,7 +51,7 @@ def shared_files(root: Path) -> list[str]:
     package = sorted(
         path.relative_to(root).as_posix()
         for path in (root / PACKAGE).rglob("*")
-        if path.is_file() and "__pycache__" not in path.parts and path.suffix in (".py", ".json")
+        if path.is_file() and "__pycache__" not in path.parts and path.suffix in (".py", ".json", ".ttf", ".txt")
     )
     extra = [rel for rel in SHARED_EXTRA if (root / rel).is_file()]
     return package + extra

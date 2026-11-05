@@ -1366,7 +1366,7 @@ The report is built by `backend/app/services/datareport/` (byte-identical in bot
 
 ## Field Repository
 
-95 models, 1180 fields. Generated from `backend/prisma/schema.prisma` by `python scripts/sync_data_report.py --audit`; `backend/tests/test_report_coverage.py` fails when this file or the mapping falls behind.
+97 models, 1218 fields. Generated from `backend/prisma/schema.prisma` by `python scripts/sync_data_report.py --audit`; `backend/tests/test_report_coverage.py` fails when this file or the mapping falls behind.
 
 ### Models and fields
 
@@ -1530,6 +1530,8 @@ The report is built by `backend/app/services/datareport/` (byte-identical in bot
 - **DataBundle**: excluded. Download-bundle links created for reports.
 - **DataFolderVisit**: excluded. When each account last opened a folder.
 - **DataReportPreference**: excluded. Each account's remembered Report options.
+- **DataReportShare**: excluded. Share-link and visitor metadata, not report data.
+- **DataReportShareView**: excluded. Share-link and visitor metadata, not report data.
 - **DataSavedView**: excluded. Saved views of the data explorer.
 - **EmailMessage**: excluded. Outgoing e-mail queue.
 - **EntryComment**
@@ -2187,6 +2189,7 @@ The report is built by `backend/app/services/datareport/` (byte-identical in bot
   - `sessionsValidFrom`: excluded. Account security and permission settings, managed on the Users page, not collected data.
   - `createdAt`: People › Created on
   - `updatedAt`: People › Updated on
+  - `dataReportSchedules`: excluded. Account security and permission settings, managed on the Users page, not collected data.
 - **UserAiCredential**: excluded. Secret or credential material: never leaves the server.
 - **UserPreference**: excluded. Per-account display and e-mail preferences.
 - **WeeklyDigest**: excluded. Weekly digest e-mails to accounts.
