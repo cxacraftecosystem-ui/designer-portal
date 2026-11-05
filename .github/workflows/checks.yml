@@ -73,17 +73,8 @@ jobs:
         env:
           PEER: cxacraftecosystem-ui/documentation-portal
           BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: |
-          set -euo pipefail
-          ref=main
-          if [ "$BRANCH" != "main" ] && git ls-remote --exit-code --heads "https://github.com/$PEER.git" "$BRANCH" >/dev/null; then
-            ref="$BRANCH"
-          fi
-          dest="$(dirname "$GITHUB_WORKSPACE")/${PEER#*/}"
-          rm -rf "$dest"
-          git clone --quiet --depth 1 --branch "$ref" "https://github.com/$PEER.git" "$dest"
-          { echo "CROSS_PORTAL_PEER_REPO=$dest"; echo "SIBLING_REPO=$dest"; } >> "$GITHUB_ENV"
-          echo "Shared files are compared with $PEER@$ref ($(git -C "$dest" rev-parse --short HEAD))."
+          PEER_ENV_NAMES: CROSS_PORTAL_PEER_REPO SIBLING_REPO
+        run: bash scripts/ci/peer_checkout.sh
 
       - name: Install LibreOffice for the report round-trip test
         run: |
@@ -177,17 +168,8 @@ jobs:
         env:
           PEER: cxacraftecosystem-ui/documentation-portal
           BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: |
-          set -euo pipefail
-          ref=main
-          if [ "$BRANCH" != "main" ] && git ls-remote --exit-code --heads "https://github.com/$PEER.git" "$BRANCH" >/dev/null; then
-            ref="$BRANCH"
-          fi
-          dest="$(dirname "$GITHUB_WORKSPACE")/${PEER#*/}"
-          rm -rf "$dest"
-          git clone --quiet --depth 1 --branch "$ref" "https://github.com/$PEER.git" "$dest"
-          { echo "CROSS_PORTAL_PEER_REPO=$dest"; echo "SIBLING_REPO=$dest"; } >> "$GITHUB_ENV"
-          echo "Shared files are compared with $PEER@$ref ($(git -C "$dest" rev-parse --short HEAD))."
+          PEER_ENV_NAMES: CROSS_PORTAL_PEER_REPO SIBLING_REPO
+        run: bash scripts/ci/peer_checkout.sh
 
       - name: Unit specs
         run: npm run test:unit
@@ -678,7 +660,7 @@ jobs:
   backend-integration:
     name: Backend integration tests
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: backend
@@ -742,17 +724,8 @@ jobs:
         env:
           PEER: cxacraftecosystem-ui/documentation-portal
           BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: |
-          set -euo pipefail
-          ref=main
-          if [ "$BRANCH" != "main" ] && git ls-remote --exit-code --heads "https://github.com/$PEER.git" "$BRANCH" >/dev/null; then
-            ref="$BRANCH"
-          fi
-          dest="$(dirname "$GITHUB_WORKSPACE")/${PEER#*/}"
-          rm -rf "$dest"
-          git clone --quiet --depth 1 --branch "$ref" "https://github.com/$PEER.git" "$dest"
-          { echo "CROSS_PORTAL_PEER_REPO=$dest"; echo "SIBLING_REPO=$dest"; } >> "$GITHUB_ENV"
-          echo "Shared files are compared with $PEER@$ref ($(git -C "$dest" rev-parse --short HEAD))."
+          PEER_ENV_NAMES: CROSS_PORTAL_PEER_REPO SIBLING_REPO
+        run: bash scripts/ci/peer_checkout.sh
 
       - name: Run the full suite against the database
         run: |
@@ -770,7 +743,7 @@ jobs:
   questionnaire-parity:
     name: Questionnaire parity (both portals)
     runs-on: ubuntu-26.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: backend
@@ -811,17 +784,8 @@ jobs:
         env:
           PEER: cxacraftecosystem-ui/documentation-portal
           BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: |
-          set -euo pipefail
-          ref=main
-          if [ "$BRANCH" != "main" ] && git ls-remote --exit-code --heads "https://github.com/$PEER.git" "$BRANCH" >/dev/null; then
-            ref="$BRANCH"
-          fi
-          dest="$(dirname "$GITHUB_WORKSPACE")/${PEER#*/}"
-          rm -rf "$dest"
-          git clone --quiet --depth 1 --branch "$ref" "https://github.com/$PEER.git" "$dest"
-          { echo "CROSS_PORTAL_PEER_REPO=$dest"; echo "SIBLING_REPO=$dest"; } >> "$GITHUB_ENV"
-          echo "Shared files are compared with $PEER@$ref ($(git -C "$dest" rev-parse --short HEAD))."
+          PEER_ENV_NAMES: CROSS_PORTAL_PEER_REPO SIBLING_REPO
+        run: bash scripts/ci/peer_checkout.sh
 
       - name: The manifest, the schema fragment and the feature registry, in both portals
         run: |
@@ -924,6 +888,26 @@ jobs:
 
       - name: Backup freshness verdict against fixed clocks
         run: shellcheck -x scripts/ci/backup_freshness.sh scripts/ci/test_backup_freshness.sh && bash scripts/ci/test_backup_freshness.sh
+
+      - name: Peer checkout against a local peer that pushes late, moves on, or differs
+        run: shellcheck -x scripts/ci/peer_checkout.sh scripts/ci/test_peer_checkout.sh && bash scripts/ci/test_peer_checkout.sh
+
+      - name: Android publish gate against stubbed deploy runs and /health
+        run: shellcheck -x scripts/ci/await_backend_release.sh scripts/ci/test_await_backend_release.sh && bash scripts/ci/test_await_backend_release.sh
+
+  shared-manifests:
+    name: Shared-file manifests
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Every shared file matches this repository's manifests
+        run: |
+          set -euo pipefail
+          python3 scripts/sync_data_report.py --check
+          python3 scripts/sync_questionnaire.py --check
 
   comment-stripper:
     name: Comment stripper
