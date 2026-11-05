@@ -29,9 +29,9 @@ import type { QueryParams } from "@/lib/dataExplorer/wire";
 const DAY_OPTIONS = SHARE_DAYS.map((days) => ({ value: String(days), label: daysLabel(days) }));
 
 function message(error: unknown, fallback: string): string {
-  if (error instanceof ApiError && error.message.trim() && error.status < 500) return error.message;
-  if (error instanceof ApiError && error.status === 503) return "Reports are busy. Try again in a moment.";
-  return fallback;
+  if (!(error instanceof ApiError)) return fallback;
+  const detail = error.payload && typeof error.payload === "object" ? (error.payload as { detail?: unknown }).detail : undefined;
+  return detail !== undefined && error.message.trim() ? error.message : fallback;
 }
 
 function ViewsList({ shareId }: { shareId: string }) {
