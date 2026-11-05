@@ -166,6 +166,7 @@ export function DataSearchPanel({ onReveal, onPreview }: { onReveal: (path: stri
   const [attempt, setAttempt] = useState(0);
   const [locating, setLocating] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const workshops = useOptions("/workshops", (row: Workshop) => ({ value: row.id, label: workshopDisplayTitle(row) }));
@@ -323,8 +324,17 @@ export function DataSearchPanel({ onReveal, onPreview }: { onReveal: (path: stri
           <button type="submit" className="field-button min-h-12 px-5 max-sm:hidden">
             Search
           </button>
+          <button
+            type="button"
+            className="field-button-secondary min-h-12 px-3 sm:hidden"
+            aria-expanded={filtersOpen}
+            aria-controls="data-search-filters"
+            onClick={() => setFiltersOpen((value) => !value)}
+          >
+            {activeFilters(state) ? `Filters · ${activeFilters(state)}` : "Filters"}
+          </button>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div id="data-search-filters" className={`flex-wrap items-center gap-2 ${filtersOpen ? "flex" : "hidden sm:flex"}`}>
           {canBoth ? (
             <div role="radiogroup" aria-label="Where" className="flex rounded-full border border-line-200 bg-surface-50 p-0.5">
               {(["local", "all"] as Scope[]).map((scope) => (

@@ -100,9 +100,11 @@ function fileRow(page: Page, name: string): Locator {
 
 async function rowAction(page: Page, name: string, action: string | RegExp): Promise<Locator> {
   const row = fileRow(page, name);
-  const more = row.getByRole("button", { name: `More for ${name}` });
-  if (await more.isVisible()) await more.click();
-  return row.getByRole("button", { name: action });
+  await expect(row).toBeVisible();
+  if ((page.viewportSize()?.width ?? 1280) < 640) await row.getByRole("button", { name: `More for ${name}` }).click();
+  const button = row.getByRole("button", { name: action });
+  await button.evaluate((node) => node.scrollIntoView({ block: "center" }));
+  return button;
 }
 
 function tray(page: Page): Locator {
@@ -147,7 +149,7 @@ test.describe("@qf:X1 layout", () => {
           }
           await noSidewaysScroll(page);
           if (size.mobile) {
-            for (const target of [folderDownload(page), page.getByRole("button", { name: /Folders/ }), page.getByRole("treeitem", { name: "Bagru 2026", exact: true })]) {
+            for (const target of [folderDownload(page), page.getByRole("button", { name: /folders/i }), page.getByRole("treeitem", { name: "Bagru 2026", exact: true })]) {
               const box = await target.boundingBox();
               expect(box!.height, "touch target").toBeGreaterThanOrEqual(44);
             }
@@ -325,7 +327,7 @@ test.describe("@qf:X2 sizes before download", () => {
   test("the folder shows its file count and size, and each type its own tile that can be left out", async ({ browser }) => {
     const { context, page } = await openExplorer(browser, { path: "workshops/bagru" });
     try {
-      await expect(page.getByTestId("folder-size")).toContainText(/7 files · \d/);
+      await expect(page.getByTestId("folder-size")).toContainText(/7 files\s*·\s*\d/);
       const tiles = page.getByRole("group", { name: "Include in the download" });
       const videos = tiles.getByRole("button", { name: /Videos.*1 · 87\.9 KB/ });
       await expect(videos).toHaveAttribute("aria-pressed", "true");
