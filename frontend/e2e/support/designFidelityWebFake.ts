@@ -331,7 +331,7 @@ export class DesignFidelityWebFake extends DesignFidelityFake {
       async (route: Route) => {
         const index = Number(new URL(route.request().url()).pathname.replace("/e2e-files/wk-", ""));
         if (index === this.failingFile) return route.fulfill({ status: 404, body: "gone" });
-        if (index >= this.holdFrom) await new Promise<void>((resolve) => this.held.push(resolve));
+        if (index >= this.holdFrom && index < QUEUE_FILES) await new Promise<void>((resolve) => this.held.push(resolve));
         else await new Promise((resolve) => setTimeout(resolve, 6));
         return route.fulfill({ status: 200, contentType: "application/octet-stream", headers: { "accept-ranges": "bytes" }, body: Buffer.alloc(QUEUE_FILE_BYTES, index & 0xff) });
       }
