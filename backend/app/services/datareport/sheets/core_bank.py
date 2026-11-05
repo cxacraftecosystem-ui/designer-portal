@@ -31,6 +31,25 @@ def definition_files() -> list[Path]:
     return sorted(p for p in DATA.glob("*question*.json") if p.is_file())
 
 
+SNAPSHOTS = Path(__file__).resolve().parents[1]
+
+
+def snapshot_file(portal: str) -> Path:
+    return SNAPSHOTS / f"bank_{portal}.json"
+
+
+def dump(rows: tuple[tuple[str, str, str, int, str, str], ...]) -> str:
+    return "[\n" + ",\n".join(json.dumps(list(r), ensure_ascii=False) for r in rows) + "\n]\n"
+
+
+@functools.cache
+def snapshot(portal: str) -> tuple[tuple[str, str, str, int, str, str], ...]:
+    path = snapshot_file(portal)
+    if not path.is_file():
+        return ()
+    return tuple((str(a), str(b), str(c), int(d), str(e), str(f)) for a, b, c, d, e, f in json.loads(path.read_text(encoding="utf-8")))
+
+
 @functools.cache
 def bank() -> tuple[tuple[str, str, str, int, str, str], ...]:
     out: list[tuple[str, str, str, int, str, str]] = []

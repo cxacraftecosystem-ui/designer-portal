@@ -31,6 +31,7 @@ SHARED_EXTRA = (
     "backend/tests/report_fixtures.py",
     "backend/tests/test_report_xlsx.py",
     "backend/tests/test_report_coverage.py",
+    "backend/tests/test_report_i18n.py",
     "backend/tests/test_data_report_parity.py",
     AUDIT,
     "docs/data-explorer/DATA_REPORT.md",
@@ -78,6 +79,18 @@ def write_schema(root: Path, into: Path) -> None:
     target.write_text(schema.dump(parsed), encoding="utf-8", newline="\n")
     schema.load.cache_clear()
     schema.enums.cache_clear()
+    from app.services.datareport.sheets import core_bank
+
+    original = core_bank.DATA
+    core_bank.DATA = root / "backend/app/data"
+    core_bank.bank.cache_clear()
+    try:
+        rows = core_bank.bank()
+    finally:
+        core_bank.DATA = original
+        core_bank.bank.cache_clear()
+    (into / PACKAGE / f"bank_{portal_of(root)}.json").write_text(core_bank.dump(rows), encoding="utf-8", newline="\n")
+    core_bank.snapshot.cache_clear()
 
 
 def write_audit(root: Path) -> None:

@@ -68,6 +68,11 @@ def test_every_questionnaire_definition_is_in_the_question_bank() -> None:
                 assert (path.name, section["code"], question["prompt"]) in rows
 
 
+def test_the_question_bank_snapshot_is_this_portals_definitions() -> None:
+    stored = core_bank.snapshot_file(_here()).read_text(encoding="utf-8").replace("\r\n", "\n")
+    assert stored == core_bank.dump(core_bank.bank()), "a questionnaire definition changed; run `python scripts/sync_data_report.py --schema`"
+
+
 def test_the_audit_document_is_current() -> None:
     assert AUDIT.is_file(), "docs/data-explorer/XLSX_AUDIT.md is missing; run `python scripts/sync_data_report.py --schema`"
     assert AUDIT.read_text(encoding="utf-8").replace("\r\n", "\n") == coverage.document(), (

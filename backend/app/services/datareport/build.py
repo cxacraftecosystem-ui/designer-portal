@@ -116,7 +116,9 @@ def signature(options: contract.ReportOptions, user_id: str | None) -> str:
 
 async def _scope(browser: Any, user: Any, status_filter: str | None) -> Any:
     if portals.current().status_filter:
-        return await browser._scope_for(user, status_filter)
+        normalise = getattr(browser, "data_status", None)
+        wanted = normalise(status_filter) if callable(normalise) else status_filter
+        return await browser._scope_for(user, wanted)
     return await browser._scope_for(user)
 
 

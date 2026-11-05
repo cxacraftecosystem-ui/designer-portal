@@ -106,7 +106,7 @@ def render(portal: str) -> str:
                 lines.append(f"  - `{f.name}`: excluded. {_cell(reason)}")
     lines += ["", "### Questionnaire definitions (Question bank sheet)", ""]
     counts: dict[str, dict[str, int]] = {}
-    for label, code, _title, _n, _prompt, name in core_bank.bank():
+    for label, code, _title, _n, _prompt, name in core_bank.snapshot(portal):
         counts.setdefault(f"{label} (`{name}`)", {}).setdefault(code, 0)
         counts[f"{label} (`{name}`)"][code] += 1
     for label, sections in counts.items():
