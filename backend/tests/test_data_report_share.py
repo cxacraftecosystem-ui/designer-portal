@@ -217,4 +217,5 @@ def test_cover_chart_specs_become_snapshot_charts():
     }
     empty = share_snapshot.chart_of("completionBySection", None, unit="percent")
     assert empty["categories"] == [] and empty["unit"] == "percent"
+    assert empty["title"] == "Artisans complete, by section"
     assert share_snapshot.chart_of("x", SimpleNamespace(title="T", kind="column", categories=[], series=[]))["kind"] == "column"

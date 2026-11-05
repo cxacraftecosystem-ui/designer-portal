@@ -260,9 +260,18 @@ def assemble(
 CHART_KINDS = {"bar": "bar", "column": "column", "line": "column", "pie": "bar", "doughnut": "bar"}
 
 
+CHART_TITLES = {
+    "mediaByType": "Files by type",
+    "recordingsOverTime": "Recordings per day",
+    "completionBySection": "Artisans complete, by section",
+    "transcriptStatus": "Transcripts",
+}
+
+
 def chart_of(key: str, spec: Any, *, unit: str = "count") -> dict[str, Any]:
     if spec is None:
-        return {"key": key, "title": "", "kind": "bar", "categories": [], "series": [], "unit": unit}
+        title = CHART_TITLES.get(key, "")
+        return {"key": key, "title": title, "kind": "bar", "categories": [], "series": [], "unit": unit}
     return {
         "key": key,
         "title": str(spec.title),
