@@ -127,8 +127,8 @@ function transcriptsList(): Json {
     { mediaId: VIDEO_ID, name: "Interview_Dabu-mud-resist_Take-1.mp4", mediaType: "VIDEO" },
     { mediaId: AUDIO_ID, name: "Section-D_Materials_Group-of-3.m4a", mediaType: "AUDIO" },
     { mediaId: "vid-kiln-07", name: "Kiln-firing_wide_07.mov", mediaType: "VIDEO" },
-    { mediaId: "aud-ambient", name: "Ambient_market street.m4a", mediaType: "AUDIO" },
-    { mediaId: "vid-carve-02", name: "Block carving_close-up_02.mp4", mediaType: "VIDEO" },
+    { mediaId: "aud-ambient", name: "Ambient_market-street.m4a", mediaType: "AUDIO" },
+    { mediaId: "vid-carve-02", name: "Block-carving_close-up_02.mp4", mediaType: "VIDEO" },
     ...Array.from({ length: 7 }, (_, index) => ({ mediaId: `aud-g${index}`, name: `Section-${String.fromCharCode(65 + index)}_Answers_${String(index + 1).padStart(2, "0")}.m4a`, mediaType: "AUDIO" }))
   ].map((item) => ({ ...item, path: `${GIRIRAJ}/${item.name}`, hasText: item.mediaId !== "aud-ambient", capturedAt: "2026-09-22T10:00:00Z" }));
   return { items, total: items.length, truncated: false, query: null };
