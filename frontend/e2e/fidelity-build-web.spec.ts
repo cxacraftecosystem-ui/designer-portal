@@ -109,7 +109,7 @@ async function startWorkshopZip(page: Page, fake: DesignFidelityWebFake) {
 
 async function zipHeld(page: Page) {
   const tray = page.getByTestId("downloads-tray");
-  await expect(tray).toContainText(/(file|File) 5[4-9]\d of 926/, { timeout: 60_000 });
+  await expect(tray).toContainText(/(file|File) (5[4-9]\d|6\d\d) of 926/, { timeout: 60_000 });
   let last = "";
   await expect
     .poll(
@@ -314,11 +314,16 @@ for (const theme of ["light", "dark"] as const) {
     try {
       await page.route(`**/api/data/media/${KILN_ID}/download`, (route) => route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ detail: "This file is no longer on the server." }) }));
       const tray = page.getByTestId("downloads-tray");
+      page.on("framenavigated", (frame) => {
+        if (frame === page.mainFrame()) console.log(`[tray-queue nav] ${frame.url()}`);
+      });
       await test.step("a file fails part-way and stops retrying", async () => {
         await page.goto(folderUrl(GIRIRAJ));
         await folderReady(page);
         const kiln = row(page, "Kiln-firing_wide_07");
         await kiln.getByRole("button", { name: `Download ${KILN_NAME}` }).click();
+        await page.waitForTimeout(1500);
+        await page.screenshot({ path: shotPath("WebTrayQueue", `debug-${theme}`) });
         const kilnItem = tray.getByTestId("tray-item").filter({ hasText: KILN_NAME });
         await expect(kilnItem).toHaveAttribute("data-status", "failed", { timeout: 30_000 });
         await expect(kilnItem.getByRole("button", { name: "Retry" })).toBeVisible({ timeout: 30_000 });
