@@ -10,6 +10,10 @@ const TEXT_BUTTON = "min-h-8 rounded-sm px-2.5 text-xs font-semibold transition 
 
 const ORDER: Record<DownloadStatus, number> = { running: 0, waiting: 1, saved: 2, cancelled: 3, failed: 4 };
 
+function baseName(path: string): string {
+  return path.split("/").filter(Boolean).pop() ?? path;
+}
+
 export function trayOrder(items: readonly DownloadItem[]): DownloadItem[] {
   return items
     .map((item, index) => ({ item, index }))
@@ -105,7 +109,7 @@ function Job({ item, downloads, zipRunning }: { item: DownloadItem; downloads: D
             <div className="h-full bg-progress-fill" style={{ width: `${percent ?? 0}%` }} />
           </div>
           <p className="text-xs tabular-nums text-ink-500">{paused ? ["Paused", itemLine(item)].filter(Boolean).join(" · ") : (item.note ?? itemLine(item))}</p>
-          {item.current ? <p className="truncate text-xs text-ink-500">Now: {item.current}</p> : null}
+          {item.current ? <p className="truncate text-xs text-ink-500">Now: {baseName(item.current)}</p> : null}
           {item.failedFiles.length ? <p className="text-xs text-amber-800 dark:text-amber-200">{item.failedFiles.length} {item.failedFiles.length === 1 ? "file" : "files"} will retry.</p> : null}
           <div className="flex gap-1">
             {item.kind !== "report" && item.kind !== "pack" ? (
@@ -231,7 +235,7 @@ function Solo({ item, downloads, minimised, onMinimise }: { item: DownloadItem; 
           </div>
           {item.current || (zip && item.filesTotal !== null) ? (
             <p className="truncate text-xs text-ink-500 max-sm:hidden">
-              {[zip && item.filesTotal !== null && item.filesDone !== null ? `File ${Math.min(item.filesTotal, item.filesDone + 1).toLocaleString("en-IN")} of ${item.filesTotal.toLocaleString("en-IN")}` : null, item.current].filter(Boolean).join(" · ")}
+              {[zip && item.filesTotal !== null && item.filesDone !== null ? `File ${Math.min(item.filesTotal, item.filesDone + 1).toLocaleString("en-IN")} of ${item.filesTotal.toLocaleString("en-IN")}` : null, item.current ? baseName(item.current) : null].filter(Boolean).join(" · ")}
             </p>
           ) : null}
           <p className="rounded-sm bg-amber-100 px-2.5 py-1.5 text-xs text-amber-800 max-sm:hidden dark:bg-amber-950/50 dark:text-amber-200">

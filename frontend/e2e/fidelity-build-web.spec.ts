@@ -21,11 +21,11 @@ function folderUrl(path: string, extra: Record<string, string> = {}): string {
   return `/data?${new URLSearchParams({ path, ...extra }).toString()}`;
 }
 
-async function open(browser: Browser, size: Size, theme: Theme = "light"): Promise<{ context: BrowserContext; page: Page; fake: DesignFidelityWebFake }> {
+async function open(browser: Browser, size: Size, theme: Theme = "light", scale?: number): Promise<{ context: BrowserContext; page: Page; fake: DesignFidelityWebFake }> {
   const mobile = size.width < 900;
   const context = await browser.newContext({
     viewport: size,
-    deviceScaleFactor: size.width <= 600 ? 2 : 1,
+    deviceScaleFactor: scale ?? (size.width <= 600 ? 2 : 1),
     isMobile: mobile,
     hasTouch: mobile,
     colorScheme: theme,
@@ -310,20 +310,15 @@ for (const theme of ["light", "dark"] as const) {
 for (const theme of ["light", "dark"] as const) {
   test(`impl WebTrayQueue${theme === "dark" ? " · dark" : ""}`, async ({ browser }) => {
     test.setTimeout(240_000);
-    const { context, page, fake } = await open(browser, DESKTOP, theme);
+    const { context, page, fake } = await open(browser, DESKTOP, theme, 2);
     try {
       await page.route(`**/api/data/media/${KILN_ID}/download`, (route) => route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ detail: "This file is no longer on the server." }) }));
       const tray = page.getByTestId("downloads-tray");
-      page.on("framenavigated", (frame) => {
-        if (frame === page.mainFrame()) console.log(`[tray-queue nav] ${frame.url()}`);
-      });
       await test.step("a file fails part-way and stops retrying", async () => {
         await page.goto(folderUrl(GIRIRAJ));
         await folderReady(page);
         const kiln = row(page, "Kiln-firing_wide_07");
         await kiln.getByRole("button", { name: `Download ${KILN_NAME}` }).click();
-        await page.waitForTimeout(1500);
-        await page.screenshot({ path: shotPath("WebTrayQueue", `debug-${theme}`) });
         const kilnItem = tray.getByTestId("tray-item").filter({ hasText: KILN_NAME });
         await expect(kilnItem).toHaveAttribute("data-status", "failed", { timeout: 30_000 });
         await expect(kilnItem.getByRole("button", { name: "Retry" })).toBeVisible({ timeout: 30_000 });
