@@ -784,6 +784,8 @@ class MainActivity : ComponentActivity() {
         takeQuestionnaireDelivery(intent)
         takePasswordLink(intent)
         LocalAlerts.takeTap(intent)
+        com.designprototype.workshop.explorer.data.ExplorerDownloadsTap.take(intent)
+        com.designprototype.workshop.explorer.ui.ExplorerViewLinks.take(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -791,6 +793,8 @@ class MainActivity : ComponentActivity() {
         takeQuestionnaireDelivery(intent)
         takePasswordLink(intent, restored = savedInstanceState != null)
         if (savedInstanceState == null) LocalAlerts.takeTap(intent)
+        if (savedInstanceState == null) com.designprototype.workshop.explorer.data.ExplorerDownloadsTap.take(intent)
+        if (savedInstanceState == null) com.designprototype.workshop.explorer.ui.ExplorerViewLinks.take(intent)
         askForLocalNetworkWhenTheApiNeedsIt()
         val tokenStore = TokenStore(applicationContext)
         val repository = WorkshopRepository(ApiClient.create(tokenStore), tokenStore)
@@ -902,7 +906,8 @@ private sealed interface Screen {
     data class View(
         val mode: EntryMode,
         val recordId: String,
-        val from: Screen? = null
+        val from: Screen? = null,
+        val section: String? = null
     ) : Screen
     data class Edit(
         val mode: EntryMode,
@@ -1873,6 +1878,14 @@ private fun HomeScreen(
     LaunchedEffect(notificationOpenRequest) {
         if (notificationOpenRequest > 0L) screen = Screen.Notifications
     }
+    val viewLink by com.designprototype.workshop.explorer.ui.ExplorerViewLinks.requests.collectAsState()
+    LaunchedEffect(viewLink) {
+        if (viewLink != null && screen !is Screen.DataBrowser) screen = Screen.DataBrowser
+    }
+    val downloadsTap by com.designprototype.workshop.explorer.data.ExplorerDownloadsTap.requests.collectAsState()
+    LaunchedEffect(downloadsTap) {
+        if (downloadsTap > com.designprototype.workshop.explorer.ui.ExplorerTapMemory.handled && screen !is Screen.DataBrowser) screen = Screen.DataBrowser
+    }
     val notificationInbox by NotificationState.inbox.collectAsState()
     val unreadNotifications = notificationInbox?.takeIf { it.userId == user.id }?.let { NotificationInboxRules.unread(it) } ?: 0
     var carryForward by remember { mutableStateOf<Prefill?>(null) }
@@ -2403,7 +2416,23 @@ private fun HomeScreen(
                             screen = Screen.View(EntryMode.MEDIA, mediaId, from = Screen.DataBrowser)
                         },
                         startPath = dataBrowserPath,
-                        onPathChange = { dataBrowserPath = it }
+                        onPathChange = { dataBrowserPath = it },
+                        onOpenRemote = { type, id -> screen = Screen.RemoteRecord(type, id, from = Screen.DataBrowser) },
+                        onOpenRecord = { kind, id ->
+                            val mode = recentSubmissionEntryMode(kind)
+                            when {
+                                kind == "designWorkshop" || kind == "design-workshop" -> { workshopOrigins.opened(id, screen); screen = workshopIndex(id) }
+                                mode != null -> screen = Screen.View(mode, id, from = Screen.DataBrowser)
+                                else -> showMessage("This link isn't one the app can open.")
+                            }
+                        },
+                        onOpenSection = { artisanId, sectionKey ->
+                            screen = Screen.View(EntryMode.ARTISAN, artisanId, from = Screen.DataBrowser, section = sectionKey)
+                        },
+                        onRecordNow = { path, name ->
+                            val artisanId = com.designprototype.workshop.ui.dataFolderArtisan(path)
+                            screen = Screen.Create(EntryMode.MEDIA, artisanId?.let { Prefill(artisanId = it, artisanName = name) }, from = Screen.DataBrowser)
+                        }
                     )
 
                     is Screen.Appearance -> AppearanceScreen(
@@ -2609,6 +2638,7 @@ private fun HomeScreen(
                 repository = repository,
                 mode = s.mode,
                 recordId = s.recordId,
+                section = s.section,
                 canUpdate = RecordOpen.mayUpdate(s.mode.name, user),
                 showProvenance = canViewProvenance,
                 canDelete = canDelete,
@@ -6298,6 +6328,7 @@ private fun RecordViewScreen(
     repository: WorkshopRepository,
     mode: EntryMode,
     recordId: String,
+    section: String? = null,
     canUpdate: Boolean,
     showProvenance: Boolean,
     canDelete: Boolean = false,
@@ -6327,7 +6358,8 @@ private fun RecordViewScreen(
         canOverrideCompletion = false,
         showProvenance = showProvenance,
         onError = onError,
-        readOnly = true
+        readOnly = true,
+        focusSection = section
     )
     DwWorkshopRecordType.entries.firstOrNull { it.name == mode.name }?.let { type ->
         RecordCodeSection(repository, type, recordId)
@@ -9901,7 +9933,7 @@ private fun TranscribeNowButton(transcribing: Boolean, hasExisting: Boolean, onC
 }
 
 @Composable
-private fun ArtisanQuestionnaireData(repository: WorkshopRepository, artisanId: String) {
+private fun ArtisanQuestionnaireData(repository: WorkshopRepository, artisanId: String, focusSection: String? = null) {
     val context = LocalContext.current
     var data by remember(artisanId) { mutableStateOf<ArtisanQuestionnaireDto?>(null) }
     var loading by remember(artisanId) { mutableStateOf(true) }
@@ -9910,7 +9942,7 @@ private fun ArtisanQuestionnaireData(repository: WorkshopRepository, artisanId: 
         loading = false
     }
     val loaded = data
-    ArtisanQuestionnairePanel(answers = loaded?.answered ?: emptyList(), loading = loading)
+    ArtisanQuestionnairePanel(answers = loaded?.answered ?: emptyList(), loading = loading, focusSection = focusSection)
     val interviews = loaded?.interviews.orEmpty().filter { it.media.isNotEmpty() || !it.notes.isNullOrBlank() }
     if (interviews.isNotEmpty()) {
         RecordCard(title = "Questionnaire recordings", icon = Icons.Filled.Quiz) {
@@ -11958,7 +11990,8 @@ private fun ViewDataDetail(
     showProvenance: Boolean = false,
     onError: (String) -> Unit,
     readOnly: Boolean = false,
-    onCompleteness: (CompletenessDto?) -> Unit = {}
+    onCompleteness: (CompletenessDto?) -> Unit = {},
+    focusSection: String? = null
 ) {
     val context = LocalContext.current
     var loadFailed by remember(recordId) { mutableStateOf<String?>(null) }
@@ -12012,7 +12045,7 @@ private fun ViewDataDetail(
                 RecordMediaSection(repository, context, mode.linkedRecordType(), recordId, onError, readOnly)
             }
             CompletionMatrixCard(repository = repository, artisanId = recordId, canEdit = canOverrideCompletion, onError = onError)
-            ArtisanQuestionnaireData(repository = repository, artisanId = recordId)
+            ArtisanQuestionnaireData(repository = repository, artisanId = recordId, focusSection = focusSection)
             AadhaarVerifyCard(
                 subject = AadhaarSubject.Artisan(recordId),
                 viewer = repository.cachedUser(),

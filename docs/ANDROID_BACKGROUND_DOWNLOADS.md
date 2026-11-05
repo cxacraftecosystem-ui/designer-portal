@@ -19,18 +19,39 @@ copied with `python scripts/explorer_android.py --to ../documentation-portal` an
 
 ## 1. The screen
 
+As of 0.0.13 (owner-approved boards AndroidFolder, AndroidDownload, AndroidDownloads, AndroidSearch,
+AndroidSelect, AndroidPreview, AndroidAudio, AndroidAudioPlayer, AndroidPreflight, AndroidTablet,
+AndroidLargeText, AndroidDark, PhoneTables, States, SearchBoth, ReportOptions and WorkshopOverview).
+
 | Part | What it does |
 |---|---|
-| Toolbar | record search, then *Organise by* chips (and the review-status chips in Field Repository) |
-| Tree | folders first, then files with a 256 px thumbnail, type and size; *Load more* pages a long folder |
-| File row | tap opens the recording page; *Preview* plays video and audio, shows images and renders PDFs; *Transcript* loads that one transcript on demand; *Save*; *All formats* zips every transcript format |
-| Long press | starts selection; folders and files from several folders download as one zip |
-| Download button | one sheet: *Everything*, *Transcripts, all formats* or *Report (.xlsx)*, with file count and size per type, a mobile-data warning and a free-space check |
-| Downloads | the top-bar icon: progress in bytes with time left, Cancel, Retry, Open, Share and the list of files that failed |
-| Offline | the saved copy of each folder shows at once with an *Offline copy* note, and download buttons are disabled |
+| Toolbar | *Jump to a record* with its filter chips always visible; *Search everything* (top-bar icon, or the keyboard's search key) opens the unified search |
+| Organise by | a card with the grouping chips and the description of the active one (review-status chips too in Field Repository) |
+| Folder card | breadcrumb, record name, `N files · size`, *New since you looked +N*, the first four recorded fields and *Show all N fields* |
+| Download card | seven include chips (Text, Images, Videos, Audio, Transcripts, Documents, Other) with their sizes, the selected size, *Report (.xlsx)* and *Download folder*, and *All transcripts, every format* |
+| Preflight | a sheet before downloads over 500 MB, on mobile data or when space is short: mobile-data warning, *Wait for Wi-Fi* (WorkManager unmetered constraint), storage left after, the save location with *Change* (a folder picked through the system picker, kept with a persisted permission and remembered) or *Use Downloads instead*, and a smaller download without videos |
+| Progress | an on-screen card for the running download: percent, bytes, files N of M, speed and network, time left, the current file with its own bar, a note when files will retry at the end, Pause or Resume, and Cancel; then *Recent files* (saved rows green, failed rows red) with *All N*, the full list of files kept for the job, and the save path; a paused or dropped zip picks up at the next file instead of starting again |
+| Result | *Saved N files* in green with Open and Share, or a red card with Retry |
+| Tabs | Files, Tables and Transcripts; the tab resets to Files only when the folder changes |
+| Files | thumbnails, type, size and whether a transcript exists, with *Save* on the row; a saved file turns green with *Open*, a failed one red with *Retry*; a running save shows its percent and bytes |
+| Tables | row numbers from the full sheet, also while searching; sheet picker, per-sheet counts (matches while searching), a server-side search of every row (debounced, never a rebuild), rows as cards with *All N columns*, *This table (.csv)* and *Full report (.xlsx)*; the state lives outside the list, so scrolling never reopens, closes or reloads it, and a refresh keeps the rows on screen |
+| Saved views | `https://<web host>/data?viewId=<id>` opens the app (app link on the same host as `/set-password`) and restores the folder, review status, search and tab; `?path=` opens a folder |
+| Report options | sheets with counts, answers in Original, English or Both, every row or only the filtered ones, file links, file name, *Remember these choices*, and saved views with *Copy link* |
+| Transcripts | this folder's transcripts with a search inside them, Ready, Translating and Failed pills, a language filter, *Read*, *.docx*, *Try again* on a failed one (a red row), *Transcripts (.zip)* and CSV exports |
+| Preview | video with the transcript following playback (the current line tinted), Transcript, English and Details tabs, previous and next, *Save*, *Transcript (.docx)* and *Share* |
+| Audio | *Clear voices* when the server holds an isolated copy (hidden otherwise); waveform with tap to seek, speed, back and forward 10 s, speaker chips and the transcript following playback; playback continues in a Media3 session (lock screen, notification, headphone buttons, the current line) and a mini player while browsing |
+| Selection | long press; a bar with the count and size, type pills, *Select all N*, a breakdown by type, *Share* and *Download N · size* |
+| Workshop overview | on a workshop folder: totals, review and transcript counts, and artisans least complete first with one square per section; a square opens that artisan's record at that questionnaire section |
+| States | loading skeletons shaped like the page, an empty folder card, an amber offline card with the age of the saved copy, and a red *didn't load* card that retries in 8 s with *Try now* |
+| Tablet | at 840 dp and wider, the tree on the left and the folder, download card and a two-column file grid on the right |
+| Large text | at 200 % text the rows stack, buttons go full width and nothing is cut off |
+| Downloads | the top-bar sheet: running cards with percent and the progress line, paused cards with Resume, saved cards green with Share and Open, failed cards red with Retry; a notification tap opens it |
+| Notifications | `Title · 62%`, the progress line, the current file and speed, with Pause, Cancel and Open; finished `Saved <title>` with Open and Share; failed `<file> didn't download` with Retry and Details |
 
 Folder downloads include everything by default. Field Repository downloads include every review status;
-the status chips change only what the tree lists.
+the status chips change only what the tree lists. Reports and transcript zips are rebuilt by the server,
+so they are never resumed with `Range`, and their bytes are checked for the zip signature before they are
+saved; a busy server is retried with backoff.
 
 ## 2. How a download runs
 
@@ -53,6 +74,7 @@ removes anything a killed process left behind.
 |---|---|
 | `FOREGROUND_SERVICE` | run a long download as a foreground service |
 | `FOREGROUND_SERVICE_DATA_SYNC` | the foreground service type for a user-started transfer (Android 14 and later) |
+| `FOREGROUND_SERVICE_MEDIA_PLAYBACK` | `ExplorerAudioService`, the Media3 session that keeps a recording playing with the screen off |
 | `POST_NOTIFICATIONS` | progress and finished notifications; asked for when the first download starts; downloads run without it |
 | `ACCESS_NETWORK_STATE` | the mobile-data warning, *Wait for Wi-Fi*, and the offline state |
 | `INTERNET` | unchanged |
@@ -100,9 +122,12 @@ notification with Cancel, pressing Home, and the finished notification with Open
 | Test | Covers |
 |---|---|
 | `explorer/ExplorerEngineTest` | zip contents, three tries and a failed-file list, `Range` resume, audio fallback names, space check, cancel clean-up, selection, busy retry, a 20,000-row manifest within 64 MB of heap |
-| `explorer/ExplorerStateTest` | paging, one transcript fetch per open, memory and offline copies, landing, selection, locate, restricted |
+| `explorer/ExplorerStateTest` | paging, one transcript fetch per open, memory and offline copies, landing, selection, locate, restricted, one load per start and per folder, tab reset on folder change, selection size |
+| `explorer/ExplorerTablesStateTest` | tables asked once per folder, debounced row search that keeps the rows on screen, no old rows in a new folder, remembered tables, busy backoff, a failed refresh keeps the rows |
+| `explorer/ExplorerProgressTest`, `explorer/ExplorerPreflightTest` | speed, time left, recent files, pause; when the preflight sheet shows, space left, the smaller download |
 | `explorer/ExplorerPartsTest` | cache file names, sizes, busy countdown, file names from `Content-Disposition`, job list |
-| `explorer/ExplorerScreenUiTest` (emulator) | layout, sizes, multi-select, thumbnails, previews, all-formats zip, transcript on demand, paging |
+| `explorer/ExplorerScreenUiTest` (emulator) | the folder at a glance, sizes on the include chips, selection with size and type pills, thumbnails, preview tabs, all-formats zip, transcript on demand, paging, table cards and search, tables that stay put while scrolling, the language filter, a notification tap opening Downloads, 200 % text, tablet panes |
+| `explorer/ExplorerSheetsUiTest` (emulator) | mobile data and space warnings, Open and Share, per-row spinners, a saved row's Open, the progress card, the preflight sheet |
 | `explorer/ExplorerBackgroundDownloadTest` (emulator) | a zip continues after Home, a file continues after `moveTaskToBack`, Cancel leaves nothing behind |
 
 ## How this document is kept true
