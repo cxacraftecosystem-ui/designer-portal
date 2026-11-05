@@ -627,6 +627,8 @@ model User {
   dataReportPreference            DataReportPreference?     @relation("DataReportPreferenceUser")
   dataFolderVisits                DataFolderVisit[]         @relation("DataFolderVisitUser")
   dataSavedViews                  DataSavedView[]           @relation("DataSavedViewOwner")
+  dataReportShares                DataReportShare[]         @relation("DataReportShareOwner")
+  dataReportShareViews            DataReportShareView[]     @relation("DataReportShareViewer")
 
   @@index([role])
 }
@@ -8670,6 +8672,38 @@ model DataSavedView {
 
   @@index([ownerId, updatedAt])
   @@index([shared, updatedAt])
+}
+
+model DataReportShare {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  ownerId   String
+  path      String
+  title     String
+  options   Json
+  snapshot  Json
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  owner User                  @relation("DataReportShareOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  views DataReportShareView[] @relation("DataReportShareViews")
+
+  @@index([ownerId, createdAt])
+}
+
+model DataReportShareView {
+  id        String   @id @default(cuid())
+  shareId   String
+  viewerId  String?
+  ipHash    String
+  userAgent String?
+  openedAt  DateTime @default(now())
+
+  share  DataReportShare @relation("DataReportShareViews", fields: [shareId], references: [id], onDelete: Cascade)
+  viewer User?           @relation("DataReportShareViewer", fields: [viewerId], references: [id], onDelete: SetNull)
+
+  @@index([shareId, openedAt])
 }
 
 model MediaWaveform {
