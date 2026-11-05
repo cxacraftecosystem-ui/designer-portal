@@ -2421,7 +2421,7 @@ private fun HomeScreen(
                         onOpenRecord = { kind, id ->
                             val mode = recentSubmissionEntryMode(kind)
                             when {
-                                kind == "designWorkshop" || kind == "design-workshop" -> screen = Screen.DesignWorkshopStages(id, from = Screen.DataBrowser)
+                                kind == "designWorkshop" || kind == "design-workshop" -> { workshopOrigins.opened(id, screen); screen = workshopIndex(id) }
                                 mode != null -> screen = Screen.View(mode, id, from = Screen.DataBrowser)
                                 else -> showMessage("This link isn't one the app can open.")
                             }
