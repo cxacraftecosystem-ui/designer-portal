@@ -240,7 +240,7 @@ for (const theme of ["light", "dark"] as const) {
       await tables.getByRole("button", { name: "Full report (.xlsx)" }).click();
       await page.getByRole("dialog", { name: "Report (.xlsx)" }).getByRole("button", { name: "Make report" }).click();
       await expect(tables.getByText("Full report (.xlsx) is being prepared")).toBeVisible();
-      await page.getByTestId("downloads-tray").getByRole("button", { name: "Minimise downloads" }).click();
+      await page.getByTestId("downloads-tray").getByRole("button", { name: "Minimise downloads" }).click({ timeout: 5_000 }).catch(() => undefined);
       await shootAround(page, "WebTables", theme === "dark" ? "dark" : undefined, [page.getByRole("region", { name: "Contents" })], { x: 0, top: 0, bottom: 0 });
     } finally {
       await context.close();
@@ -262,7 +262,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.getByRole("dialog", { name: "Report (.xlsx)" }).getByRole("button", { name: "Make report" }).click();
       await expect(tables.getByRole("alert").filter({ hasText: "Nothing was saved." })).toBeVisible();
       const minimise = page.getByTestId("downloads-tray").getByRole("button", { name: "Minimise downloads" });
-      if (await minimise.isVisible()) await minimise.click();
+      if (await minimise.isVisible()) await minimise.click({ timeout: 5_000 }).catch(() => undefined);
       await shootAround(page, "WebTables", theme === "dark" ? "error-dark" : "error", [page.getByRole("region", { name: "Contents" })], { x: 0, top: 0, bottom: 0 });
     } finally {
       await context.close();

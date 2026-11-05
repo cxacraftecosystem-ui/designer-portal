@@ -234,7 +234,10 @@ export class DesignFidelityWebFake extends DesignFidelityFake {
       const base = super.answer(method, path, query, body);
       const json = base?.json as Json | undefined;
       if (!json) return base;
-      const entries = (json.entries as Json[]).map((entry) => (entry.mediaId === KILN_ID ? { ...entry, name: KILN_NAME, path: `${GIRIRAJ}/${KILN_NAME}`, sizeBytes: KILN_BYTES } : entry));
+      const renamed = (json.entries as Json[]).map((entry) => (entry.mediaId === KILN_ID ? { ...entry, name: KILN_NAME, path: `${GIRIRAJ}/${KILN_NAME}`, sizeBytes: KILN_BYTES } : entry));
+      const kiln = renamed.filter((entry) => entry.mediaId === KILN_ID);
+      const rest = renamed.filter((entry) => entry.mediaId !== KILN_ID);
+      const entries = [...rest.slice(0, 8), ...kiln, ...rest.slice(8)];
       return { status: 200, json: { ...json, entries, info: json.info ? { ...(json.info as Json), record: { kind: "artisan", id: "a-giriraj" } } : null } };
     }
     if (path === "/data/stats" && method === "GET" && at === GIRIRAJ) {
