@@ -139,6 +139,19 @@ def test_sheet_choice_keeps_only_the_chosen_sheets() -> None:
     assert "Media" not in names and "Workshops" not in names
 
 
+def test_a_consent_refused_recording_shows_no_words() -> None:
+    ctx = rf.context()
+    for m in ctx.material["records"]["media"]:
+        if m.id == "m0":
+            m.transcriptWithheld = True
+    payload = asyncio.run(build.render(ctx))
+    ws = _book(payload)["Transcripts"]
+    header = _header(ws)
+    mine = [r for r in _rows(ws)[writer.TOP + 1 :] if r[0] == "talk-0.m4a"]
+    assert mine and all(not r[header.index("Text")] for r in mine)
+    assert all(str(r[header.index("Status")]).startswith("Withheld") for r in mine)
+
+
 def test_secrets_never_reach_the_workbook() -> None:
     payload, _ctx = _render()
     with zipfile.ZipFile(io.BytesIO(payload)) as z:

@@ -422,6 +422,8 @@ async def load_store(ctx: ReportContext, db: Any) -> Store:
                 for model, name in load.fields:
                     wanted.extend(str(v) for v in (_value(r, name) for r in store.rows.get(model, ())) if v)
                 found = await _find(db, table.model, "id", wanted)
+            if table.transcript and store.withheld:
+                found = [r for r in found if str(_value(r, "mediaFileId") or "") not in store.withheld]
             store.add(table.model, found)
     await _load_users(ctx, db, store)
     return store
