@@ -11,6 +11,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.widthIn
@@ -1169,7 +1170,7 @@ fun ExplorerScreen(
 
 @Composable
 private fun DownloadsButton(count: Int, size: Dp, onClick: () -> Unit) {
-    Box(Modifier.size(size + 8.dp), contentAlignment = Alignment.Center) {
+    Box(Modifier.padding(top = 6.dp, end = 6.dp)) {
         Box(
             Modifier.size(size)
                 .clip(ExplorerShapes.control)
@@ -1184,10 +1185,10 @@ private fun DownloadsButton(count: Int, size: Dp, onClick: () -> Unit) {
         }
         if (count > 0) {
             Box(
-                Modifier.align(Alignment.TopEnd).heightIn(min = 18.dp).widthIn(min = 18.dp).background(MaterialTheme.colorScheme.primary, CircleShape).padding(horizontal = 4.dp),
+                Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-6).dp).heightIn(min = 18.dp).widthIn(min = 18.dp).background(MaterialTheme.colorScheme.primary, CircleShape).padding(horizontal = 4.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("$count", style = MaterialTheme.typography.labelSmall, lineHeight = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+                Text("$count", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
             }
         }
     }
@@ -1219,16 +1220,18 @@ private fun TopBar(
             IconButton(onClick = onBack, modifier = Modifier.size(44.dp).testTag("explorer.back")) {
                 Icon(Icons.Filled.Close, contentDescription = ExplorerUiText.stopSelecting, tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
             }
+            val large = LocalDensity.current.fontScale >= 1.5f
             Column(Modifier.weight(1f)) {
                 Text(ExplorerText.selected(selectedCount), style = MaterialTheme.typography.titleLarge, lineHeight = 22.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.semantics { heading() })
                 Text(listOfNotNull(selectedSize, ExplorerUiText.selectHint).joinToString(" · "), style = MaterialTheme.typography.bodySmall, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (large) ExplorerLinkButton(ExplorerUiText.selectAll(selectableCount), onClick = onSelectAll, modifier = Modifier.heightIn(min = 44.dp).testTag("explorer.selectall"))
             }
-            ExplorerLinkButton(ExplorerUiText.selectAll(selectableCount), onClick = onSelectAll, modifier = Modifier.heightIn(min = 40.dp).padding(horizontal = 4.dp).testTag("explorer.selectall"))
+            if (!large) ExplorerLinkButton(ExplorerUiText.selectAll(selectableCount), onClick = onSelectAll, modifier = Modifier.heightIn(min = 40.dp).padding(horizontal = 4.dp).testTag("explorer.selectall"))
         }
         return
     }
     Row(
-        Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 10.dp),
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 10.dp, top = 8.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -1581,7 +1584,7 @@ private fun TreePane(
     Column(
         modifier.background(MaterialTheme.colorScheme.surface).drawBehind { drawLine(line, Offset(size.width - 0.5f, 0f), Offset(size.width - 0.5f, size.height), 1.dp.toPx()) },
     ) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 10.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(ExplorerText.title, style = MaterialTheme.typography.titleLarge, lineHeight = 26.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f).semantics { heading() })
             if (state.loading) FieldCircularProgressIndicator(modifier = Modifier.size(16.dp).padding(end = 4.dp), strokeWidth = 2.dp)
             DownloadsButton(activeDownloads, 40.dp, onDownloads)
