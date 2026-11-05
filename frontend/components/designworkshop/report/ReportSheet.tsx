@@ -340,11 +340,11 @@ function documentStyles(
 .rp-metric-unit { font-size: 9pt; font-weight: 400; color: var(--rp-muted); }
 .rp-metric-label { font-size: calc(var(--rp-base) - 2pt); color: var(--rp-muted); }
 
-.rp-callout { border-left: 1.2pt solid var(--rp-accent-soft); padding: 2.5mm 3mm; background: var(--rp-zebra); }
+.rp-callout { padding: 2.5mm 3mm; background: var(--rp-zebra); border-radius: 2mm; }
 .rp-callout p { margin: 0; }
 .rp-callout-title { font-weight: 700; margin-bottom: 0.8mm !important; }
-.rp-callout-warning { border-left-color: #92400e; background: #fef3c7; }
-.rp-callout-success { border-left-color: #15803d; background: #dcfce7; }
+.rp-callout-warning { background: #fef3c7; }
+.rp-callout-success { background: #dcfce7; }
 
 .rp-signatures { display: grid; grid-template-columns: repeat(auto-fit, minmax(42mm, 1fr)); gap: 8mm; margin-top: 12mm; }
 .rp-signatures > div { display: grid; gap: 0.8mm; }
