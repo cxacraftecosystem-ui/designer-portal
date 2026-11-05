@@ -87,7 +87,7 @@ class ExplorerProgressTest {
 
     @Test fun `the progress line reads bytes, files and time left`() {
         val line = ExplorerText.progressLine(job(done = 4536 * mb, total = 7322 * mb, files = 574, totalFiles = 926, speed = 6 * mb + mb / 5), 0)
-        assertTrue(line, line.startsWith("4.4 GB of 7.2 GB · 574 of 926 files · "))
+        assertTrue(line, line.startsWith("4.43 of 7.15 GB · 574 of 926 files · "))
         assertTrue(line, line.endsWith("min left"))
         assertEquals("6.2 MB/s", ExplorerText.speed(6 * mb + mb / 5))
         assertEquals("3rd Craft Toolkit · 62%", ExplorerText.percentOf("3rd Craft Toolkit", ExplorerProgress.percent(job(done = 62, total = 100))))
@@ -147,7 +147,7 @@ class ExplorerProgressTest {
     @Test fun `finished notifications say what was saved, and failed ones name the file`() {
         val done = job(state = ExplorerJobState.DONE).copy(result = ExplorerResult(saved = 47, total = 47, bytes = 1260 * mb))
         assertEquals("Saved 3rd Craft Toolkit", ExplorerNotifications.finishedTitle(done))
-        assertEquals("47 files · 1.2 GB", ExplorerNotifications.finishedText(done))
+        assertEquals("47 files · 1.23 GB", ExplorerNotifications.finishedText(done))
         val failed = ExplorerJob(
             id = "f",
             request = ExplorerRequest(title = "Kiln-firing_wide_07.mov", fileName = "Kiln-firing_wide_07.mov", single = true),

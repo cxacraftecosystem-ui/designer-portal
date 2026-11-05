@@ -46,6 +46,10 @@ import com.designprototype.workshop.explorer.data.ExplorerSize
 import com.designprototype.workshop.explorer.portal.DesignTheme
 import com.designprototype.workshop.explorer.portal.ExplorerPortal
 import com.designprototype.workshop.explorer.ui.DownloadsSheetBody
+import com.designprototype.workshop.explorer.ui.ExplorerSheetHandle
+import com.designprototype.workshop.explorer.ui.ExplorerShapes
+import com.designprototype.workshop.explorer.ui.audioItem
+import com.designprototype.workshop.explorer.ui.audioLines
 import com.designprototype.workshop.explorer.ui.ExplorerScreen
 import com.designprototype.workshop.explorer.ui.ExplorerTablesMemory
 import com.designprototype.workshop.explorer.ui.PreflightBody
@@ -296,12 +300,13 @@ class ScreensShotsTest {
     @Test fun statesOfflineDark() = offline(true, "android-offline-dark")
 
     @Composable
-    private fun sheetFrame(scrim: Boolean, content: @Composable () -> Unit) {
-        Box(Modifier.fillMaxSize().background(if (scrim) Color.Black.copy(alpha = 0.42f) else MaterialTheme.colorScheme.background), contentAlignment = if (scrim) Alignment.BottomCenter else Alignment.TopCenter) {
-            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.fillMaxWidth().padding(top = 22.dp)) {
-                    Box(Modifier.align(Alignment.CenterHorizontally).requiredSize(32.dp, 4.dp).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(2.dp)))
-                    Box(Modifier.padding(top = 18.dp)) { content() }
+    private fun sheetFrame(scrim: Boolean, top: @Composable () -> Unit = {}, content: @Composable () -> Unit) {
+        Column(Modifier.fillMaxSize().background(if (scrim) Color(0x801E1B2E) else Color(0xFF1B1830))) {
+            Box(Modifier.weight(1f).fillMaxWidth()) { top() }
+            Surface(color = MaterialTheme.colorScheme.surface, shape = ExplorerShapes.sheet, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.fillMaxWidth()) {
+                    ExplorerSheetHandle()
+                    content()
                 }
             }
         }
@@ -310,10 +315,21 @@ class ScreensShotsTest {
     @Composable
     private fun downloads() {
         val now = System.currentTimeMillis()
-        val jobs = listOf(ScreenBoards.running(now), ScreenBoards.saved(now - 1), ScreenBoards.failed(now - 2), ScreenBoards.report(now - 3))
-        sheetFrame(scrim = false) {
+        val running = ScreenBoards.running(now)
+        val saved = ScreenBoards.saved(now - 1)
+        val failed = ScreenBoards.failed(now - 2)
+        val jobs = listOf(running, saved, failed, ScreenBoards.report(now - 3))
+        sheetFrame(scrim = false, top = { NotificationPreviews(running, saved, failed) }) {
             DownloadsSheetBody(jobs = jobs, onCancel = {}, onRetry = {}, onOpen = {}, onShare = {}, onDismissJob = {}, onClearFinished = {})
         }
+    }
+
+    @Test fun androidAudioPlayerBrowsing() {
+        val entry = ScreenBoards.audio
+        val lines = audioLines(DesignBoards.audioTranscript())
+        val item = audioItem(entry, "https://example.invalid/${entry.mediaId}", lines)!!
+        ExplorerAudio.stage(ExplorerAudioState(item = item, playing = true, positionMs = 1_100_000, durationMs = DesignBoards.AUDIO_MS, speed = 1f, line = lines.lastOrNull { it.startMs <= 1_100_000 }))
+        folderShot("AndroidAudioPlayer", "browsing") { scrollTo("explorer.file.i1"); waitTag("explorer.playing.a1") }
     }
 
     @Test fun androidDownloads() = shoot("AndroidDownloads") { downloads() }
@@ -330,7 +346,7 @@ class ScreensShotsTest {
             byKind = ScreenBoards.workshopStats.byType.entries.associate { com.designprototype.workshop.explorer.data.ExplorerKind.ofToken(it.key) to it.value },
             largest = 701L * 1024 * 1024,
         )
-        val plan = ExplorerPreflight.of(size = size, link = ExplorerLink(online = true, metered = true), freeBytes = (28.55 * gb).toLong(), speedBps = 6L * 1024 * 1024, location = "Downloads/DesignWorkshop/3rd-Craft-Toolkit.zip")
+        val plan = ExplorerPreflight.of(size = size, link = ExplorerLink(online = true, metered = true), freeBytes = (28.55 * gb).toLong(), speedBps = 6L * 1024 * 1024, location = "Downloads/DesignWorkshop/3rd-Craft-Toolkit.zip", totalBytes = 51L * gb)
         sheetFrame(scrim = true) {
             PreflightBody(title = "3rd Craft Toolkit", plan = plan, onStart = { _, _ -> }, onDismiss = {}, onChangeFolder = {})
         }
