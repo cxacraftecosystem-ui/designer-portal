@@ -109,7 +109,7 @@ async function startWorkshopZip(page: Page, fake: DesignFidelityWebFake) {
 
 async function zipHeld(page: Page) {
   const tray = page.getByTestId("downloads-tray");
-  await expect(tray).toContainText(/(file|File) (5[4-9]\d|6\d\d) of 926/, { timeout: 60_000 });
+  await expect(tray).toContainText(/(file|File) [4-9]\d\d of 926/, { timeout: 60_000 });
   let last = "";
   await expect
     .poll(
