@@ -42,6 +42,7 @@ fun DataBrowserScreen(
     onOpenRemote: ((type: String, id: String) -> Unit)? = null,
     onRecordNow: ((folderPath: String, folderName: String) -> Unit)? = null,
     onOpenSection: ((artisanId: String, sectionKey: String) -> Unit)? = null,
+    onOpenRecord: ((kind: String, id: String) -> Unit)? = null,
 ) {
     ExplorerScreen(
         onBack = onBack,
@@ -51,6 +52,7 @@ fun DataBrowserScreen(
         startPath = startPath.takeIf { it.isNotBlank() },
         onRecordNow = onRecordNow,
         onOpenSection = onOpenSection,
+        onOpenRecord = onOpenRecord,
         search = { onOpen -> DataRecordSearch(repository, onOpen) },
         searchScreen = { query, onOpenInData, onPlay, onClose ->
             DataUnifiedSearch(

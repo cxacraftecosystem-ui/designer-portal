@@ -99,6 +99,7 @@
                     android:host="designer-repository.vercel.app"
                     android:path="/set-password" />
                 <data android:path="/data" />
+                <data android:pathPrefix="/data/go/" />
             </intent-filter>
 
             <intent-filter>

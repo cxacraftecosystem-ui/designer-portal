@@ -2418,6 +2418,14 @@ private fun HomeScreen(
                         startPath = dataBrowserPath,
                         onPathChange = { dataBrowserPath = it },
                         onOpenRemote = { type, id -> screen = Screen.RemoteRecord(type, id, from = Screen.DataBrowser) },
+                        onOpenRecord = { kind, id ->
+                            val mode = recentSubmissionEntryMode(kind)
+                            when {
+                                kind == "designWorkshop" || kind == "design-workshop" -> screen = Screen.DesignWorkshopStages(id, from = Screen.DataBrowser)
+                                mode != null -> screen = Screen.View(mode, id, from = Screen.DataBrowser)
+                                else -> showMessage("This link isn't one the app can open.")
+                            }
+                        },
                         onOpenSection = { artisanId, sectionKey ->
                             screen = Screen.View(EntryMode.ARTISAN, artisanId, from = Screen.DataBrowser, section = sectionKey)
                         },
