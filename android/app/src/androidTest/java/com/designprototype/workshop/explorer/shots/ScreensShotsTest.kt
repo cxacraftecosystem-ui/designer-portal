@@ -49,8 +49,8 @@ import com.designprototype.workshop.explorer.ui.DownloadsSheetBody
 import com.designprototype.workshop.explorer.ui.ExplorerScreen
 import com.designprototype.workshop.explorer.ui.ExplorerTablesMemory
 import com.designprototype.workshop.explorer.ui.PreflightBody
-import com.designprototype.workshop.ui.DataRecordSearch
-import com.designprototype.workshop.ui.DataUnifiedSearch
+import com.designprototype.workshop.explorer.portal.DesignRecordSearch
+import com.designprototype.workshop.explorer.portal.DesignUnifiedSearch
 import org.junit.After
 import org.junit.Before
 import org.junit.Rule
@@ -137,13 +137,12 @@ class ScreensShotsTest {
 
     @Composable
     private fun folder(api: ScreenBoards.Api, start: String = ScreenBoards.GIRIRAJ) {
-        val repository = ScreenBoards.repository(app) { _, _ -> null }
         ExplorerScreen(
             onBack = {},
             api = api,
             more = more,
             startPath = start,
-            search = { onOpen -> DataRecordSearch(repository, onOpen) },
+            search = { onOpen -> DesignRecordSearch(onOpen) },
             onRecordNow = { _, _ -> },
             onOpenSection = { _, _ -> },
         )
@@ -343,13 +342,8 @@ class ScreensShotsTest {
 
     @Test fun androidPreflightLargeText() = shoot("AndroidPreflight", "font2", fontScale = 2f) { preflight() }
 
-    private fun searchRepository(body: String) = ScreenBoards.repository(app) { path, _ -> if (path.endsWith("/search/unified")) body else null }
-
     @Composable
-    private fun search(initial: String, body: String) {
-        val repository = searchRepository(body)
-        DataUnifiedSearch(repository = repository, initial = initial, onOpenInData = { _, _, _ -> }, onPlay = { _, _, _, _ -> }, onOpenRemote = { _, _ -> }, onClose = {})
-    }
+    private fun search(initial: String, body: String) = DesignUnifiedSearch(initial, body)
 
     @Test fun androidSearch() = shoot("AndroidSearch", prepare = { waitTag("data.search.results") }) { search("indigo mud resist", ScreenBoards.SEARCH_LOCAL) }
 

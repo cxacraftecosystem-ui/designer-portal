@@ -390,7 +390,7 @@ private fun RowCard(headers: List<String>, row: List<kotlinx.serialization.json.
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                highlighted(cells.firstOrNull().orEmpty().ifBlank { "—" }, query, markBg, markFg),
+                markWords(cells.firstOrNull().orEmpty().ifBlank { "—" }, query, markBg, markFg),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -406,13 +406,13 @@ private fun RowCard(headers: List<String>, row: List<kotlinx.serialization.json.
                 if (value.isNotBlank()) {
                     Column {
                         Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(highlighted(value, query, markBg, markFg), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.field.body)
+                        Text(markWords(value, query, markBg, markFg), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.field.body)
                     }
                 }
             }
         } else {
             val summary = cells.drop(1).filter { it.isNotBlank() }.take(4).joinToString(" · ")
-            if (summary.isNotBlank()) Text(highlighted(summary, query, markBg, markFg), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.field.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (summary.isNotBlank()) Text(markWords(summary, query, markBg, markFg), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.field.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         if (headers.size > 2) {
             TextButton(onClick = { open = !open }, modifier = Modifier.heightIn(min = 40.dp)) {
@@ -440,7 +440,7 @@ internal fun SkeletonBar(fraction: Float, height: Int, modifier: Modifier = Modi
     Box(modifier.fillMaxWidth(fraction).height(height.dp).background(MaterialTheme.field.surface100, MaterialTheme.shapes.small))
 }
 
-internal fun highlighted(text: String, query: String, background: Color, foreground: Color): AnnotatedString {
+internal fun markWords(text: String, query: String, background: Color, foreground: Color): AnnotatedString {
     val words = query.trim().split(Regex("\\s+")).filter { it.length >= 2 }
     if (words.isEmpty()) return AnnotatedString(text)
     val lower = text.lowercase()

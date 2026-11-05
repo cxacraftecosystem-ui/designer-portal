@@ -6,10 +6,6 @@ import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
-import com.designprototype.workshop.data.ApiClient
-import com.designprototype.workshop.data.TokenStore
-import com.designprototype.workshop.data.WorkshopRepository
-import com.designprototype.workshop.data.WorkshopRepositoryApi
 import com.designprototype.workshop.explorer.data.ExplorerApi
 import com.designprototype.workshop.explorer.data.ExplorerCrumb
 import com.designprototype.workshop.explorer.data.ExplorerEntry
@@ -48,15 +44,9 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import okhttp3.Interceptor
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Protocol
 import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
 import retrofit2.Response
-import retrofit2.Retrofit
-import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import java.io.File
 import java.io.IOException
 import java.util.Collections
@@ -277,7 +267,7 @@ object ScreenBoards {
             ExplorerRecent("Kiln-firing_wide_07.mov", 220 * MB, ExplorerRecentStatus.RETRYING),
             ExplorerRecent("Section-D_Materials_Group-of-3.mp4", (14.2 * MB).toLong(), ExplorerRecentStatus.SAVED),
             ExplorerRecent("Block-carving_close-up_03.jpg", (3.4 * MB).toLong(), ExplorerRecentStatus.SAVED),
-        ).reversed(),
+        ),
     )
 
     fun runningSmall(now: Long): ExplorerJob = job("runsmall", "Giriraj Prasad Chhipa", ExplorerJobKind.FOLDER, ExplorerJobState.RUNNING, now, "Giriraj-Prasad-Chhipa.zip").copy(
@@ -297,28 +287,6 @@ object ScreenBoards {
         totalBytes = (2.1 * MB).toLong(), doneBytes = (2.1 * MB).toLong(),
         result = ExplorerResult(location = "Downloads/DesignWorkshop/3rd-Craft-Toolkit-Report.xlsx", uri = "content://downloads/2", saved = 1, total = 1, bytes = (2.1 * MB).toLong(), message = "7 sheets"),
     )
-
-    fun repository(context: Context, answer: (path: String, query: Map<String, String>) -> String?): WorkshopRepository {
-        val client = OkHttpClient.Builder().addInterceptor(Interceptor { chain ->
-            val url = chain.request().url
-            val query = url.queryParameterNames.associateWith { url.queryParameter(it).orEmpty() }
-            val body = answer(url.encodedPath, query)
-            okhttp3.Response.Builder()
-                .request(chain.request())
-                .protocol(Protocol.HTTP_1_1)
-                .code(if (body == null) 404 else 200)
-                .message(if (body == null) "Not Found" else "OK")
-                .body((body ?: "{}").toResponseBody("application/json".toMediaType()))
-                .build()
-        }).build()
-        val api = Retrofit.Builder()
-            .baseUrl("http://design.invalid/")
-            .client(client)
-            .addConverterFactory(ApiClient.json.asConverterFactory("application/json".toMediaType()))
-            .build()
-            .create(WorkshopRepositoryApi::class.java)
-        return WorkshopRepository(api, TokenStore(context))
-    }
 
     class More(private val base: ExplorerMore = DesignBoards.More()) : ExplorerMore by base {
         var overviewOf: ExplorerOverview? = null
