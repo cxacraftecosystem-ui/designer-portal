@@ -157,7 +157,7 @@ export function WorkshopAccessQueuePanel({ refreshToken, onChanged }: { refreshT
                 </div>
 
                 {row.requestNote ? (
-                  <p className="mt-2 border-l-2 border-purple-300 pl-3 text-xs italic leading-5 text-ink-700">
+                  <p className="mt-2 rounded-lg bg-purple-50 px-3 py-1.5 text-xs italic leading-5 text-ink-700 dark:bg-purple-950/30">
                     “{row.requestNote}”
                   </p>
                 ) : null}
