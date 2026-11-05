@@ -225,7 +225,7 @@ export function DataExplorer({ config }: { config: ExplorerConfig }) {
   const open = useCallback(
     (path: string) => {
       if (path === latest.current.path) return;
-      setShowTree(false);
+      setShowTree((value) => (typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches ? value : false));
       navigate({ path, sheet: "", q: "", preview: "", t: 0, find: "" }, "push");
     },
     [navigate]
@@ -374,7 +374,7 @@ export function DataExplorer({ config }: { config: ExplorerConfig }) {
   const depth = url.path.split("/").filter(Boolean).length;
   const wholeRepository = depth <= 1;
   const isWorkshop = recordType === "workshop";
-  const wide = url.view !== "files" || isWorkshop;
+  const wide = url.view !== "files";
 
   const folderSize = useFolderSize(url.path, config.extra, config.downloadExtra, downloads.measure);
   const selectionSize = useSelectionSize(selection, config.extra, config.downloadExtra, downloads.measure);
@@ -551,6 +551,40 @@ export function DataExplorer({ config }: { config: ExplorerConfig }) {
     </>
   );
 
+  const headerBlock = (
+    <>
+            <FolderHeader
+              crumbs={shownCrumbs}
+              folderName={shownCrumbs[shownCrumbs.length - 1]?.name ?? folderName}
+              recordType={recordType}
+              size={folderSize}
+              include={include}
+              onInclude={setInclude}
+              transcripts={transcriptsKnown}
+              onOpen={open}
+              onReport={() => setReportOpen(true)}
+              onDownload={() => downloadFolder("zip")}
+              onSaveFolder={caps.saveFolder ? () => downloadFolder("folder") : null}
+              busy={false}
+              loading={!current && tree.loading.has(url.path)}
+              onWholeDataset={wholeRepository ? () => downloadDataset("zip") : null}
+              info={current?.info ?? null}
+              fresh={newHere ? `+${newHere} new since you looked` : null}
+              parent={shownCrumbs.length > 1 ? shownCrumbs[shownCrumbs.length - 2] : null}
+              foldersButton={
+                <button type="button" className="inline-flex min-h-11 items-center rounded-full border border-line-200 bg-card px-3 text-[13px] text-ink-700 hover:border-purple-300" aria-expanded={showTree} onClick={() => setShowTree((value) => !value)}>
+                  {showTree ? "Hide folders" : "Folders"}
+                </button>
+              }
+            />
+            {tooBig ? <Note tone="warn">Too big for one zip in this browser. Use Save to a folder or leave some types out.</Note> : null}
+            {!caps.stream && !caps.saveFile && limitSentence(caps) ? <p className="text-xs text-ink-500">{limitSentence(caps)}</p> : null}
+            {config.datasetLine && wholeRepository ? <p className="text-xs text-ink-500">{config.datasetLine}</p> : null}
+            {current?.info ? <RecordDetails info={current.info} recordHref={current.info.record && config.recordHref ? config.recordHref(current.info.record.kind, current.info.record.id) : null} /> : null}
+            {isWorkshop ? <WorkshopOverview path={url.path} extra={config.extra} visit={visit && visit.path === url.path ? visit : null} onOpen={open} onShowNew={() => navigate({ view: "files" })} /> : null}
+    </>
+  );
+
   return (
     <>
       <div className="grid gap-4 max-lg:gap-3.5 max-sm:gap-3">
@@ -604,38 +638,11 @@ export function DataExplorer({ config }: { config: ExplorerConfig }) {
             </Problem>
           )
         ) : null}
+        {isWorkshop ? <div className="grid min-w-0 gap-4 max-lg:gap-3.5 max-sm:gap-3">{headerBlock}</div> : null}
         <div className={`grid items-start gap-4 max-lg:gap-3.5 max-sm:gap-3 ${wide && !showTree ? "" : "lg:grid-cols-[326px_minmax(0,1fr)]"}`}>
           {sidePanel}
           <div className="grid min-w-0 gap-4 max-lg:gap-3.5 max-sm:gap-3">
-            <FolderHeader
-              crumbs={shownCrumbs}
-              folderName={shownCrumbs[shownCrumbs.length - 1]?.name ?? folderName}
-              recordType={recordType}
-              size={folderSize}
-              include={include}
-              onInclude={setInclude}
-              transcripts={transcriptsKnown}
-              onOpen={open}
-              onReport={() => setReportOpen(true)}
-              onDownload={() => downloadFolder("zip")}
-              onSaveFolder={caps.saveFolder ? () => downloadFolder("folder") : null}
-              busy={false}
-              loading={!current && tree.loading.has(url.path)}
-              onWholeDataset={wholeRepository ? () => downloadDataset("zip") : null}
-              info={current?.info ?? null}
-              fresh={newHere ? `+${newHere} new since you looked` : null}
-              parent={shownCrumbs.length > 1 ? shownCrumbs[shownCrumbs.length - 2] : null}
-              foldersButton={
-                <button type="button" className="inline-flex min-h-11 items-center rounded-full border border-line-200 bg-card px-3 text-[13px] text-ink-700 hover:border-purple-300" aria-expanded={showTree} onClick={() => setShowTree((value) => !value)}>
-                  {showTree ? "Hide folders" : "Folders"}
-                </button>
-              }
-            />
-            {tooBig ? <Note tone="warn">Too big for one zip in this browser. Use Save to a folder or leave some types out.</Note> : null}
-            {!caps.stream && !caps.saveFile && limitSentence(caps) ? <p className="text-xs text-ink-500">{limitSentence(caps)}</p> : null}
-            {config.datasetLine && wholeRepository ? <p className="text-xs text-ink-500">{config.datasetLine}</p> : null}
-            {current?.info ? <RecordDetails info={current.info} recordHref={current.info.record && config.recordHref ? config.recordHref(current.info.record.kind, current.info.record.id) : null} /> : null}
-            {isWorkshop ? <WorkshopOverview path={url.path} extra={config.extra} visit={visit && visit.path === url.path ? visit : null} onOpen={open} onShowNew={() => navigate({ view: "files" })} /> : null}
+            {isWorkshop ? null : headerBlock}
             <section className="panel overflow-hidden max-sm:grid max-sm:gap-3 max-sm:overflow-visible max-sm:rounded-none max-sm:border-0 max-sm:bg-transparent max-sm:shadow-none" aria-label="Contents">
               <ViewTabs view={url.view} counts={{ files: folderSize.sized ? `${folderSize.sized.files.toLocaleString("en-IN")}${folderSize.sized.truncated ? "+" : ""}` : filesCount, tables: tableCount && tableCount.path === url.path && tableCount.count > 0 ? tableCount.count.toLocaleString("en-IN") : null, transcripts: transcriptsKnown !== null ? transcriptsKnown.toLocaleString("en-IN") : null }} onView={(view) => navigate({ view })} trailing={tabTrailing} />
               <div id="explorer-view" role="tabpanel" aria-label={VIEW_TABS.find((tab) => tab.value === url.view)?.label} className="min-w-0">
