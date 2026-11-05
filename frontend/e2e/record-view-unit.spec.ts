@@ -270,7 +270,7 @@ test.describe("every record list opens its rows read-only", () => {
     expect(data).toContain("fileHref: (mediaId) => RECORD_VIEW_HREF.media(mediaId)");
     const rows = read("components/dataExplorer/FolderContents.tsx");
     expect(rows).toContain("const href = file.mediaId ? fileHref(file.mediaId) : null;");
-    expect(rows).toContain("onClick={(event) => openRow(event, href)}");
+    expect(rows).toContain("onClick={(event) => openRow(event, href, file)}");
   });
 
   test("sanction orders and the two rosters open a read-only view of the entry", () => {
