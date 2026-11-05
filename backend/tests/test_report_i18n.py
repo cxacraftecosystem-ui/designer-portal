@@ -1,5 +1,6 @@
 import ast
 import asyncio
+import importlib
 import re
 from pathlib import Path
 from typing import Any
@@ -288,9 +289,20 @@ def _plugin_sheets(plugin: Any, portal: str) -> list[tuple[str, str, list[contra
 DYNAMIC_SHEET = re.compile(r"[^A-Za-z0-9_]")
 
 
+def _schema_docs() -> frozenset[str]:
+    try:
+        schema = importlib.import_module("app.services.datareport.schema")
+    except ImportError:
+        return frozenset()
+    return frozenset(
+        f.doc for p in PORTALS for m in schema.load(p).values() for f in m.fields if f.doc
+    )
+
+
 def _pairs(
     portal: str,
 ) -> tuple[list[tuple[str, str]], dict[str, list[tuple[str, str]]], list[str]]:
+    docs = _schema_docs()
     hi = i18n.translator("hi")
     pairs: list[tuple[str, str]] = []
     headings: dict[str, list[tuple[str, str]]] = {}
@@ -307,7 +319,7 @@ def _pairs(
                 pairs.append((f"sheet.{key}", name))
             for column in columns:
                 pairs.append((f"col.{key}.{column.key}", column.label))
-                if column.description:
+                if column.description and column.description not in docs:
                     pairs.append((f"describe.{key}.{column.key}", column.description))
                 headings.setdefault(key, []).append(
                     (column.label, hi(f"col.{key}.{column.key}", column.label))
