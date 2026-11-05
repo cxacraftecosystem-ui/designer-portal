@@ -440,6 +440,7 @@ import com.designprototype.workshop.ui.carryScope
 import com.designprototype.workshop.ui.rememberCarryPrefill
 import com.designprototype.workshop.ui.Coral
 import com.designprototype.workshop.ui.DataBrowserScreen
+import com.designprototype.workshop.ui.DataUnifiedSearch
 import com.designprototype.workshop.ui.DesignWorkshopField
 import com.designprototype.workshop.ui.DesignWorkshopPickerState
 import com.designprototype.workshop.ui.rememberDesignWorkshopPicker
@@ -572,6 +573,10 @@ import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.Muted
 import com.designprototype.workshop.ui.resolveDarkTheme
 import com.designprototype.workshop.ui.reviewQueueCutNotice
+import com.designprototype.workshop.ui.ListReach
+import com.designprototype.workshop.ui.ListReachButton
+import com.designprototype.workshop.ui.ListReachText
+import com.designprototype.workshop.ui.serverHasMore
 import com.designprototype.workshop.ui.REVIEW_QUEUE_PAGE_SIZE
 import com.designprototype.workshop.ui.syncAppPreferences
 import com.designprototype.workshop.ui.SurfaceCard
@@ -3177,7 +3182,27 @@ private fun HomeScreen(
                         localItems = searchLocalItems(),
                         remoteSearch = { q -> searchRemote(q) },
                         onClose = { searchOpen = false },
-                        onError = { showMessage(it) }
+                        onError = { showMessage(it) },
+                        fullSearch = { q, back ->
+                            DataUnifiedSearch(
+                                repository = repository,
+                                initial = q,
+                            onOpenInData = { kind, id, _ ->
+                                searchOpen = false
+                                attemptExit {
+                                    val mode = recentSubmissionEntryMode(kind)
+                                    when {
+                                        kind == SearchRecordTypes.DESIGN_WORKSHOP -> { workshopOrigins.opened(id, screen); screen = workshopIndex(id) }
+                                        mode != null -> { message = null; screen = Screen.View(mode, id, from = screen) }
+                                        else -> openSearchRecord(kind, id)
+                                    }
+                                }
+                            },
+                                onPlay = { mediaId, _, _, _ -> searchOpen = false; attemptExit { openSearchRecord(SearchRecordTypes.MEDIA, mediaId) } },
+                                onOpenRemote = { type, id -> searchOpen = false; attemptExit { message = null; screen = Screen.RemoteRecord(type, id, from = screen) } },
+                                onClose = back,
+                            )
+                        }
                     )
                 }
                 }
@@ -6177,48 +6202,89 @@ private fun RecordPickerScreen(
     val mediaV2 = remember { com.designprototype.workshop.questionnaire.data.QuestionnaireV2.get(pickerContext) }
     val (mediaFilters, setMediaFilters) = com.designprototype.workshop.questionnaire.ui.rememberKeptFilters(mediaV2, com.designprototype.workshop.questionnaire.data.FilterStore.MEDIA)
     val mediaNarrowed = mode == EntryMode.MEDIA && mediaFilters.mediaParams().isNotEmpty()
+    var pagesRead by remember(mode) { mutableIntStateOf(1) }
+    var shown by remember(mode) { mutableIntStateOf(PICKER_FIRST_SHOWN) }
+    var loadingMore by remember(mode) { mutableStateOf(false) }
+    var moreFailed by remember(mode) { mutableStateOf(false) }
+    val pickerScope = rememberCoroutineScope()
+    suspend fun fetchPicker(page: Int, search: String?, wire: String?): Pair<Int, List<PickerRow>> =
+        when (mode) {
+            EntryMode.ARTISAN -> repository.artisanPage(search, wire, page).let { p -> p.total to p.items.map { PickerRow(it.id, "${it.name} · ${it.place}", it.completeness) } }
+            EntryMode.CRAFT -> repository.craftPage(search, page).let { p -> p.total to p.items.map { PickerRow(it.id, it.name + (it.place?.let { pl -> " · $pl" } ?: "")) } }
+            EntryMode.PRODUCT -> repository.productPage(search, wire, page).let { p -> p.total to p.items.map { PickerRow(it.id, "${it.productName} · ${it.artisanName}", it.completeness) } }
+            EntryMode.PROCESS -> repository.processPage(search, page).let { p -> p.total to p.items.map { PickerRow(it.id, it.name + (it.product?.productName?.let { pr -> " · $pr" } ?: "")) } }
+            EntryMode.TOOL -> repository.toolPage(search, wire, page).let { p -> p.total to p.items.map { PickerRow(it.id, it.toolRowLabel(), it.completeness) } }
+            EntryMode.WORKSHOP -> repository.workshopPage(search, wire, page).let { p -> p.total to p.items.map { PickerRow(it.id, workshopDisplayTitle(it.title, date = it.occurrenceDate(), place = it.place), it.completeness) } }
+            EntryMode.MEDIA -> repository.mediaPage(search, if (mediaNarrowed) mediaFilters.mediaParams() else emptyMap(), page).let { p ->
+                p.total to p.items.map { m -> PickerRow(m.id, m.caption?.takeIf { it.isNotBlank() } ?: m.originalFilename, chips = m.questionnaireChips, preview = m.transcriptPreview) }
+            }
+            EntryMode.QUESTIONNAIRE -> repository.interviewPage(search, wire, page).let { p ->
+                p.total to p.items.groupBy { interviewGroupKey(it) }.values.map { group ->
+                    val rep = representativeInterview(group)
+                    val artisanNames = rep.artisans.mapNotNull { it.artisan?.name }.distinct().joinToString(", ")
+                    val parts = listOfNotNull(
+                        artisanNames.ifBlank { null },
+                        rep.title.takeIf { it.isNotBlank() },
+                        if (group.size > 1) "${group.size} sessions" else null
+                    )
+                    PickerRow(rep.id, parts.joinToString(" · ").ifBlank { "Untitled interview" }, rep.completeness)
+                }
+            }
+            else -> 0 to emptyList()
+        }
     LaunchedEffect(mode, query, attempt, completenessFilter, mediaFilters) {
         if (query.isNotBlank()) delay(350)
         loading = true
         loadError = null
+        moreFailed = false
         val search = query.trim().ifBlank { null }
         cachedNote = null
         runCatching {
           val wire = completenessFilter.wire.takeIf { completenessKind != null }
           pickerReadCached(pickerContext, mode, search ?: "".takeIf { mediaNarrowed }, wire, onCached = { cachedNote = it }) {
-            when (mode) {
-                EntryMode.ARTISAN -> repository.artisanPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, "${it.name} · ${it.place}", it.completeness) } }
-                EntryMode.CRAFT -> repository.craftPage(search).let { p -> p.total to p.items.map { PickerRow(it.id, it.name + (it.place?.let { pl -> " · $pl" } ?: "")) } }
-                EntryMode.PRODUCT -> repository.productPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, "${it.productName} · ${it.artisanName}", it.completeness) } }
-                EntryMode.PROCESS -> repository.processPage(search).let { p -> p.total to p.items.map { PickerRow(it.id, it.name + (it.product?.productName?.let { pr -> " · $pr" } ?: "")) } }
-                EntryMode.TOOL -> repository.toolPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, it.toolRowLabel(), it.completeness) } }
-                EntryMode.WORKSHOP -> repository.workshopPage(search, wire).let { p -> p.total to p.items.map { PickerRow(it.id, workshopDisplayTitle(it.title, date = it.occurrenceDate(), place = it.place), it.completeness) } }
-                EntryMode.MEDIA -> repository.mediaPage(search, if (mediaNarrowed) mediaFilters.mediaParams() else emptyMap()).let { p ->
-                    p.total to p.items.map { m -> PickerRow(m.id, m.caption?.takeIf { it.isNotBlank() } ?: m.originalFilename, chips = m.questionnaireChips, preview = m.transcriptPreview) }
-                }
-                EntryMode.QUESTIONNAIRE -> repository.interviewPage(search, wire).let { p ->
-                    p.total to p.items.groupBy { interviewGroupKey(it) }.values.map { group ->
-                        val rep = representativeInterview(group)
-                        val artisanNames = rep.artisans.mapNotNull { it.artisan?.name }.distinct().joinToString(", ")
-                        val parts = listOfNotNull(
-                            artisanNames.ifBlank { null },
-                            rep.title.takeIf { it.isNotBlank() },
-                            if (group.size > 1) "${group.size} sessions" else null
-                        )
-                        PickerRow(rep.id, parts.joinToString(" · ").ifBlank { "Untitled interview" }, rep.completeness)
-                    }
-                }
-                else -> 0 to emptyList()
-            }
+            fetchPicker(1, search, wire)
           }
         }.onSuccess { (count, fetched) ->
             rows = fetched
             total = count
+            pagesRead = 1
+            shown = if (search == null) PICKER_FIRST_SHOWN else PICKER_FIRST_MATCHES
         }.onFailure {
             if (it is kotlinx.coroutines.CancellationException) throw it
             loadError = it.userMessage("Couldn't load ${mode.label.lowercase()} records.")
         }
         loading = false
+    }
+    val reach = ListReach(
+        shown = shown.coerceAtMost(rows.size),
+        loaded = rows.size,
+        serverMore = serverHasMore(pagesRead, pickerPageSize(mode), total),
+    )
+    fun showMorePicked() {
+        if (!reach.needsFetch()) {
+            shown = reach.revealed(rows.size)
+            return
+        }
+        if (loadingMore) return
+        pickerScope.launch {
+            loadingMore = true
+            moreFailed = false
+            val search = query.trim().ifBlank { null }
+            val wire = completenessFilter.wire.takeIf { completenessKind != null }
+            runCatching { fetchPicker(pagesRead + 1, search, wire) }
+                .onSuccess { (count, fetched) ->
+                    val merged = (rows + fetched).distinctBy { it.id }
+                    rows = merged
+                    total = count
+                    pagesRead += 1
+                    shown = reach.revealed(merged.size)
+                }
+                .onFailure {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
+                    moreFailed = true
+                }
+            loadingMore = false
+        }
     }
 
     val noun = mode.label.lowercase()
@@ -6270,15 +6336,8 @@ private fun RecordPickerScreen(
                     enabled = selected.isNotBlank(),
                     modifier = Modifier.fillMaxWidth()
                 ) { Text(RecordOpen.OPEN_LABEL) }
-                if (total > options.size) {
-                    Text(
-                        "Newest ${options.size} of $total. Type a name to find others.",
-                        color = Muted,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
                 Text(if (query.isBlank()) "Recently added" else "Matches", color = Muted, style = MaterialTheme.typography.bodySmall)
-                rows.take(if (query.isBlank()) 12 else 50).forEach { row ->
+                rows.take(reach.shown).forEach { row ->
                     val id = row.id
                     val label = row.label
                     ElevatedCard(
@@ -6318,10 +6377,27 @@ private fun RecordPickerScreen(
                         }
                     }
                 }
+                if (reach.more) {
+                    ListReachButton(
+                        shown = reach.shown,
+                        total = maxOf(total, rows.size),
+                        label = ListReachText.showMore(reach.nextCount(total)),
+                        loading = loadingMore,
+                        failed = moreFailed,
+                        tag = "picker.more",
+                        onClick = { showMorePicked() },
+                    )
+                }
             }
         }
     }
 }
+
+private const val PICKER_FIRST_SHOWN = 12
+
+private const val PICKER_FIRST_MATCHES = 50
+
+private fun pickerPageSize(mode: EntryMode): Int = if (mode == EntryMode.CRAFT) 500 else 100
 
 @Composable
 private fun RecordViewScreen(

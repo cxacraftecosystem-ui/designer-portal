@@ -7,7 +7,7 @@ import { LIST_PAGE_CEILING, listCut, type ListCut } from "@/components/data/capp
 import { workshopOccurrenceDate } from "@/components/forms/WorkshopSelect";
 import { CraftSelect } from "@/components/forms/CraftSelect";
 import { Dropdown } from "@/components/ui/Dropdown";
-import { listResource } from "@/lib/api";
+import { listAllPages } from "@/lib/listAllPages";
 import type { Artisan, Workshop } from "@/lib/types";
 
 export type FunnelWorkshop = Workshop & {
@@ -43,7 +43,7 @@ export function FunnelFilters({
     (async () => {
       let workshopRows: FunnelWorkshop[] = [];
       try {
-        const workshopResult = await listResource<FunnelWorkshop>("/workshops", { pageSize: LIST_PAGE_CEILING });
+        const workshopResult = await listAllPages<FunnelWorkshop>("/workshops", { pageSize: LIST_PAGE_CEILING });
         workshopRows = [...workshopResult.items].sort((a, b) => occurredAt(b).localeCompare(occurredAt(a)));
         setCuts((previous) => ({ ...previous, workshops: listCut(workshopResult, "workshops") }));
       } catch {
@@ -58,7 +58,7 @@ export function FunnelFilters({
   useEffect(() => {
     if (!showArtisan) return;
     let active = true;
-    listResource<Artisan>("/artisans", {
+    listAllPages<Artisan>("/artisans", {
       workshopId: value.workshopId || undefined,
       craftId: value.craftId || undefined,
       pageSize: LIST_PAGE_CEILING

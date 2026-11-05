@@ -201,6 +201,21 @@ async def test_items_carry_only_the_projection_and_linked_remote_ids(world, monk
     assert product["linkedArtisanIds"] == [f"fr-{world.stamp}"]
 
 
+async def test_a_typeless_page_moves_every_group_on_and_keeps_its_total(world, monkeypatch):
+    requester = {"userId": f"pg-{world.stamp}", "email": "", "role": "RESEARCHER"}
+    _r, first = await _peer_search(world, monkeypatch, limit=1, page=1, requester=requester)
+    _r2, second = await _peer_search(world, monkeypatch, limit=1, page=2, requester=requester)
+    one, two = _body(first), _body(second)
+    assert one["groups"]
+    later = {g["type"]: g for g in two["groups"]}
+    for group in one["groups"]:
+        assert group["type"] in later and later[group["type"]]["total"] == group["total"]
+        now = {i["id"] for i in group["items"]}
+        then = {i["id"] for i in later[group["type"]]["items"]}
+        assert now.isdisjoint(then)
+        assert len(then) == min(1, group["total"] - 1)
+
+
 async def test_each_search_is_logged_without_the_query(world, monkeypatch):
     asker = f"fr-{world.stamp}"
     await _peer_search(world, monkeypatch, requester=_requester(world, email="x@example.invalid"))

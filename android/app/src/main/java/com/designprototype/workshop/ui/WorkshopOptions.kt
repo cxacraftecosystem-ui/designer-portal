@@ -136,7 +136,7 @@ internal fun listIsAnswerable(options: List<SelectOption>): Boolean = options.is
 
 internal fun workshopCapLine(shown: Int, total: Int, kind: WorkshopListKind): String? {
     if (shown <= 0 || total <= shown) return null
-    return "Latest $shown of $total. Search in ${kind.searchDestination} for others."
+    return "Showing $shown of $total. The rest didn't load. Open this again to retry."
 }
 
 internal fun designWorkshopLabel(workshop: DesignWorkshopDto): String =

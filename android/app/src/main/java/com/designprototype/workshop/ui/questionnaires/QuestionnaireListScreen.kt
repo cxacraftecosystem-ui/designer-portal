@@ -57,6 +57,8 @@ import com.designprototype.workshop.ui.RecordProseField
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.designprototype.workshop.ui.ListReachText
+import com.designprototype.workshop.ui.ListReachButton
 
 private const val SEARCH_DEBOUNCE_MS = 350L
 
@@ -315,10 +317,13 @@ fun QuestionnaireListScreen(
         }
 
         partial?.let { (shown, total) ->
-            Text(
-                "Showing $shown of $total. Search to find the rest.",
-                color = MaterialTheme.field.warning,
-                style = MaterialTheme.typography.bodySmall
+            ListReachButton(
+                shown = shown,
+                total = total,
+                label = ListReachText.loadAll(total),
+                loading = loading,
+                tag = "forms.loadall",
+                onClick = { reload++ },
             )
         }
         Spacer(Modifier.padding(bottom = 8.dp))

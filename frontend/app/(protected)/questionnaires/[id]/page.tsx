@@ -33,7 +33,7 @@ import { QuestionRow } from "@/components/questionnaires/QuestionRow";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast } from "@/components/ui/Toast";
-import { listDesignWorkshops, saveBlobToDisk, type DwSummary } from "@/lib/designWorkshops";
+import { listEveryDesignWorkshop, saveBlobToDisk, type DwSummary } from "@/lib/designWorkshops";
 import { formatDateTime } from "@/lib/format";
 import { apiFetch } from "@/lib/api";
 import { canEditOwnOrAdmin, isContentAdmin, mayDeleteQuestionnaire } from "@/lib/permissions";
@@ -43,7 +43,6 @@ import {
   designWorkshopOptions,
   deviceLooksOffline,
   NO_DESIGN_WORKSHOP,
-  WORKSHOP_OPTION_PAGE_SIZE,
   workshopEmptyLabel,
   workshopListNotice,
   workshopListStandsDown,
@@ -122,7 +121,7 @@ function QuestionnaireDetailPage() {
 
   useEffect(() => {
     let cancelled = false;
-    listDesignWorkshops({ pageSize: WORKSHOP_OPTION_PAGE_SIZE })
+    listEveryDesignWorkshop()
       .then((result) => {
         if (!cancelled) setWorkshopList({ kind: "ok", rows: result.items ?? [], total: result.total });
       })

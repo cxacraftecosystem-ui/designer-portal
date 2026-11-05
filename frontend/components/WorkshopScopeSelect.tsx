@@ -6,7 +6,7 @@ import { CalendarRange, Layers } from "lucide-react";
 import { CappedListNotice } from "@/components/data/CappedListNotice";
 import { listCut, type ListCut } from "@/components/data/cappedList";
 import { MultiSelectDropdown } from "@/components/ui/Dropdown";
-import { listResource } from "@/lib/api";
+import { listAllPages } from "@/lib/listAllPages";
 import type { Workshop } from "@/lib/types";
 import {
   WORKSHOP_OPTION_PAGE_SIZE,
@@ -55,7 +55,7 @@ export function useWorkshopScope({
 
   useEffect(() => {
     let cancelled = false;
-    listResource<Workshop>("/workshops", { pageSize: WORKSHOP_OPTION_PAGE_SIZE })
+    listAllPages<Workshop>("/workshops", { pageSize: WORKSHOP_OPTION_PAGE_SIZE })
       .then((result) => {
         if (cancelled) return;
         const ordered = sortWorkshopsByOccurrence(result.items);

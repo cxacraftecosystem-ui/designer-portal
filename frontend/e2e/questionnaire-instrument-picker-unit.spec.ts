@@ -25,11 +25,11 @@ test.describe("the instrument picker", () => {
     expect(PICKER_CODE).toContain("if (!allowed) return null;");
   });
 
-  test("walks pages to exhaustion and says so when it stops early", () => {
+  test("walks every page, so the last questionnaire is always offered", () => {
     expect(PICKER_CODE).toContain("const PAGE_SIZE = 100");
-    expect(PICKER_CODE).toMatch(/page <= pages && page <= MAX_PAGES/);
-    expect(PICKER_CODE).toContain("setTruncated(pages > MAX_PAGES)");
-    expect(PICKER_CODE).toContain("{truncated ?");
+    expect(PICKER_CODE).toMatch(/for \(; page <= pages; page \+= 1\)/);
+    expect(PICKER_CODE).not.toContain("MAX_PAGES");
+    expect(PICKER_CODE).not.toContain("Open My questionnaires to search");
   });
 
   test("a failed list is not a list of none", () => {

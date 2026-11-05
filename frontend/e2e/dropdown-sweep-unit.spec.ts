@@ -983,7 +983,7 @@ test("the scope filter states its cut, at the size it draws, for the first time"
 
   expect(source).toContain("<CappedListNotice");
   expect(source).toContain('setCut(listCut(result, "workshops"))');
-  expect(source).toContain('listResource<Workshop>("/workshops", { pageSize: WORKSHOP_OPTION_PAGE_SIZE })');
+  expect(source, "every workshop is fetched, page by page").toContain('listAllPages<Workshop>("/workshops", { pageSize: WORKSHOP_OPTION_PAGE_SIZE })');
   expect(withoutComments(source)).not.toContain("const WORKSHOP_PAGE_SIZE = 100");
 });
 

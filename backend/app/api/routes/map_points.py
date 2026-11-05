@@ -619,7 +619,9 @@ async def point_records(
     dateTo: datetime | None = None,
     workshopIds: list[str] | None = Query(None),
     level: str | None = None,
+    offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
+    offset = offset if isinstance(offset, int) else 0
     selected = resolve_types(types)
     admin_level = resolve_admin_level(level)
     wheres = await build_record_wheres(
@@ -659,7 +661,10 @@ async def point_records(
     rows = await gather_reads(
         *(
             _delegate(bucket).find_many(
-                where=narrowed[bucket], take=_STUB_CAP + 1, order={"createdAt": "desc"}
+                where=narrowed[bucket],
+                skip=offset,
+                take=_STUB_CAP + 1,
+                order=[{"createdAt": "desc"}, {"id": "asc"}],
             )
             for bucket in buckets
         )
@@ -689,6 +694,8 @@ async def point_records(
         "total": len(items),
         "cap": _STUB_CAP,
         "truncated": truncated,
+        "offset": offset,
+        "nextOffset": offset + _STUB_CAP if truncated else None,
     }
 
 

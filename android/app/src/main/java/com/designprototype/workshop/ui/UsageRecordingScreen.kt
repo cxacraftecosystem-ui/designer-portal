@@ -72,6 +72,10 @@ fun UsageRecordingScreen(
     var consentRead by remember { mutableStateOf<UsageReadState>(UsageReadState.Loading) }
     var mine by remember { mutableStateOf<UsageMineDto?>(null) }
     var trail by remember { mutableStateOf<UsageTrailDto?>(null) }
+    var trailWindow by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var trailMore by remember { mutableStateOf(false) }
+    var trailLoading by remember { mutableStateOf(false) }
+    var trailFailed by remember { mutableStateOf(false) }
     var recordRead by remember { mutableStateOf<UsageReadState>(UsageReadState.Loading) }
     var busy by remember { mutableStateOf(false) }
     var actionError by remember { mutableStateOf<String?>(null) }
@@ -101,10 +105,30 @@ fun UsageRecordingScreen(
         }.getOrNull()
         mine = aggregate
         trail = log
+        trailWindow = from to to
+        trailMore = usageTrailHasMore(log?.events?.size ?: 0, TRAIL_PAGE)
+        trailFailed = false
         recordRead = when {
             aggregate == null && log == null -> UsageReadState.Failed
             else -> UsageReadState.Answered(count = log?.events?.size ?: aggregate?.requests ?: 0)
         }
+    }
+
+    suspend fun loadMoreTrail() {
+        val held = trail ?: return
+        val (from, to) = trailWindow ?: return
+        trailLoading = true
+        trailFailed = false
+        val next = runCatching {
+            UsageClient.of(context).myTrail(from = from, to = to, limit = TRAIL_PAGE, offset = held.events.size)
+        }.getOrNull()
+        if (next == null) {
+            trailFailed = true
+        } else {
+            trail = held.copy(events = held.events + next.events)
+            trailMore = usageTrailHasMore(next.events.size, TRAIL_PAGE)
+        }
+        trailLoading = false
     }
 
     LaunchedEffect(Unit) {
@@ -273,7 +297,7 @@ fun UsageRecordingScreen(
                         style = MaterialTheme.typography.titleMedium
                     )
                     Text(
-                        "Last $RECORD_WINDOW_DAYS days, newest first (up to $TRAIL_PAGE).",
+                        "Last $RECORD_WINDOW_DAYS days, newest first.",
                         color = MaterialTheme.field.muted,
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -320,16 +344,17 @@ fun UsageRecordingScreen(
 
             items(trail?.events.orEmpty()) { event -> TrailRow(event) }
 
-            trail?.let { log ->
-                if (log.events.size >= log.limit && log.limit > 0) {
-                    item {
-                        Text(
-                            "Newest $TRAIL_PAGE requests only (max ${log.maxRows}).",
-                            color = MaterialTheme.field.muted,
-                            style = MaterialTheme.typography.bodySmall,
-                            lineHeight = 17.sp
-                        )
-                    }
+            if (trail != null && (trailMore || trailFailed)) {
+                item {
+                    ListReachButton(
+                        shown = trail?.events?.size ?: 0,
+                        total = 0,
+                        label = ListReachText.showMore(TRAIL_PAGE),
+                        loading = trailLoading,
+                        failed = trailFailed,
+                        tag = "usage.trail.more",
+                        onClick = { scope.launch { loadMoreTrail() } },
+                    )
                 }
             }
 
@@ -447,3 +472,5 @@ private fun Throwable.usageWriteFailureLine(online: Boolean): String = apiErrorM
 private const val RECORD_WINDOW_DAYS: Long = 7
 
 private const val TRAIL_PAGE: Int = 50
+
+internal fun usageTrailHasMore(lastPageSize: Int, pageSize: Int): Boolean = pageSize > 0 && lastPageSize >= pageSize

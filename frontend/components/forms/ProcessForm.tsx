@@ -37,6 +37,7 @@ import { Dropdown } from "@/components/ui/Dropdown";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { apiFetch, listResource } from "@/lib/api";
+import { listAllPages } from "@/lib/listAllPages";
 import { countNoun, formatDate } from "@/lib/format";
 import { handleFormEnter } from "@/lib/formNav";
 import { describePreProcess, describeProcessStep, renameMediaFile, uploadMediaFile } from "@/lib/media";
@@ -349,7 +350,7 @@ export function ProcessForm({
   const statusChoices = initial?.status && !STATUS_OPTIONS.includes(String(initial.status)) ? [String(initial.status), ...STATUS_OPTIONS] : STATUS_OPTIONS;
 
   useEffect(() => {
-    listResource<Artisan>("/artisans", { pageSize: LIST_PAGE_CEILING })
+    listAllPages<Artisan>("/artisans", { pageSize: LIST_PAGE_CEILING })
       .then((result) => {
         setArtisans(result.items);
         setArtisanCut(listCut(result, "artisans"));

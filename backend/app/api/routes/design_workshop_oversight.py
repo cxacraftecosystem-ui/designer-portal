@@ -552,10 +552,12 @@ async def run_artisan_import(
 
 @router.get("/{workshop_id}/artisans")
 async def list_workshop_artisans(
-    workshop_id: str, _: Any = Depends(require_workshop_assigner)
+    workshop_id: str,
+    offset: int = Query(0, ge=0),
+    _: Any = Depends(require_workshop_assigner),
 ) -> dict[str, Any]:
     await _workshop_for_assignment_or_404(workshop_id)
-    return await oversight.linked_artisan_rows(workshop_id)
+    return await oversight.linked_artisan_rows(workshop_id, offset)
 
 
 @router.delete("/{workshop_id}/artisans/{artisan_id}")

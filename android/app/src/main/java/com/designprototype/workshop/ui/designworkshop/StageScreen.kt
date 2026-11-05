@@ -1414,7 +1414,7 @@ private fun CollectionSection(
                 model = field.refModel,
                 scope = field.refScope,
                 filterValue = "",
-                limit = DW_BULK_PAGE,
+                limit = null,
             ) { list, truncated ->
                 bulkOptions = list.items
                 bulkTruncated = truncated

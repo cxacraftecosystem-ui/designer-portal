@@ -175,7 +175,7 @@ function Explorer({ user }: { user: User }) {
     statusKey: "",
     viewer: user.id,
     fileHref: (mediaId) => RECORD_VIEW_HREF.media(mediaId),
-    renderSearch: (reveal, openPreview) => <DataSearchPanel onReveal={reveal} onPreview={openPreview} />,
+    renderSearch: (reveal, openPreview, ask) => <DataSearchPanel onReveal={reveal} onPreview={openPreview} ask={ask} />,
     emptyBody: "Files appear here as soon as someone records for this folder.",
     emptyAction: canCreateRecords(user) ? (
       <Link href="/media" className="field-button">

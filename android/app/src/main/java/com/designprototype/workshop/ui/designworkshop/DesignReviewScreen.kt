@@ -56,6 +56,9 @@ import com.designprototype.workshop.data.DW_SCORES
 import com.designprototype.workshop.data.DesignRatingBody
 import com.designprototype.workshop.data.DesignRatingDto
 import com.designprototype.workshop.data.DesignWorkshopDto
+import com.designprototype.workshop.data.visibleDesignWorkshops
+import com.designprototype.workshop.ui.ListReachButton
+import com.designprototype.workshop.ui.ListReachText
 import com.designprototype.workshop.data.DraftRow
 import com.designprototype.workshop.data.DwArrangementPlan
 import com.designprototype.workshop.data.DwFixedOrderStamp
@@ -125,11 +128,15 @@ fun DesignReviewScreen(
     var round by remember { mutableStateOf(DwRatingRound.PEER) }
     var entity by remember { mutableStateOf(DwRateableEntity.PROTOTYPE) }
 
-    LaunchedEffect(Unit) {
-        runCatching { repository.designWorkshops(page = 1, pageSize = CHOOSER_PAGE) }
-            .onSuccess { page ->
-                workshops = page.items
-                workshopTotal = page.total
+    var listAttempt by remember { mutableStateOf(0) }
+    var listLoading by remember { mutableStateOf(false) }
+    LaunchedEffect(listAttempt) {
+        listLoading = true
+        runCatching { repository.visibleDesignWorkshops() }
+            .onSuccess { listing ->
+                workshops = listing.items
+                workshopTotal = listing.total
+                listFailure = null
             }
             .onFailure { error ->
                 workshops = emptyList()
@@ -141,6 +148,7 @@ fun DesignReviewScreen(
                     )
                 }
             }
+        listLoading = false
     }
 
     Column(
@@ -203,11 +211,13 @@ fun DesignReviewScreen(
         }
         val hidden = (workshopTotal - (workshops?.size ?: 0)).coerceAtLeast(0)
         if (hidden > 0) {
-            Text(
-                "Showing ${workshops?.size ?: 0} of $workshopTotal. Paste a link or ID for others.",
-                color = MaterialTheme.field.muted,
-                style = MaterialTheme.typography.bodySmall,
-                lineHeight = 16.sp,
+            ListReachButton(
+                shown = workshops?.size ?: 0,
+                total = workshopTotal,
+                label = ListReachText.loadAll(workshopTotal),
+                loading = listLoading,
+                tag = "review.workshops.more",
+                onClick = { listAttempt++ },
             )
         }
 
@@ -293,8 +303,6 @@ fun DesignReviewScreen(
         }
     }
 }
-
-private const val CHOOSER_PAGE = 100
 
 private val WORKSHOP_URL = Regex("""design-workshops/([^/?#]+)""")
 

@@ -48,6 +48,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { ComboBox, Dropdown, type DropdownOption } from "@/components/ui/Dropdown";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { apiFetch, listResource } from "@/lib/api";
+import { listAllPages } from "@/lib/listAllPages";
 import { bytes, countNoun, formatDateTime } from "@/lib/format";
 import { locationFromForm, textValue } from "@/lib/forms";
 import { inferMediaType, transcribeMediaNow, uploadMediaBatch, type BatchProgress } from "@/lib/media";
@@ -108,7 +109,7 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
   const params = { pageSize: LIST_PAGE_CEILING };
   switch (type) {
     case "artisan": {
-      const page = await listResource<Artisan>("/artisans", params);
+      const page = await listAllPages<Artisan>("/artisans", params);
       return {
         options: sortRecent(page.items).map((x) => ({ value: x.id, label: `${x.name} · ${x.place}` })),
         cut: listCut(page, "artisans"),
@@ -116,7 +117,7 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
       };
     }
     case "workshop": {
-      const page = await listResource<Workshop>("/workshops", { pageSize: WORKSHOP_OPTION_PAGE_SIZE });
+      const page = await listAllPages<Workshop>("/workshops", { pageSize: WORKSHOP_OPTION_PAGE_SIZE });
       return {
         options: fieldWorkshopOptions(
           { kind: "ok", rows: page.items, total: page.total },
@@ -129,7 +130,7 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
       return { options: [], cut: null };
     }
     case "tool": {
-      const page = await listResource<ToolDocumentation>("/tools", params);
+      const page = await listAllPages<ToolDocumentation>("/tools", params);
       return {
         options: sortRecent(page.items).map((x) => ({ value: x.id, label: toolRowLabel(x) })),
         cut: listCut(page, "tools"),
@@ -137,7 +138,7 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
       };
     }
     case "product": {
-      const page = await listResource<ProductDocumentation>("/products", params);
+      const page = await listAllPages<ProductDocumentation>("/products", params);
       return {
         options: sortRecent(page.items).map((x) => ({ value: x.id, label: `${x.productName} · ${x.artisanName}` })),
         cut: listCut(page, "products"),
@@ -145,7 +146,7 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
       };
     }
     case "process": {
-      const page = await listResource<ProcessListItem>("/processes", params);
+      const page = await listAllPages<ProcessListItem>("/processes", params);
       return {
         options: sortRecent(page.items).map((x) => ({
           value: x.id,
@@ -156,7 +157,7 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
       };
     }
     case "questionnaire": {
-      const page = await listResource<QuestionnaireInterview>("/questionnaire/interviews", params);
+      const page = await listAllPages<QuestionnaireInterview>("/questionnaire/interviews", params);
       return {
         options: sortRecent(page.items).map((x) => ({ value: x.id, label: x.title?.trim() || "Untitled interview" })),
         cut: listCut(page, "interviews"),
@@ -164,7 +165,7 @@ async function loadEntryOptions(type: string): Promise<EntryOptions> {
       };
     }
     case "media": {
-      const page = await listResource<MediaFile>("/media", params);
+      const page = await listAllPages<MediaFile>("/media", params);
       return {
         options: sortRecent(page.items).map((x) => {
           const tag = x.linkedRecordType?.trim()

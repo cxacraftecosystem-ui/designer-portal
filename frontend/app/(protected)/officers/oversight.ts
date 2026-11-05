@@ -272,11 +272,11 @@ export type DwRosterArtisan = {
   createdAt: string | null;
 };
 
-export type DwRosterList = { artisans: DwRosterArtisan[]; truncated: boolean };
+export type DwRosterList = { artisans: DwRosterArtisan[]; truncated: boolean; total?: number; nextOffset?: number | null };
 
-export function listWorkshopArtisans(workshopId: string) {
+export function listWorkshopArtisans(workshopId: string, offset = 0) {
   return apiFetch<DwRosterList>(
-    `/design-workshop-oversight/${encodeURIComponent(workshopId)}/artisans`
+    `/design-workshop-oversight/${encodeURIComponent(workshopId)}/artisans${buildQuery({ offset: offset || undefined })}`
   );
 }
 

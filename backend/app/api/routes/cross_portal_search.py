@@ -124,7 +124,7 @@ async def peer_search(
     scope.place = plain(body.filters.place).strip() or None if body.filters.place else None
     scope.date_from = body.filters.dateFrom
     scope.date_to = body.filters.dateTo
-    offset = (body.page - 1) * body.limit if body.type else 0
+    offset = (body.page - 1) * body.limit
 
     qvec = None
     if await search_embeddings.available(settings):
@@ -137,7 +137,8 @@ async def peer_search(
     count = 0
     for kind in cross_portal.SEARCH_TYPES:
         items = result.items.get(kind) or []
-        if not items:
+        total = int(result.totals.get(kind, len(items)) or 0)
+        if not items and not total:
             continue
         out = []
         for item in items:
@@ -148,7 +149,7 @@ async def peer_search(
             ]
             out.append(projected)
         count += len(out)
-        groups.append({"type": kind, "total": result.totals.get(kind, len(out)), "items": out})
+        groups.append({"type": kind, "total": max(total, len(out)), "items": out})
     await _log(asker, ACTION_SEARCH, "ok", resultCount=count)
     return signed(settings, request, {"mode": result.mode, "groups": groups})
 

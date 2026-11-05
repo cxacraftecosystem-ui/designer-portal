@@ -671,16 +671,22 @@ async def named_designer_rows(workshop: Any) -> list[dict[str, Any]]:
 ROSTER_TAKE = 200
 
 
-async def linked_artisan_rows(workshop_id: str) -> dict[str, Any]:
+async def linked_artisan_rows(workshop_id: str, offset: int = 0) -> dict[str, Any]:
+    offset = max(0, int(offset or 0))
     rows = await db.artisan.find_many(
         where={"designWorkshopId": workshop_id},
         include={"craft": True},
-        order={"createdAt": "desc"},
+        order=[{"createdAt": "desc"}, {"id": "asc"}],
+        skip=offset,
         take=ROSTER_TAKE + 1,
     )
     truncated = len(rows) > ROSTER_TAKE
     rows = rows[:ROSTER_TAKE]
+    total = await db.artisan.count(where={"designWorkshopId": workshop_id})
     return {
+        "total": total,
+        "offset": offset,
+        "nextOffset": offset + len(rows) if truncated else None,
         "artisans": [
             {
                 "id": row.id,

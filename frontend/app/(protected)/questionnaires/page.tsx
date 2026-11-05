@@ -36,7 +36,7 @@ import { UploadReport } from "@/components/questionnaires/UploadReport";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { useToast } from "@/components/ui/Toast";
-import { listDesignWorkshops, saveBlobToDisk, type DwSummary } from "@/lib/designWorkshops";
+import { listEveryDesignWorkshop, saveBlobToDisk, type DwSummary } from "@/lib/designWorkshops";
 import { formatDate } from "@/lib/format";
 import {
   downloadProForma,
@@ -58,7 +58,6 @@ import {
   designWorkshopOptions,
   deviceLooksOffline,
   NO_DESIGN_WORKSHOP,
-  WORKSHOP_OPTION_PAGE_SIZE,
   workshopEmptyLabel,
   workshopListNotice,
   workshopListStandsDown,
@@ -136,7 +135,7 @@ export default function QuestionnairesPage() {
 
   useEffect(() => {
     let cancelled = false;
-    listDesignWorkshops({ pageSize: WORKSHOP_OPTION_PAGE_SIZE })
+    listEveryDesignWorkshop()
       .then((result) => {
         if (!cancelled) setWorkshopList({ kind: "ok", rows: result.items ?? [], total: result.total });
       })

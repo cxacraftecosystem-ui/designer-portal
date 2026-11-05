@@ -143,12 +143,12 @@ test("the artisans list no longer intersects one server page in the browser", ()
 
 test("the funnel's artisan options are narrowed by the server, not by filtering a cut page", () => {
   const source = read("components", "FunnelFilters.tsx");
-  const request = between(source, 'listResource<Artisan>("/artisans"', "})");
+  const request = between(source, 'listAllPages<Artisan>("/artisans"', "})");
 
   expect(request, "the workshop must narrow the QUERY, not the array").toContain("workshopId: value.workshopId");
   expect(request).toContain("craftId: value.craftId");
 
-  const effect = between(source, 'listResource<Artisan>("/artisans"', "]);");
+  const effect = between(source, 'listAllPages<Artisan>("/artisans"', "]);");
   expect(effect).toContain("value.workshopId");
 
   expect(codeOf(source)).not.toContain("workshopArtisanIds");

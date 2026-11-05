@@ -11,7 +11,8 @@ import { RowActions, rowAction } from "@/components/RowActions";
 import { useAuth } from "@/components/AuthProvider";
 import { SearchableMultiSelect, type SelectOption } from "@/components/ui/SearchableSelect";
 import type { ProcessRecord } from "@/components/forms/ProcessForm";
-import { apiFetch, listResource } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
+import { listAllPages } from "@/lib/listAllPages";
 import { runPerPerson, type BatchOutcome, type BatchTarget } from "@/lib/sharingBatch";
 import {
   TIER_RANK,
@@ -235,14 +236,14 @@ export default function SharingPage() {
     const mine = currentUser.id;
     const owned = { pageSize: PICKER_PAGE_SIZE, createdBy: mine };
     const [a, p, t, w, q, c, pr, m] = await Promise.allSettled([
-      listResource<Artisan>("/artisans", owned),
-      listResource<ProductDocumentation>("/products", owned),
-      listResource<ToolDocumentation>("/tools", owned),
-      listResource<Workshop>("/workshops", owned),
-      listResource<QuestionnaireInterview>("/questionnaire/interviews", owned),
-      listResource<Craft & { createdById?: string | null }>("/crafts", owned),
-      listResource<ProcessRecord>("/processes", owned),
-      listResource<MediaFile & { uploadedById?: string | null }>("/media", {
+      listAllPages<Artisan>("/artisans", owned),
+      listAllPages<ProductDocumentation>("/products", owned),
+      listAllPages<ToolDocumentation>("/tools", owned),
+      listAllPages<Workshop>("/workshops", owned),
+      listAllPages<QuestionnaireInterview>("/questionnaire/interviews", owned),
+      listAllPages<Craft & { createdById?: string | null }>("/crafts", owned),
+      listAllPages<ProcessRecord>("/processes", owned),
+      listAllPages<MediaFile & { uploadedById?: string | null }>("/media", {
         pageSize: PICKER_PAGE_SIZE,
         uploadedBy: mine
       })

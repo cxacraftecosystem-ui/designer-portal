@@ -114,7 +114,7 @@ class DwBulkPickTest {
     @Test
     fun `the bulk add asks for the server's ceiling, and the sheet says when the list is one page`() {
         assertEquals(200, DW_BULK_PAGE)
-        assertEquals("Showing the first 200. Search to find the rest.", dwBulkCutShortNote(200))
+        assertEquals("Showing the first 1000, more than a stage holds (500). Search for others.", dwBulkCutShortNote(1000))
         val backend = File("../../backend/app/services/design_workshops.py")
         assertTrue("${backend.absolutePath} is missing", backend.exists())
         assertTrue(backend.readText(Charsets.UTF_8).contains("REFERENCE_LIMIT_MAX = $DW_BULK_PAGE"))
@@ -138,6 +138,7 @@ class DwBulkPickTest {
         val source = stage.readText(Charsets.UTF_8)
         assertTrue(source.contains("cacheOnly = true,"))
         assertTrue(source.contains("limit = DW_BULK_PAGE,"))
+        assertTrue("the sheet reads every page so each record can be ticked", source.contains("limit = null,"))
         assertTrue(source.contains("bulkScope.launch { refreshBulk() }"))
         assertTrue(source.contains("dwBulkAddedSentence(outcome, truncated = truncated"))
     }

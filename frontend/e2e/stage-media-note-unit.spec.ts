@@ -243,6 +243,7 @@ test("the fetch is guarded against its own late answers and against the endpoint
   const source = COMPONENT();
   expect(source, "a late answer must not win").toContain("mine !== generation.current");
   expect(source).toContain("const PAGE_SIZE = 100");
-  expect(source).toContain("const MAX_PAGES = 3");
+  expect(source, "every page is walked, so the last file is listed").not.toContain("MAX_PAGES");
+  expect(source).toContain("for (let page = 1; ; page += 1)");
   expect(source).toContain("Showing the latest {rows.length} of {total}.");
 });

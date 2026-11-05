@@ -1057,7 +1057,9 @@ function ArtisanListPanel({
   const [history, setHistory] = useState<DwArtisanImport[] | null>(null);
 
   const [roster, setRoster] = useState<DwRosterArtisan[] | null>(null);
-  const [rosterTruncated, setRosterTruncated] = useState(false);
+  const [rosterNext, setRosterNext] = useState<number | null>(null);
+  const [rosterTotal, setRosterTotal] = useState<number | null>(null);
+  const [rosterLoadingMore, setRosterLoadingMore] = useState(false);
   const [keeping, setKeeping] = useState<string[]>([]);
   const [removing, setRemoving] = useState(false);
   const [rosterSaved, setRosterSaved] = useState<string | null>(null);
@@ -1067,11 +1069,30 @@ function ArtisanListPanel({
       const list = await listWorkshopArtisans(workshop.id);
       setRoster(list.artisans);
       setKeeping(list.artisans.map((row) => row.id));
-      setRosterTruncated(Boolean(list.truncated));
+      setRosterNext(list.truncated ? (list.nextOffset ?? list.artisans.length) : null);
+      setRosterTotal(typeof list.total === "number" ? list.total : null);
     } catch (err) {
       onError(describeFailure(err, "this workshop's artisan roster"));
     }
   }, [workshop.id, onError]);
+
+  const moreRoster = useCallback(async () => {
+    if (rosterNext === null) return;
+    setRosterLoadingMore(true);
+    try {
+      const list = await listWorkshopArtisans(workshop.id, rosterNext);
+      setRoster((previous) => {
+        const seen = new Set((previous ?? []).map((row) => row.id));
+        return [...(previous ?? []), ...list.artisans.filter((row) => !seen.has(row.id))];
+      });
+      setKeeping((previous) => [...previous, ...list.artisans.map((row) => row.id).filter((id) => !previous.includes(id))]);
+      setRosterNext(list.truncated && list.artisans.length ? (list.nextOffset ?? rosterNext + list.artisans.length) : null);
+    } catch (err) {
+      onError(describeFailure(err, "this workshop's artisan roster"));
+    } finally {
+      setRosterLoadingMore(false);
+    }
+  }, [workshop.id, onError, rosterNext]);
 
   const reloadHistory = useCallback(() => {
     listArtisanImports(workshop.id)
@@ -1202,10 +1223,17 @@ function ArtisanListPanel({
         )}
       </FieldBlock>
 
-      {rosterTruncated ? (
-        <p className="mt-2 text-xs leading-5 text-ink-500">
-          Showing the latest 200.
-        </p>
+      {rosterNext !== null ? (
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <p className="text-xs leading-5 text-ink-500">
+            {rosterTotal !== null ? `Showing ${roster?.length ?? 0} of ${rosterTotal}.` : `Showing ${roster?.length ?? 0}.`}
+          </p>
+          <ActionGroup>
+            <button type="button" className="field-button-secondary min-h-10" data-testid="roster-more" disabled={rosterLoadingMore} onClick={() => void moreRoster()}>
+              {rosterLoadingMore ? "Loading…" : "Show more"}
+            </button>
+          </ActionGroup>
+        </div>
       ) : null}
 
       {roster && roster.length ? (

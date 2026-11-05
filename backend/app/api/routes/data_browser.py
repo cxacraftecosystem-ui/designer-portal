@@ -3263,6 +3263,7 @@ async def data_report(
     thumbnails: str | None = None,
     locale: str | None = None,
     extras: str | None = None,
+    offset: int = Query(0, ge=0, le=REPORT_TAKE),
     current_user: Any = Depends(require_dataset_downloader),
 ) -> Response:
     fmt = (format or "xlsx").strip().lower()
@@ -3280,7 +3281,7 @@ async def data_report(
     try:
         return await _build_report(
             path, fmt, current_user, q=q, sheet=sheet, options=options,
-            file_name=report_options.file_name(name),
+            file_name=report_options.file_name(name), offset=offset,
         )
     except report_cache.ReportBusy as busy:
         raise HTTPException(
@@ -3298,25 +3299,31 @@ async def _queued(work: Any) -> Any:
             _trim_heap()
 
 
-def _preview(sheets: list[dict[str, Any]], uncounted: set[int]) -> list[dict[str, Any]]:
+def _preview(
+    sheets: list[dict[str, Any]], uncounted: set[int], offset: int = 0
+) -> list[dict[str, Any]]:
+    start = max(0, offset)
+    end = start + PREVIEW_ROWS
     out = []
     for index, sheet in enumerate(sheets):
         rows = sheet.get("rows") or []
         note = rows[-1:] if sheet.get("noteRow") else []
         data = rows[:-1] if note else rows
-        shown = data[:PREVIEW_ROWS]
+        shown = data[start:end]
         known = index not in uncounted
-        cut = len(data) > PREVIEW_ROWS or (not known and bool(sheet.get("truncated")))
+        cut = len(data) > end or (not known and bool(sheet.get("truncated")))
         capped = bool(sheet.get("truncated")) and known
+        noted = capped and (start == 0 or end >= len(data))
         entry = {k: v for k, v in sheet.items() if k not in ("rows", "noteRow")}
-        numbers = list(range(1, len(shown) + 1))
+        numbers = list(range(start + 1, start + len(shown) + 1))
         entry.update(
-            rows=[*shown, *note] if capped else shown,
-            rowNumbers=[*numbers, *([0] * len(note))] if capped else numbers,
+            rows=[*shown, *note] if noted else shown,
+            rowNumbers=[*numbers, *([0] * len(note))] if noted else numbers,
             truncated=cut or capped,
             preview=cut,
             capped=capped,
             totalRows=len(data) if known else None,
+            offset=start,
         )
         out.append(entry)
     return out
@@ -3410,6 +3417,7 @@ async def _build_report(
     sheet: str | None = None,
     options: report_options.ReportOptions | None = None,
     file_name: str | None = None,
+    offset: int = 0,
 ) -> Response:
     options = options or report_options.ReportOptions()
     scope = await _scope_for(current_user)
@@ -3440,7 +3448,11 @@ async def _build_report(
             headers={"Content-Disposition": _content_disposition(csv_name)},
         )
     if fmt == "json":
-        shown = report_tools.search(sheets, q) if searching else _preview(sheets, set())
+        shown = (
+            report_tools.search(sheets, q, offset=offset)
+            if searching
+            else _preview(sheets, set(), offset)
+        )
         report_tools.cap_prose(shown)
         return JSONResponse(
             {

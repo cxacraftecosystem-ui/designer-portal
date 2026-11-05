@@ -88,6 +88,10 @@ import com.designprototype.workshop.ui.splitNumbered
 import com.designprototype.workshop.ui.field
 import com.designprototype.workshop.ui.formatFieldDate
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
+import com.designprototype.workshop.ui.SelectLoadMore
+import com.designprototype.workshop.ui.serverHasMore
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -555,6 +559,11 @@ private fun DwWorkshopNameField(
     var localError by remember(field.key, resetKey) { mutableStateOf<String?>(null) }
     var spoken by remember(field.key, resetKey) { mutableStateOf("") }
     var nameQuery by remember(field.key, resetKey) { mutableStateOf("") }
+    var titles by remember(field.key, resetKey) { mutableStateOf<List<String>>(emptyList()) }
+    var namePages by remember(field.key, resetKey) { mutableStateOf(1) }
+    var nameMoreLoading by remember(field.key, resetKey) { mutableStateOf(false) }
+    var nameMoreFailed by remember(field.key, resetKey) { mutableStateOf(false) }
+    val nameScope = rememberCoroutineScope()
 
     val current = DwValues.text(value)
 
@@ -582,9 +591,54 @@ private fun DwWorkshopNameField(
             if (nameQuery.isNotBlank()) offer = DwWorkshopNameOffer(emptyList(), 0)
             return@LaunchedEffect
         }
-        val built = dwWorkshopNamesOnRecord(answer.items.map { it.title }, field.maxLength)
+        titles = answer.items.map { it.title }
+        namePages = 1
+        nameMoreFailed = false
+        val built = dwWorkshopNamesOnRecord(titles, field.maxLength)
         offer = built
         list = WorkshopListState.Listed(count = built.names.size, total = answer.total)
+    }
+
+    val nameTotal = (list as? WorkshopListState.Listed)?.total ?: 0
+    val nameMore = if (serverHasMore(namePages, DW_NAME_OFFER_PAGE_SIZE, nameTotal) || nameMoreFailed) {
+        SelectLoadMore(
+            shown = titles.size,
+            total = nameTotal,
+            loading = nameMoreLoading,
+            failed = nameMoreFailed,
+            onClick = {
+                if (!nameMoreLoading) {
+                    val asked = nameQuery
+                    nameScope.launch {
+                        nameMoreLoading = true
+                        nameMoreFailed = false
+                        try {
+                            val next = services.repository.designWorkshops(
+                                page = namePages + 1,
+                                pageSize = DW_NAME_OFFER_PAGE_SIZE,
+                                search = asked.trim().takeIf { it.isNotEmpty() },
+                                workshopKind = workshopKind.takeIf { it.isNotBlank() },
+                            )
+                            if (asked == nameQuery) {
+                                titles = titles + next.items.map { it.title }
+                                namePages += 1
+                                val built = dwWorkshopNamesOnRecord(titles, field.maxLength)
+                                offer = built
+                                list = WorkshopListState.Listed(count = built.names.size, total = next.total)
+                            }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Throwable) {
+                            nameMoreFailed = true
+                        } finally {
+                            nameMoreLoading = false
+                        }
+                    }
+                }
+            },
+        )
+    } else {
+        null
     }
 
     val options = remember(current, offer) { dwWorkshopNameOptions(current, offer.names) }
@@ -610,6 +664,7 @@ private fun DwWorkshopNameField(
                     onClick = ::commit,
                 ),
                 onSearch = { typed -> nameQuery = typed },
+                loadMore = nameMore,
                 onSelect = { picked -> if (picked.isNotBlank()) commit(picked) },
             )
             if (canDictate) {
@@ -642,7 +697,7 @@ private fun DwWorkshopNameField(
         Text(
             dwWorkshopNameOfferLine(
                 workshopKind = workshopKind,
-                shown = offer.names.size,
+                shown = titles.size,
                 total = listed?.total ?: 0,
                 searching = nameQuery.isNotBlank(),
             ),

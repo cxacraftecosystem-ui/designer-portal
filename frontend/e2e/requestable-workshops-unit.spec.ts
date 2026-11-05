@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 import { unknownTotalNoticeSentence } from "@/components/ui/selectFilter";
 import {
   REQUESTABLE_CAP_HINT,
+  readEveryRequestable,
   readRequestableAnswer,
   requestableCeilingSentence
 } from "@/lib/requestableWorkshops";
@@ -65,4 +66,25 @@ test("the ceiling sentence is the shared flag-arm sentence, word for word", () =
   expect(requestableCeilingSentence(37, true)).toBe(
     unknownTotalNoticeSentence({ shown: 37, pinned: 0, term: "", hint: REQUESTABLE_CAP_HINT })
   );
+});
+
+test("every page is walked, so the oldest workshop can be asked about", async () => {
+  const all = Array.from({ length: 31 }, (_, index) => row(`w${index + 1}`));
+  const asked: number[] = [];
+  const answer = await readEveryRequestable<Row>(async (offset) => {
+    asked.push(offset);
+    const items = all.slice(offset, offset + 10);
+    const more = offset + items.length < all.length;
+    return { items, truncated: more, nextOffset: more ? offset + items.length : null };
+  });
+  expect(asked).toEqual([0, 10, 20, 30]);
+  expect(answer.items.map((r) => r.id).at(-1)).toBe("w31");
+  expect(answer.items).toHaveLength(31);
+  expect(answer.truncated).toBe(false);
+});
+
+test("an older server without nextOffset still answers, and says it cut the list", async () => {
+  const answer = await readEveryRequestable<Row>(async () => ({ items: [row("a")], truncated: true }));
+  expect(answer.items.map((r) => r.id)).toEqual(["a"]);
+  expect(answer.truncated).toBe(true);
 });
