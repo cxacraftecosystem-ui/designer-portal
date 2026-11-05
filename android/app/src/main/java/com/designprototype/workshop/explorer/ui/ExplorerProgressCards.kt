@@ -259,7 +259,7 @@ internal fun RecentRow(file: ExplorerRecent, active: Boolean, last: Boolean = fa
         ) {
             ExplorerGlyph { Text(mark, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, color = tone?.accent ?: markFg) }
         }
-        Text(file.name.substringAfterLast('/'), style = MaterialTheme.typography.bodyMedium, color = tone?.content ?: MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Text(file.name.substringAfterLast('/'), style = MaterialTheme.typography.bodyMedium, color = tone?.content ?: MaterialTheme.colorScheme.onSurface, maxLines = if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) Int.MAX_VALUE else 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         val end = when (file.status) {
             ExplorerRecentStatus.SAVED -> ExplorerBytes.format(file.sizeBytes)
             ExplorerRecentStatus.RETRYING -> if (active) ExplorerUiText.retrying else ExplorerUiText.failed
