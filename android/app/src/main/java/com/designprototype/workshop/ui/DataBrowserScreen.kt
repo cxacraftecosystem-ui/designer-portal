@@ -40,6 +40,7 @@ fun DataBrowserScreen(
     startPath: String = "",
     onPathChange: (String) -> Unit = {},
     onOpenRemote: ((type: String, id: String) -> Unit)? = null,
+    onRecordNow: ((folderPath: String, folderName: String) -> Unit)? = null,
 ) {
     ExplorerScreen(
         onBack = onBack,
@@ -47,6 +48,7 @@ fun DataBrowserScreen(
         onMessage = onMessage,
         onOpenMedia = onOpenMedia,
         startPath = startPath.takeIf { it.isNotBlank() },
+        onRecordNow = onRecordNow,
         search = { onOpen -> DataRecordSearch(repository, onOpen) },
         searchScreen = { query, onOpenInData, onPlay, onClose ->
             DataUnifiedSearch(
@@ -60,6 +62,9 @@ fun DataBrowserScreen(
         },
     )
 }
+
+fun dataFolderArtisan(path: String): String? =
+    path.split('/').zipWithNext().lastOrNull { (segment, _) -> segment == "artisans" }?.second?.takeIf { it.isNotBlank() }
 
 @Composable
 internal fun DataRecordSearch(repository: WorkshopRepository, onOpen: (recordType: String, recordId: String, title: String) -> Unit) {

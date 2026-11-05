@@ -876,7 +876,7 @@ private enum class EntryMode(
     TOOL("Tool", "Record tool", editable = true, group = DashGroup.RECORDS),
     QUESTIONNAIRE("Questionnaire", "Take interview", editable = true, group = DashGroup.RECORDS),
     MEDIA("Miscellaneous Media", "Upload media", group = DashGroup.RECORDS),
-    VIEW_DATA("Data", "Browse records", group = DashGroup.MISC),
+    VIEW_DATA("View Data", "Browse records", group = DashGroup.MISC),
     SEARCH("Search", "Search", onDashboard = false, group = null),
     DATA_BROWSER("Data Browser", "Data Browser", onDashboard = false, group = null),
     MAP("Map", "Map", group = DashGroup.MISC),
@@ -2202,7 +2202,7 @@ private fun HomeScreen(
         is Screen.TwoStepVerification -> null
         is Screen.AccountPassword -> null
         is Screen.Aadhaar -> null
-        is Screen.DataBrowser -> "Data"
+        is Screen.DataBrowser -> "Data Browser"
         is Screen.DesignWorkshops -> null
         is Screen.DesignWorkshopStages -> null
         is Screen.DesignWorkshopStage -> null
@@ -2410,7 +2410,11 @@ private fun HomeScreen(
                         },
                         startPath = dataBrowserPath,
                         onPathChange = { dataBrowserPath = it },
-                        onOpenRemote = { type, id -> screen = Screen.RemoteRecord(type, id, from = Screen.DataBrowser) }
+                        onOpenRemote = { type, id -> screen = Screen.RemoteRecord(type, id, from = Screen.DataBrowser) },
+                        onRecordNow = { path, name ->
+                            val artisanId = com.designprototype.workshop.ui.dataFolderArtisan(path)
+                            screen = Screen.Create(EntryMode.MEDIA, artisanId?.let { Prefill(artisanId = it, artisanName = name) }, from = Screen.DataBrowser)
+                        }
                     )
 
                     is Screen.Appearance -> AppearanceScreen(

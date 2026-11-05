@@ -55,6 +55,7 @@ import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.explorer.ui.ExplorerStatus
 import com.designprototype.workshop.explorer.ui.explorerMark
 import com.designprototype.workshop.explorer.ui.explorerTone
+import com.designprototype.workshop.explorer.ui.explorerWarnTone
 import com.designprototype.workshop.explorer.ui.marked
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -77,6 +78,10 @@ object DataSearchText {
     const val searching = "Searching…"
     const val failed = "Search didn't load."
     const val tryAgain = "Try again"
+    const val tryNow = "Try now"
+    const val offline = "You're offline. Search runs again when you're back online."
+
+    fun retryIn(seconds: Int) = "Trying again in $seconds s."
     const val clearFilter = "Clear filter"
     const val inBoth = "in both"
     const val sameInBoth = "Same person in both portals"
@@ -141,6 +146,10 @@ internal object DataSearchRules {
     fun remoteTotal(r: UnifiedSearchResponse) = r.groups.sumOf { it.remoteTotal }
 
     fun crossAvailable(r: UnifiedSearchResponse?) = r != null && r.remote.status != "off" && r.remote.status != "notPermitted"
+
+    fun crossBlocked(scope: String, r: UnifiedSearchResponse): Boolean = scope == "all" && !crossAvailable(r)
+
+    const val RETRY_SECONDS = 10
 }
 
 private sealed interface Found {
@@ -148,7 +157,7 @@ private sealed interface Found {
     data object Loading : Found
     data class Ready(val response: UnifiedSearchResponse, val items: List<UnifiedSearchItemDto>, val more: Boolean) : Found
     data object Legacy : Found
-    data object Failed : Found
+    data class Failed(val offline: Boolean) : Found
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -168,6 +177,8 @@ internal fun DataUnifiedSearch(
     var attempt by remember { mutableStateOf(0) }
     var found by remember { mutableStateOf<Found>(Found.Idle) }
     var last by remember { mutableStateOf<UnifiedSearchResponse?>(null) }
+    var blocked by rememberSaveable { mutableStateOf(false) }
+    var countdown by remember { mutableStateOf<Int?>(null) }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 
@@ -183,6 +194,10 @@ internal fun DataUnifiedSearch(
         found = try {
             val r = repository.unifiedSearchIn(q, limit = if (type == null) 5 else 20, scope = scope, type = type, page = page)
             last = r
+            if (DataSearchRules.crossBlocked(scope, r)) {
+                blocked = true
+                scope = "local"
+            }
             val items = r.groups.filter { type == null || it.type == type }.flatMap { g -> g.items.filter { it.id.isNotBlank() } }
             val total = r.groups.filter { it.type == type }.sumOf { it.total }
             val merged = (previous?.items.orEmpty() + items).distinctBy { "${it.portal}:${it.type}:${it.id}" }
@@ -190,9 +205,22 @@ internal fun DataUnifiedSearch(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: HttpException) {
-            if (e.code() == 404) Found.Legacy else if (e.code() == 422) Found.Idle else Found.Failed
+            if (e.code() == 404) Found.Legacy else if (e.code() == 422) Found.Idle else Found.Failed(offline = false)
+        } catch (e: java.io.IOException) {
+            Found.Failed(offline = true)
         } catch (e: Throwable) {
-            Found.Failed
+            Found.Failed(offline = false)
+        }
+        val failed = found as? Found.Failed
+        if (failed != null && !failed.offline) {
+            for (left in DataSearchRules.RETRY_SECONDS downTo 1) {
+                countdown = left
+                delay(1_000)
+            }
+            countdown = null
+            attempt++
+        } else {
+            countdown = null
         }
     }
 
@@ -211,7 +239,7 @@ internal fun DataUnifiedSearch(
             )
         }
         val response = (found as? Found.Ready)?.response ?: last
-        if (DataSearchRules.crossAvailable(response)) {
+        if (!blocked) {
             ScopeSwitch(scope) { scope = it; page = 1 }
         }
         if (scope == "all" && response != null) {
@@ -231,11 +259,16 @@ internal fun DataUnifiedSearch(
         when (val now = found) {
             Found.Idle -> if (query.isNotBlank()) Text(DataSearchText.typeMore, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Found.Loading -> Text(DataSearchText.searching, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.testTag("data.search.loading"))
-            Found.Failed -> {
-                val tone = explorerTone(ExplorerStatus.FAILED)!!
-                Row(Modifier.fillMaxWidth().background(tone.container, MaterialTheme.shapes.large).border(1.dp, tone.border, MaterialTheme.shapes.large).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(DataSearchText.failed, color = tone.content, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { attempt++ }, modifier = Modifier.testTag("data.search.retry")) { Text(DataSearchText.tryAgain, color = tone.content) }
+            is Found.Failed -> {
+                val tone = if (now.offline) explorerWarnTone() else explorerTone(ExplorerStatus.FAILED)!!
+                Row(Modifier.fillMaxWidth().background(tone.container, MaterialTheme.shapes.large).border(1.dp, tone.border, MaterialTheme.shapes.large).padding(12.dp).testTag(if (now.offline) "data.search.offline" else "data.search.failed"), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (now.offline) DataSearchText.offline else listOfNotNull(DataSearchText.failed, countdown?.let { DataSearchText.retryIn(it) }).joinToString(" "),
+                        color = tone.content,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { attempt++ }, modifier = Modifier.testTag("data.search.retry")) { Text(DataSearchText.tryNow, color = tone.content) }
                 }
             }
             Found.Legacy -> Column(Modifier.fillMaxWidth().testTag("data.search.legacy")) {
@@ -247,7 +280,7 @@ internal fun DataUnifiedSearch(
                         query = query.trim(),
                         suggestion = now.response.suggestion,
                         filtered = type != null,
-                        canWiden = scope == "local" && DataSearchRules.crossAvailable(now.response),
+                        canWiden = scope == "local" && !blocked,
                         onSuggest = { query = it; page = 1 },
                         onClear = { type = null; page = 1 },
                         onWiden = { scope = "all"; page = 1 },
@@ -346,7 +379,7 @@ private fun ResultCard(
             )
             DataSearchRules.date(item.recordDate)?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
-        Text(item.title.ifBlank { item.id }, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(item.title.ifBlank { item.id }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
         item.snippet?.takeIf { it.isNotBlank() }?.let { snippet ->
             Text(
                 marked(snippet, DataSearchRules.ranges(item, snippet), markBg, markFg),
@@ -399,7 +432,7 @@ private fun LegacyHits(repository: WorkshopRepository, query: String, onOpen: (S
     if (search.loading && search.hits.isEmpty()) Text(DataSearchText.searching, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     search.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
     if (search.searched && !search.loading && search.hits.isEmpty() && search.error == null) {
-        Text(DataSearchText.noMatches(query.trim()), style = MaterialTheme.typography.titleSmall)
+        Text(DataSearchText.noMatches(query.trim()), style = MaterialTheme.typography.titleMedium)
     }
     search.hits.forEach { hit -> SearchResultRow(row = hit, onOpen = { onOpen(hit.recordType, hit.id, hit.title) }) }
 }
