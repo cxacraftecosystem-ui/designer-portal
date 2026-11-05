@@ -113,14 +113,26 @@ async def collect(ctx: ReportContext) -> dict[str, Any]:
             del loaded
             if capped:
                 break
-        queued = await _queue_missing(ctx, lacking)
-        return {"rows": rows, "queued": queued, "withheld": withheld, "capped": capped}
+        return {"rows": rows, "lacking": lacking, "withheld": withheld, "capped": capped}
 
     return await ai_cache.cached(ctx, "quotes", ids, build)
 
 
-def columns(ctx: ReportContext) -> list[Column]:
-    answers = ctx.options.answers
+async def queue_missing(ctx: ReportContext, found: dict[str, Any]) -> int:
+    lacking = list(found.get("lacking") or [])
+    if not lacking:
+        return 0
+    return await ai_cache.cached(ctx, "quotes-queue", lacking, lambda: _queue_missing(ctx, lacking))
+
+
+async def top_quotes(ctx: ReportContext, limit: int = 40) -> list[dict[str, Any]]:
+    found = await collect(ctx)
+    keep = ("mediaId", "file", "artisan", "speaker", "original", "english", "language", "startMs")
+    return [{k: row.get(k) for k in keep} for row in (found.get("rows") or [])[: max(limit, 0)]]
+
+
+def columns(ctx: ReportContext | None = None) -> list[Column]:
+    answers, links = ai_cache.options_of(ctx)
     cols = [
         Column(
             "file",
@@ -195,7 +207,7 @@ def columns(ctx: ReportContext) -> list[Column]:
             source="TranscriptTurn.startMs",
         ),
     ]
-    if ctx.options.links:
+    if links:
         cols += [
             Column(
                 "play",
@@ -248,21 +260,42 @@ class QuotesSheet:
     option = "quotes"
     portals = ("designer", "fieldRepository")
 
+    def catalog(self) -> list[Sheet]:
+        return [Sheet(key=self.key, name="Quotes", columns=columns(), rows=[], group="transcripts")]
+
     async def build(self, ctx: ReportContext) -> list[Sheet]:
         found = await collect(ctx)
+        queued = await queue_missing(ctx, found)
         banners: list[Banner] = []
-        if found.get("queued"):
+        if queued:
             banners.append(
                 Banner(
-                    f"{found['queued']} more recordings are being summarised. Their quotes join the next report."
+                    ai_cache.say(
+                        ctx,
+                        "banner.quotes.queued",
+                        "{n} more recordings are being summarised. Their quotes join the next report.",
+                        n=queued,
+                    )
                 )
             )
         notes: list[str] = []
         if found.get("capped"):
-            notes.append(f"The first {QUOTES_CAP:,} quotes, newest recordings first.")
+            notes.append(
+                ai_cache.say(
+                    ctx,
+                    "banner.quotes.capped",
+                    "The first {n:,} quotes, newest recordings first.",
+                    n=QUOTES_CAP,
+                )
+            )
         if found.get("withheld"):
             notes.append(
-                f"{found['withheld']} recordings are left out because consent withholds their words."
+                ai_cache.say(
+                    ctx,
+                    "banner.consent.withheld",
+                    "{n} recordings are left out because consent withholds their words.",
+                    n=found["withheld"],
+                )
             )
         return [
             Sheet(

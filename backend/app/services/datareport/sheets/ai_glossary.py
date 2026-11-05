@@ -83,7 +83,8 @@ async def collect(ctx: ReportContext) -> dict[str, Any]:
     return await ai_cache.cached(ctx, "glossary", ids, build)
 
 
-def columns(ctx: ReportContext) -> list[Column]:
+def columns(ctx: ReportContext | None = None) -> list[Column]:
+    _answers, links = ai_cache.options_of(ctx)
     cols = [
         Column(
             "term",
@@ -158,7 +159,7 @@ def columns(ctx: ReportContext) -> list[Column]:
             source="TranscriptGlossarySighting.startMs",
         ),
     ]
-    if ctx.options.links:
+    if links:
         cols.append(
             Column(
                 "play",
@@ -212,14 +213,32 @@ class GlossarySheet:
     option = "glossary"
     portals = ("designer", "fieldRepository")
 
+    def catalog(self) -> list[Sheet]:
+        return [
+            Sheet(key=self.key, name="Glossary", columns=columns(), rows=[], group="transcripts")
+        ]
+
     async def build(self, ctx: ReportContext) -> list[Sheet]:
         found = await collect(ctx)
         notes: list[str] = []
         if found.get("capped"):
-            notes.append(f"The first {SIGHTINGS_CAP:,} of {found['total']:,} sightings, by term.")
+            notes.append(
+                ai_cache.say(
+                    ctx,
+                    "banner.glossary.capped",
+                    "The first {n:,} of {total:,} sightings, by term.",
+                    n=SIGHTINGS_CAP,
+                    total=found["total"],
+                )
+            )
         if found.get("withheld"):
             notes.append(
-                f"{found['withheld']} recordings are left out because consent withholds their words."
+                ai_cache.say(
+                    ctx,
+                    "banner.consent.withheld",
+                    "{n} recordings are left out because consent withholds their words.",
+                    n=found["withheld"],
+                )
             )
         return [
             Sheet(

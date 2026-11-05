@@ -20,14 +20,17 @@ def value(obj: Any, key: str, default: Any = None) -> Any:
     return default if found is None else found
 
 
-def records(ctx: ReportContext) -> dict[str, Any]:
+def material_records(ctx: ReportContext) -> dict[str, Any]:
     material = ctx.material if isinstance(ctx.material, dict) else {}
     nested = material.get("records")
     return nested if isinstance(nested, dict) else material
 
 
 def items(ctx: ReportContext, key: str) -> list[Any]:
-    found = records(ctx).get(key)
+    reader = getattr(ctx, "records", None)
+    if callable(reader):
+        return list(reader(key) or [])
+    found = material_records(ctx).get(key)
     return list(found) if isinstance(found, list | tuple) else []
 
 
@@ -93,6 +96,20 @@ def media_artisan(media: Any, names: dict[str, str]) -> str:
     if artisan is not None and value(artisan, "name"):
         return str(value(artisan, "name"))
     return names.get(str(value(media, "artisanId", "")), "")
+
+
+def say(ctx: ReportContext, key: str, default: str, **values: Any) -> str:
+    text = ctx.t(key, default) if ctx.t is not None else default
+    try:
+        return text.format(**values) if values else text
+    except KeyError, IndexError, ValueError:
+        return default.format(**values) if values else default
+
+
+def options_of(ctx: ReportContext | None) -> tuple[str, bool]:
+    if ctx is None:
+        return "both", True
+    return ctx.options.answers, bool(ctx.options.links)
 
 
 def file_label(media: Any) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -109,13 +110,31 @@ async def _consents(ids: list[str]) -> dict[str, dict[str, dict[str, Any]]]:
     return out
 
 
-def _row(section: str, item: str, detail: Any = "", **extra: Any) -> dict[str, Any]:
+def _row(
+    section: str, item: str, detail: Any = "", *, fixed: bool = False, **extra: Any
+) -> dict[str, Any]:
     return {
         "section": section,
         "item": item,
         "detail": "" if detail is None else str(detail),
+        "_fixed": fixed,
         **extra,
     }
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", text.casefold()).strip("_")
+
+
+def _translate(ctx: ReportContext, rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        fixed = row.pop("_fixed", False)
+        section = row["section"]
+        row["section"] = ai_cache.say(ctx, f"profile.section.{_slug(section)}", section)
+        if fixed:
+            row["item"] = ai_cache.say(ctx, f"profile.item.{_slug(row['item'])}", row["item"])
+        if row.get("status"):
+            row["status"] = ai_cache.say(ctx, f"status.{_slug(row['status'])}", row["status"])
 
 
 def _links(ctx: ReportContext, **links: Link | None) -> dict[str, Link | None]:
@@ -211,7 +230,7 @@ def profile_rows(
     ]
     for item, detail, extra in entries:
         if detail not in (None, ""):
-            rows.append(_row(facts, item, detail, **extra))
+            rows.append(_row(facts, item, detail, fixed=True, **extra))
     rows.append(
         _row(
             facts,
@@ -219,6 +238,7 @@ def profile_rows(
             f"Recorded by {value(value(artisan, 'createdBy'), 'name')}"
             if value(value(artisan, "createdBy"), "name")
             else "",
+            fixed=True,
             when=_when(value(artisan, "recordedAt")),
             status=_label(value(artisan, "status")),
         )
@@ -229,6 +249,7 @@ def profile_rows(
                 facts,
                 "Review",
                 value(artisan, "reviewNotes"),
+                fixed=True,
                 when=_when(value(artisan, "reviewedAt")),
             )
         )
@@ -250,6 +271,7 @@ def profile_rows(
                 "Consent",
                 label,
                 " · ".join(str(b) for b in bits if b),
+                fixed=True,
                 when=_when(found.get("recordedAt")) if found else None,
                 status=state,
             )
@@ -342,10 +364,12 @@ def profile_rows(
 
     for row in rows:
         row["artisanId"] = aid
+    _translate(ctx, rows)
     return rows
 
 
-def columns(ctx: ReportContext) -> list[Column]:
+def columns(ctx: ReportContext | None = None) -> list[Column]:
+    _answers, links = ai_cache.options_of(ctx)
     cols = [
         Column("section", "Section", "text", "Which part of the profile the row belongs to.", 14),
         Column("item", "Item", "text", "The fact, record or file.", 26),
@@ -360,7 +384,7 @@ def columns(ctx: ReportContext) -> list[Column]:
             "size", "Size", "bytes", "File size, for recordings.", 10, source="MediaFile.sizeBytes"
         ),
     ]
-    if ctx.options.links:
+    if links:
         cols += [
             Column("open", "Open", "link", "Opens the record or file in the portal.", 12),
             Column(
@@ -431,6 +455,9 @@ class ProfileSheets:
     option = "profiles"
     portals = ("designer", "fieldRepository")
 
+    def catalog(self) -> list[Sheet]:
+        return [Sheet(key="profile", name="Profile", columns=columns(), rows=[], group="profiles")]
+
     async def build(self, ctx: ReportContext) -> list[Sheet]:
         artisans = [a for a in ai_cache.items(ctx, "artisans") if value(a, "id")]
         artisans = list({str(value(a, "id")): a for a in artisans}.values())
@@ -445,16 +472,23 @@ class ProfileSheets:
         cols = columns(ctx)
         taken: set[str] = set()
         sheets: list[Sheet] = []
+        label = ai_cache.say(ctx, "sheet.profile", "Profile")
         for index, artisan in enumerate(shown, start=1):
             aid = str(value(artisan, "id"))
             note = None
             if index == 1 and total > PROFILES_CAP:
-                note = f"Profiles for the first {PROFILES_CAP} of {total} artisans, by name. Open a smaller folder for the rest."
+                note = ai_cache.say(
+                    ctx,
+                    "banner.profiles.capped",
+                    "Profiles for the first {n} of {total} artisans, by name. Open a smaller folder for the rest.",
+                    n=PROFILES_CAP,
+                    total=total,
+                )
             sheets.append(
                 Sheet(
                     key=f"profile-{aid}",
                     name=ai_cache.sheet_name(
-                        str(value(artisan, "name") or "Artisan"), taken, prefix=f"{index:02d} "
+                        str(value(artisan, "name") or "Artisan"), taken, prefix=f"{label} · "
                     ),
                     columns=cols,
                     rows=profile_rows(ctx, artisan, related[aid], consents.get(aid, {})),
