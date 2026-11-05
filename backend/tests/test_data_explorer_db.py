@@ -453,7 +453,7 @@ def test_a_folder_of_more_than_five_hundred_pages_to_its_last_item():
                     if not cursor:
                         break
                 plain = (await client.get("/api/data/tree", params={"path": _artisan_path(seed)}, headers=headers)).json()
-            return {"pages": pages, "plain": plain}
+            return {"pages": pages, "plain": plain, "made": [m.id for m in made if (m.originalFilename or "").startswith("big")]}
         finally:
             await _cleanup(seed)
 
@@ -466,5 +466,6 @@ def test_a_folder_of_more_than_five_hundred_pages_to_its_last_item():
     assert not any(page["truncated"] for page in pages)
     assert pages[-1]["nextCursor"] is None
     names = [e["name"] for page in pages for e in page["entries"] if e.get("mediaId")]
-    assert names[-1].startswith("big1233")
+    assert names == sorted(names, key=str.lower)
+    assert len(seen["made"]) == 1234 and set(seen["made"]) <= set(files)
     assert seen["plain"]["truncated"] is False and seen["plain"]["nextCursor"]
