@@ -130,6 +130,7 @@ data class ExplorerManifestFile(
     val originalPath: String? = null,
     val originalFilename: String? = null,
     val sha256: String? = null,
+    val capturedAt: String? = null,
 )
 
 @Serializable
