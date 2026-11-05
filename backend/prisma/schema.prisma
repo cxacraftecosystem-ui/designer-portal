@@ -629,6 +629,7 @@ model User {
   dataSavedViews                  DataSavedView[]           @relation("DataSavedViewOwner")
   dataReportShares                DataReportShare[]         @relation("DataReportShareOwner")
   dataReportShareViews            DataReportShareView[]     @relation("DataReportShareViewer")
+  dataReportSchedules             DataReportSchedule[]      @relation("DataReportScheduleOwner")
 
   @@index([role])
 }
@@ -8668,7 +8669,8 @@ model DataSavedView {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  owner User @relation("DataSavedViewOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  owner     User                 @relation("DataSavedViewOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  schedules DataReportSchedule[] @relation("DataReportScheduleView")
 
   @@index([ownerId, updatedAt])
   @@index([shared, updatedAt])
@@ -8713,4 +8715,33 @@ model MediaWaveform {
   createdAt   DateTime @default(now())
 
   mediaFile MediaFile @relation("MediaWaveformMedia", fields: [mediaFileId], references: [id], onDelete: Cascade)
+}
+
+model DataReportSchedule {
+  id                   String    @id @default(cuid())
+  ownerId              String
+  savedViewId          String
+  weekday              Int
+  hourLocal            Int
+  timezone             String    @default("Asia/Kolkata")
+  options              Json
+  pausedAt             DateTime?
+  lastSlotAt           DateTime?
+  retryAfter           DateTime?
+  lastSentAt           DateTime?
+  lastError            String?
+  lastFileKey          String?
+  lastFileName         String?
+  lastFileBytes        Int?
+  lastAttached         Boolean?
+  unsubscribeTokenHash String    @unique
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  owner     User          @relation("DataReportScheduleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  savedView DataSavedView @relation("DataReportScheduleView", fields: [savedViewId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId, createdAt])
+  @@index([pausedAt])
+  @@index([savedViewId])
 }
