@@ -151,9 +151,10 @@ test.describe("@qf:X1 layout", () => {
           const card = await folder.boundingBox();
           expect(search!.y).toBeLessThan(card!.y);
           if (size.name === "desktop") {
-            await showTree(page);
             const tree = await page.getByTestId("explorer-tree-panel").boundingBox();
-            expect(tree!.x).toBeLessThan(card!.x);
+            const contents = await page.getByRole("region", { name: "Contents" }).boundingBox();
+            expect(tree!.x).toBeLessThan(contents!.x);
+            expect(card!.y).toBeLessThan(contents!.y);
             await expect(folderDownload(page)).toHaveAccessibleName(/^Download (folder|workshop) · \d/);
           } else {
             await expect(page.getByTestId("explorer-tree-panel")).toBeHidden();
@@ -248,6 +249,8 @@ test.describe("@qf:X1 the tree", () => {
       await expect(page).toHaveURL(/view=tables/);
       await page.reload();
       await expect(page.getByRole("tab", { name: /Tables/ })).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByTestId("explorer-tree-panel")).toBeHidden();
+      await showTree(page);
       await expect(page.getByRole("treeitem", { name: "Bagru 2026", exact: true })).toHaveAttribute("aria-selected", "true");
       await page.goBack();
       await expect(page).not.toHaveURL(/path=workshops%2Fbagru/);
