@@ -630,6 +630,7 @@ model User {
   dataReportShares                DataReportShare[]         @relation("DataReportShareOwner")
   dataReportShareViews            DataReportShareView[]     @relation("DataReportShareViewer")
   dataReportSchedules             DataReportSchedule[]      @relation("DataReportScheduleOwner")
+  dataBundles                     DataBundle[]              @relation("DataBundleOwner")
 
   @@index([role])
 }
@@ -8744,4 +8745,22 @@ model DataReportSchedule {
   @@index([ownerId, createdAt])
   @@index([pausedAt])
   @@index([savedViewId])
+}
+
+model DataBundle {
+  id           String    @id @default(cuid())
+  ownerId      String
+  label        String
+  path         String    @default("")
+  digest       String
+  mediaIds     String[]  @default([])
+  fileCount    Int       @default(0)
+  bytes        BigInt    @default(0)
+  createdAt    DateTime  @default(now())
+  lastOpenedAt DateTime?
+
+  owner User @relation("DataBundleOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, digest])
+  @@index([createdAt])
 }
