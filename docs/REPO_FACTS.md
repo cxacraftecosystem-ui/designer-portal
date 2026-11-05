@@ -153,10 +153,10 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 416 | 6900 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 320 | 3614 `test(` | Playwright, `frontend/playwright.config.ts` |
-| Android unit (`android/app/src/test/`) | 412 | 4362 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
-| Android instrumented (`android/app/src/androidTest/`) | 31 | 135 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
+| Backend unit (`backend/tests/`) | 416 | 6903 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 324 | 3636 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Android unit (`android/app/src/test/`) | 412 | 4364 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
+| Android instrumented (`android/app/src/androidTest/`) | 35 | 189 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
 parametrised cases expand.
@@ -181,11 +181,11 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 458 | 152,517 | 458 | 152,517 |
-| `frontend/app` | 136 | 36,807 | 136 | 36,807 |
-| `frontend/components` | 487 | 108,857 | 487 | 108,857 |
-| `frontend/lib` | 260 | 60,614 | 260 | 60,614 |
-| `android/app/src/main/java` | 503 | 173,489 | 503 | 173,489 |
+| `backend/app` | 459 | 152,691 | 459 | 152,691 |
+| `frontend/app` | 136 | 36,820 | 136 | 36,820 |
+| `frontend/components` | 487 | 109,991 | 487 | 109,991 |
+| `frontend/lib` | 260 | 60,672 | 260 | 60,672 |
+| `android/app/src/main/java` | 504 | 174,832 | 504 | 174,832 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is

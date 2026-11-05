@@ -861,7 +861,7 @@ export function FieldInput({
             )}
           />
           {caption ? (
-            <div className="mt-2 border-l-2 border-line-200 pl-3">
+            <div className="mt-2 rounded-lg bg-surface-50 px-3 py-2">
               <label className="field-label" htmlFor={`${controlId}-caption`}>
                 {labelText(caption.field)}
               </label>
