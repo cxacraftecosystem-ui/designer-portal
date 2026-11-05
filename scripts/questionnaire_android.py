@@ -37,7 +37,7 @@ def shared_files(root: Path) -> list[tuple[str, Path]]:
         folder = base / tree
         if not folder.is_dir():
             continue
-        for path in sorted(folder.rglob("*.kt")):
+        for path in sorted(folder.rglob("*.kt"), key=lambda found: found.relative_to(base).as_posix()):
             rel = path.relative_to(base).as_posix()
             if rel.startswith("questionnaire/portal/"):
                 continue
