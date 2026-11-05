@@ -154,7 +154,7 @@ private sealed interface DownloadTarget {
 
 private class Pending(val title: String, val plan: ExplorerPreflightPlan, val start: (wifiOnly: Boolean, include: String?) -> Unit, val replan: () -> ExplorerPreflightPlan)
 
-private class Viewing(val entries: List<ExplorerEntry>, val index: Int, val startSeconds: Double = 0.0, val total: Int = entries.size)
+private class Viewing(val entries: List<ExplorerEntry>, val index: Int, val startSeconds: Double = 0.0, val total: Int = entries.size, val find: String = "")
 
 internal object ExplorerTapMemory {
     @Volatile var handled: Long = 0
@@ -1142,6 +1142,7 @@ fun ExplorerScreen(
             start = v.index,
             startSeconds = v.startSeconds,
             total = v.total,
+            find = v.find,
             onSave = { saveEntry(it) },
             onDismiss = { media = null },
         )
@@ -1157,7 +1158,7 @@ fun ExplorerScreen(
                     { mediaId, title, mediaType, seconds ->
                         val entry = state.files.firstOrNull { it.mediaId == mediaId }
                             ?: ExplorerEntry(name = title, path = mediaId, mediaId = mediaId, mediaType = mediaType?.uppercase()?.takeIf { it == "VIDEO" || it == "AUDIO" } ?: "VIDEO", transcriptAvailable = true)
-                        media = Viewing(listOf(entry), 0, seconds)
+                        media = Viewing(listOf(entry), 0, seconds, find = query.trim())
                     },
                     { searchQuery = null },
                 )
