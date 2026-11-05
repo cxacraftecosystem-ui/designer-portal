@@ -222,7 +222,7 @@ internal fun ExplorerCheck(checked: Boolean, onToggle: () -> Unit, tag: String, 
                 .let { if (checked) it else it.border(2.dp, if (dark) MaterialTheme.field.placeholder else Color(0xFFA7A3BC), RoundedCornerShape(7.dp)) },
             contentAlignment = Alignment.Center,
         ) {
-            if (checked) Text("✓", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+            if (checked) ExplorerGlyph { Text("✓", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary) }
         }
     }
 }

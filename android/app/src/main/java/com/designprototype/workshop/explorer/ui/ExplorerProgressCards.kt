@@ -257,7 +257,7 @@ internal fun RecentRow(file: ExplorerRecent, active: Boolean, last: Boolean = fa
             Modifier.size(22.dp).background(if (tone != null) MaterialTheme.colorScheme.surface else markBg, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            Text(mark, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, color = tone?.accent ?: markFg)
+            ExplorerGlyph { Text(mark, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, color = tone?.accent ?: markFg) }
         }
         Text(file.name.substringAfterLast('/'), style = MaterialTheme.typography.bodyMedium, color = tone?.content ?: MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         val end = when (file.status) {
