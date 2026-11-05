@@ -39,6 +39,7 @@ SHARED_FILES_EXTRA = (
     "backend/tests/test_questionnaire_core.py",
     "backend/tests/test_questionnaire_chips.py",
     "backend/tests/test_questionnaire_filters_db.py",
+    "backend/tests/test_questionnaire_start_sheet_contract.py",
     "backend/scripts/qv2_guard.py",
 )
 

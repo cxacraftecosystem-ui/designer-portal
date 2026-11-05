@@ -26,6 +26,7 @@ from app.core.db import connect_db, db, disconnect_db
 from app.core.deps import PASSWORD_CHANGE_REQUIRED_HEADER
 from app.core.idempotency import IdempotencyMiddleware
 from app.core.security import verify_jwt_configuration
+from app.release import live_release
 from app.scale import install_rate_limit
 from app.services import aadhaar_fingerprint, two_factor, usage
 from app.services.account_provisioning import EXISTING_ACCOUNT_HEADER
@@ -572,9 +573,11 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(SelectiveGZipMiddleware)
 
+    live_release()
+
     @app.get("/health", tags=["health"])
     async def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return {"status": "ok", "release": live_release()}
 
     @app.get("/health/ready", tags=["health"])
     async def health_ready() -> JSONResponse:

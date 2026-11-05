@@ -1,6 +1,14 @@
 {
   "contract": "questionnaire-capture-form",
-  "version": 5,
+  "version": 6,
+  "versionNote": [
+    "VERSION 6 (5 Nov 2026) corrects the Language note about the sibling portal and says what this file",
+    "is: THIS PORTAL'S OWN legacy capture form. documentation-portal's file of the same name describes its",
+    "own form (a questionnaire picker, no workshop type, live while QUESTIONNAIRE_V2 is false) and counts",
+    "its own versions, so the two numbers are not meant to agree, and the parity tooling excludes this",
+    "file by name. The questionnaire v2 session start sheet, which is one shared screen, is declared once",
+    "in shared/questionnaire-start-sheet-contract.json, byte-identical in both portals."
+  ],
   "enforcedBy": "backend/tests/test_questionnaire_form_contract.py",
   "authority": "frontend/app/(protected)/questionnaire/page.tsx",
   "whatThisIs": [
@@ -329,11 +337,10 @@
         "The language the interview was conducted in, as a CLOSED VOCABULARY of twenty-four plus",
         "whatever the record already holds.",
         "",
-        "THIS IS THE OPPOSITE RULING FROM THE SIBLING FIELD REPOSITORY, which declares its Language a",
-        "free-text box and argues the case at length ('\"Kutchi, and some Gujarati\" is a perfectly good",
-        "value that no list of language names can hold'). It is worth saying so here, because a reader",
-        "who knows that file will read this line as a drift. It is not. The two products store the same",
-        "`str | None` and reached different answers for a stated reason: on THIS deployment the column",
+        "The sibling field repository declared its Language a free-text box until 18 Oct 2026 and now",
+        "draws a closed list as well, the shared standard codes of convergence point 10, so the two forms",
+        "no longer disagree on whether the list is closed. Both store the same `str | None`. The reason",
+        "here was the data: on THIS deployment the column",
         "was arriving as \"Bangla\", \"Bengali\" and \"bengali\" for one fact, and the consolidated",
         "questionnaire and every export GROUP BY it — so a closed list is what makes those surfaces",
         "answer one question once. The list and the preserve-what-is-stored rule live in",
