@@ -54,6 +54,8 @@ async function playing(page: Page) {
   const play = page.getByTestId("preview-body").getByRole("button", { name: "Play", exact: true });
   if (await play.isVisible()) await play.click();
   await page.waitForTimeout(500);
+  const speed = page.getByTestId("preview-body").getByRole("button", { name: /Playback speed 1×/ });
+  if (await speed.isVisible()) await speed.click();
   await page.evaluate(() => {
     const media = document.querySelector("[data-testid=preview-body] audio") as HTMLAudioElement | null;
     if (media) media.currentTime = 1100;
@@ -69,6 +71,7 @@ async function englishLimePlaying(page: Page) {
 async function settle(page: Page) {
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
   await page.addStyleTag({ content: "*,*::before,*::after{transition:none!important;animation:none!important;caret-color:transparent!important}" });
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur?.());
   await page.waitForTimeout(300);
 }
 
@@ -94,7 +97,31 @@ const SCENES: Scene[] = [
       await page.waitForTimeout(1500);
     }
   },
+<<<<<<< HEAD
   { board: "WebPreview", ...DESKTOP, query: VIDEO_URL, ready: async (page) => expect(page.getByTestId("preview-body")).toBeVisible() }
+||||||| 365c249e
+  { board: "WebPreview", ...DESKTOP, query: VIDEO_URL, ready: async (page) => expect(page.getByTestId("preview-body")).toBeVisible() },
+  { board: "Main", width: 1440, height: 1240, query: folder(GIRIRAJ), ready: folderReady },
+  { board: "Main", variant: "dark", width: 1440, height: 1240, theme: "dark", query: folder(GIRIRAJ), ready: folderReady },
+  { board: "WebTablet", ...TABLET, query: folder(GIRIRAJ), ready: folderReady },
+  { board: "WebPhone", ...PHONE, query: folder(GIRIRAJ), ready: folderReady },
+  { board: "WebTranscripts", width: 1440, height: 820, query: folder(GIRIRAJ, { view: "transcripts" }), ready: folderReady },
+  { board: "WebTables", width: 1440, height: 1000, query: folder(GIRIRAJ, { view: "tables", q: "indigo" }), ready: folderReady },
+  { board: "PhoneTables", variant: "phone-web", ...PHONE, query: folder(GIRIRAJ, { view: "tables", q: "indigo" }), ready: folderReady },
+  { board: "WorkshopOverview", ...DESKTOP, query: folder("workshops/3rd"), ready: folderReady }
+=======
+  { board: "WebPreview", ...DESKTOP, query: VIDEO_URL, ready: async (page) => expect(page.getByTestId("preview-lines").locator("[data-line]").first()).toBeVisible(), act: englishLime },
+  { board: "WebPreview", variant: "dark", ...DESKTOP, theme: "dark", query: VIDEO_URL, ready: async (page) => expect(page.getByTestId("preview-lines").locator("[data-line]").first()).toBeVisible(), act: englishLime },
+  { board: "AndroidPreview", variant: "phone-web", ...PHONE, query: VIDEO_URL, ready: async (page) => expect(page.getByTestId("preview-lines").locator("[data-line]").first()).toBeVisible() },
+  { board: "Main", width: 1440, height: 1240, query: folder(GIRIRAJ), ready: folderReady },
+  { board: "Main", variant: "dark", width: 1440, height: 1240, theme: "dark", query: folder(GIRIRAJ), ready: folderReady },
+  { board: "WebTablet", ...TABLET, query: folder(GIRIRAJ), ready: folderReady },
+  { board: "WebPhone", ...PHONE, query: folder(GIRIRAJ), ready: folderReady },
+  { board: "WebTranscripts", width: 1440, height: 820, query: folder(GIRIRAJ, { view: "transcripts" }), ready: folderReady },
+  { board: "WebTables", width: 1440, height: 1000, query: folder(GIRIRAJ, { view: "tables", q: "indigo" }), ready: folderReady },
+  { board: "PhoneTables", variant: "phone-web", ...PHONE, query: folder(GIRIRAJ, { view: "tables", q: "indigo" }), ready: folderReady },
+  { board: "WorkshopOverview", ...DESKTOP, query: folder("workshops/3rd"), ready: folderReady }
+>>>>>>> origin/fix-0014-design
 ];
 
 async function capture(browser: Browser, scene: Scene) {
