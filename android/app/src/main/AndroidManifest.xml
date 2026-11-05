@@ -98,6 +98,7 @@
                     android:scheme="https"
                     android:host="designer-repository.vercel.app"
                     android:path="/set-password" />
+                <data android:path="/data" />
             </intent-filter>
 
             <intent-filter>

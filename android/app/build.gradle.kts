@@ -191,6 +191,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.11.1")
     implementation("androidx.media3:media3-ui:1.11.1")
     implementation("androidx.media3:media3-session:1.11.1")
+    implementation("androidx.documentfile:documentfile:1.1.0")
 
     implementation("androidx.webkit:webkit:1.18.0")
 
