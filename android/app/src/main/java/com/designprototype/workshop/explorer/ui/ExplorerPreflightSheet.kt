@@ -91,13 +91,28 @@ internal fun PreflightSheet(
     onResetFolder: (() -> Unit)? = null,
 ) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet) {
+        PreflightBody(title, plan, onStart, onDismiss, onChangeFolder, onResetFolder, Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding())
+    }
+}
+
+@Composable
+internal fun PreflightBody(
+    title: String,
+    plan: ExplorerPreflightPlan,
+    onStart: (wifiOnly: Boolean, include: String?) -> Unit,
+    onDismiss: () -> Unit,
+    onChangeFolder: (() -> Unit)? = null,
+    onResetFolder: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
     var wait by rememberSaveable { mutableStateOf(plan.metered) }
     var smaller by rememberSaveable { mutableStateOf(false) }
     val skip = plan.smaller
     val bytes = if (smaller && skip != null) skip.bytes else plan.bytes
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet) {
+    run {
         Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 16.dp).navigationBarsPadding().testTag("explorer.preflight"),
+            modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 16.dp).testTag("explorer.preflight"),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(PreflightText.title(title), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, modifier = Modifier.semantics { heading() })

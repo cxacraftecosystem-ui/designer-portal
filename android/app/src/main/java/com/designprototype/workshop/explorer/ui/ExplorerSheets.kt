@@ -217,7 +217,24 @@ internal fun DownloadsSheet(
 ) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).navigationBarsPadding().testTag("explorer.sheet.downloads")) {
+        DownloadsSheetBody(jobs, onCancel, onRetry, onOpen, onShare, onDismissJob, onClearFinished, onPause, onResume, Modifier.navigationBarsPadding())
+    }
+}
+
+@Composable
+internal fun DownloadsSheetBody(
+    jobs: List<ExplorerJob>,
+    onCancel: (ExplorerJob) -> Unit,
+    onRetry: (ExplorerJob) -> Unit,
+    onOpen: (ExplorerJob) -> Unit,
+    onShare: (ExplorerJob) -> Unit,
+    onDismissJob: (ExplorerJob) -> Unit,
+    onClearFinished: () -> Unit,
+    onPause: (ExplorerJob) -> Unit = {},
+    onResume: (ExplorerJob) -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
+        Column(modifier.fillMaxWidth().padding(horizontal = 16.dp).testTag("explorer.sheet.downloads")) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(ExplorerText.downloads, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f).semantics { heading() })
                 if (jobs.any { !it.active && it.state != ExplorerJobState.PAUSED }) TextButton(onClick = onClearFinished, modifier = Modifier.heightIn(min = 44.dp)) { Text(ExplorerText.clearFinished) }
@@ -243,7 +260,6 @@ internal fun DownloadsSheet(
                 }
             }
         }
-    }
 }
 
 @Composable
