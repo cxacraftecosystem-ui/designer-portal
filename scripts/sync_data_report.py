@@ -32,7 +32,9 @@ SHARED_EXTRA = (
     "backend/tests/test_report_xlsx.py",
     "backend/tests/test_report_coverage.py",
     "backend/tests/test_report_i18n.py",
+    "backend/tests/test_report_pack_hindi.py",
     "backend/tests/test_data_report_parity.py",
+    "backend/tests/test_data_report_go.py",
     AUDIT,
     "docs/data-explorer/DATA_REPORT.md",
 )

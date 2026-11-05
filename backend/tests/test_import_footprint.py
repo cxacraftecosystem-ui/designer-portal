@@ -13,7 +13,7 @@ sys.path.insert(0, str(BACKEND_ROOT / "scripts"))
 
 from generate_prisma_client import SHIM_MARKER  # noqa: E402
 
-ON_DEMAND = ("openpyxl", "reportlab", "PIL", "lxml", "pypdf", "pydub", "anthropic", "openai")
+ON_DEMAND = ("openpyxl", "reportlab", "uharfbuzz", "PIL", "lxml", "pypdf", "pydub", "anthropic", "openai")
 
 WORKER_THIRD_PARTY = frozenset(
     {

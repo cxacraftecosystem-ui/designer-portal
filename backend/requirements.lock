@@ -193,6 +193,8 @@ typing-inspection==0.4.4
     #   fastapi
     #   pydantic
     #   pydantic-settings
+uharfbuzz==0.57.0
+    # via design-workshop-backend (pyproject.toml)
 urllib3==2.8.0
     # via
     #   botocore

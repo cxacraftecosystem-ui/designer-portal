@@ -596,6 +596,11 @@ jobs:
           grep -qxF 'NEXT_PUBLIC_APP_URL=https://designer-repository.vercel.app' .env || { echo "link origin did not land on its own line"; exit 1; }
           echo "link origin pinned"
 
+          sed -i '/^APP_ENV=/d' .env
+          printf 'APP_ENV=%s\n' 'production' >> .env
+          grep -qxF 'APP_ENV=production' .env || { echo "app environment did not land on its own line"; exit 1; }
+          echo "app environment pinned"
+
           sed -i '/^FORWARDED_CLIENT_HOPS=/d' .env
           printf 'FORWARDED_CLIENT_HOPS=%s\n' '2' >> .env
           grep -qxF 'FORWARDED_CLIENT_HOPS=2' .env || { echo "forwarded hops did not land on their own line"; exit 1; }

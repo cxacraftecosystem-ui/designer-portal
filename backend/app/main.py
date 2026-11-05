@@ -21,7 +21,7 @@ from app.api.routes.auth import (
     TWO_FACTOR_REQUIRED_HEADER,
 )
 from app.api.routes.usage import UNRECORDED_TEMPLATES
-from app.core.config import get_settings
+from app.core.config import get_settings, verify_app_url_configuration
 from app.core.db import connect_db, db, disconnect_db
 from app.core.deps import PASSWORD_CHANGE_REQUIRED_HEADER
 from app.core.idempotency import IdempotencyMiddleware
@@ -515,6 +515,7 @@ _READINESS_TIMEOUT_SECONDS = 3.0
 def create_app() -> FastAPI:
     settings = get_settings()
     verify_jwt_configuration()
+    verify_app_url_configuration(settings)
     two_factor.verify_key_configuration()
     expose_docs = settings.backend_expose_docs
     app = FastAPI(
