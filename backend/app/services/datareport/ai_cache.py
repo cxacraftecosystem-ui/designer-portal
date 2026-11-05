@@ -20,18 +20,8 @@ def value(obj: Any, key: str, default: Any = None) -> Any:
     return default if found is None else found
 
 
-def material_records(ctx: ReportContext) -> dict[str, Any]:
-    material = ctx.material if isinstance(ctx.material, dict) else {}
-    nested = material.get("records")
-    return nested if isinstance(nested, dict) else material
-
-
 def items(ctx: ReportContext, key: str) -> list[Any]:
-    reader = getattr(ctx, "records", None)
-    if callable(reader):
-        return list(reader(key) or [])
-    found = material_records(ctx).get(key)
-    return list(found) if isinstance(found, list | tuple) else []
+    return list(ctx.records(key) or [])
 
 
 def fingerprint(ids: Iterable[str]) -> str:

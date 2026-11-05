@@ -176,6 +176,7 @@ def columns(ctx: ReportContext | None = None) -> list[Column]:
                 "The words exactly as spoken, in their own language and script.",
                 60,
                 source="TranscriptInsight.quotes",
+                lang="original",
             )
         )
     if answers in ("english", "both"):
@@ -187,6 +188,7 @@ def columns(ctx: ReportContext | None = None) -> list[Column]:
                 "The quote in English.",
                 60,
                 source="TranscriptInsight.quotes",
+                lang="english",
             )
         )
     cols += [

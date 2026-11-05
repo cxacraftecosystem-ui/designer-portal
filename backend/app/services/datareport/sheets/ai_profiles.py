@@ -7,7 +7,7 @@ from typing import Any
 
 from app.services.datareport import ai_cache
 from app.services.datareport.ai_cache import value
-from app.services.datareport.contract import Column, Link, ReportContext, Sheet, register
+from app.services.datareport.contract import Column, Image, Link, ReportContext, Sheet, register
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +175,8 @@ def profile_rows(
                     "Photo",
                     ai_cache.file_label(photo),
                     "",
+                    fixed=False,
+                    photo=Image(pid, str(value(artisan, "name") or "")),
                     **_links(
                         ctx,
                         open=Link("Open", ctx.links.open_media(pid)),
@@ -370,6 +372,7 @@ def profile_rows(
 
 def columns(ctx: ReportContext | None = None) -> list[Column]:
     _answers, links = ai_cache.options_of(ctx)
+    thumbnails = ctx is None or bool(ctx.options.thumbnails)
     cols = [
         Column("section", "Section", "text", "Which part of the profile the row belongs to.", 14),
         Column("item", "Item", "text", "The fact, record or file.", 26),
@@ -384,6 +387,17 @@ def columns(ctx: ReportContext | None = None) -> list[Column]:
             "size", "Size", "bytes", "File size, for recordings.", 10, source="MediaFile.sizeBytes"
         ),
     ]
+    if thumbnails:
+        cols.append(
+            Column(
+                "photo",
+                "Photo",
+                "image",
+                "A small photo of the artisan.",
+                14,
+                source="MediaFile.id",
+            )
+        )
     if links:
         cols += [
             Column("open", "Open", "link", "Opens the record or file in the portal.", 12),

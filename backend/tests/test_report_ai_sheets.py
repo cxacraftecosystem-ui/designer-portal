@@ -62,7 +62,7 @@ def media(
 ) -> Any:
     return SimpleNamespace(
         id=mid,
-        originalFilename=f"{mid}.m4a",
+        originalFilename=extra.pop("originalFilename", f"{mid}.m4a"),
         mediaType=kind,
         hasTranscript=text,
         artisanId=artisan,
@@ -116,8 +116,8 @@ def artisan(aid: str, name: str, **extra: Any) -> Any:
     return SimpleNamespace(**base)
 
 
-def make_ctx(records: dict[str, Any], *, nested: bool = True, **options: Any) -> ReportContext:
-    material = {"records": records, "sheets": []} if nested else {**records, "sheets": []}
+def make_ctx(records: dict[str, Any], **options: Any) -> ReportContext:
+    material = {"records": records, "sheets": []}
     return ReportContext(
         portal="designer",
         user=SimpleNamespace(id="u1"),
@@ -193,10 +193,11 @@ async def test_fixed_text_goes_through_the_translator(monkeypatch: pytest.Monkey
     assert all("_fixed" not in r for r in sheet.rows)
 
 
-def test_records_read_nested_or_flat() -> None:
-    for nested in (True, False):
-        ctx = make_ctx({"media": [media("m1")]}, nested=nested)
-        assert ai_cache.media_ids(ctx) == ["m1"]
+def test_records_follow_the_filtered_rows_option() -> None:
+    files = [media("m1"), media("m2", originalFilename="indigo vat.m4a")]
+    assert ai_cache.media_ids(make_ctx({"media": files})) == ["m1", "m2"]
+    narrowed = make_ctx({"media": files}, rows="filtered", q="indigo")
+    assert ai_cache.media_ids(narrowed) == ["m2"]
 
 
 def test_sheet_names_are_unique_short_and_legal() -> None:
@@ -486,6 +487,7 @@ async def test_profiles_carry_facts_consent_tools_processes_and_recordings(
     sections = {r["section"] for r in first}
     assert {"Key facts", "Consent", "Tools", "Products", "Processes", "Recordings"} <= sections
     assert "Photo" not in sections
+    assert "photo" not in {c.key for c in sheets[0].columns}
     consent = [r for r in first if r["section"] == "Consent"]
     assert consent[0]["status"] == "Granted" and consent[0]["detail"] == "Signed form"
     assert consent[1]["status"] == "Not recorded"
@@ -516,4 +518,6 @@ async def test_profiles_cap_with_a_note_and_show_thumbnails_on_request(
     assert len({s.name.casefold() for s in sheets}) == len(sheets)
     assert len({s.key for s in sheets}) == len(sheets)
     assert sheets[0].rows[0]["section"] == "Photo"
+    assert sheets[0].rows[0]["photo"] == contract.Image("m2", "Artisan 000")
+    assert "photo" in {c.key for c in sheets[0].columns}
     assert await ai_profiles.ProfileSheets().build(make_ctx({})) == []
