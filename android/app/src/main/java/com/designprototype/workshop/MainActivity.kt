@@ -784,6 +784,7 @@ class MainActivity : ComponentActivity() {
         takeQuestionnaireDelivery(intent)
         takePasswordLink(intent)
         LocalAlerts.takeTap(intent)
+        com.designprototype.workshop.explorer.data.ExplorerDownloadsTap.take(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -791,6 +792,7 @@ class MainActivity : ComponentActivity() {
         takeQuestionnaireDelivery(intent)
         takePasswordLink(intent, restored = savedInstanceState != null)
         if (savedInstanceState == null) LocalAlerts.takeTap(intent)
+        if (savedInstanceState == null) com.designprototype.workshop.explorer.data.ExplorerDownloadsTap.take(intent)
         askForLocalNetworkWhenTheApiNeedsIt()
         val tokenStore = TokenStore(applicationContext)
         val repository = WorkshopRepository(ApiClient.create(tokenStore), tokenStore)
@@ -874,7 +876,7 @@ private enum class EntryMode(
     TOOL("Tool", "Record tool", editable = true, group = DashGroup.RECORDS),
     QUESTIONNAIRE("Questionnaire", "Take interview", editable = true, group = DashGroup.RECORDS),
     MEDIA("Miscellaneous Media", "Upload media", group = DashGroup.RECORDS),
-    VIEW_DATA("View Data", "Browse records", group = DashGroup.MISC),
+    VIEW_DATA("Data", "Browse records", group = DashGroup.MISC),
     SEARCH("Search", "Search", onDashboard = false, group = null),
     DATA_BROWSER("Data Browser", "Data Browser", onDashboard = false, group = null),
     MAP("Map", "Map", group = DashGroup.MISC),
@@ -1873,6 +1875,10 @@ private fun HomeScreen(
     LaunchedEffect(notificationOpenRequest) {
         if (notificationOpenRequest > 0L) screen = Screen.Notifications
     }
+    val downloadsTap by com.designprototype.workshop.explorer.data.ExplorerDownloadsTap.requests.collectAsState()
+    LaunchedEffect(downloadsTap) {
+        if (downloadsTap > com.designprototype.workshop.explorer.ui.ExplorerTapMemory.handled && screen !is Screen.DataBrowser) screen = Screen.DataBrowser
+    }
     val notificationInbox by NotificationState.inbox.collectAsState()
     val unreadNotifications = notificationInbox?.takeIf { it.userId == user.id }?.let { NotificationInboxRules.unread(it) } ?: 0
     var carryForward by remember { mutableStateOf<Prefill?>(null) }
@@ -2196,7 +2202,7 @@ private fun HomeScreen(
         is Screen.TwoStepVerification -> null
         is Screen.AccountPassword -> null
         is Screen.Aadhaar -> null
-        is Screen.DataBrowser -> "Data Browser"
+        is Screen.DataBrowser -> "Data"
         is Screen.DesignWorkshops -> null
         is Screen.DesignWorkshopStages -> null
         is Screen.DesignWorkshopStage -> null
@@ -2403,7 +2409,8 @@ private fun HomeScreen(
                             screen = Screen.View(EntryMode.MEDIA, mediaId, from = Screen.DataBrowser)
                         },
                         startPath = dataBrowserPath,
-                        onPathChange = { dataBrowserPath = it }
+                        onPathChange = { dataBrowserPath = it },
+                        onOpenRemote = { type, id -> screen = Screen.RemoteRecord(type, id, from = Screen.DataBrowser) }
                     )
 
                     is Screen.Appearance -> AppearanceScreen(
