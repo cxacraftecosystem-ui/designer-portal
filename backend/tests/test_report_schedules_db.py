@@ -399,7 +399,7 @@ def test_the_queued_mail_carries_the_workbook_and_unsubscribe_header(storage, mo
     async def work() -> None:
         seed = Seed()
         try:
-            owner = await seed.user("mail")
+            owner = await seed.user("mail", email=f"rs-mail-{STAMP}@weekly-reports.in")
             view = await seed.view(owner)
             row = await seed.schedule(owner, view)
             assert await rs.run_once(row, _monday(), _mail()) == "SENT"
