@@ -45,9 +45,17 @@ def test_parse_reads_every_option_and_refuses_nonsense():
             report_options.parse(**bad)
 
 
-def test_stored_options_keep_only_the_four_choices():
+def test_stored_options_keep_only_the_known_choices():
     stored = report_options.stored_options({"sheets": ["Tools"], "answers": "original", "rows": "all", "links": True, "x": 1})
-    assert stored == {"sheets": ["Tools"], "answers": "original", "rows": "all", "links": True}
+    assert stored == {"sheets": ["Tools"], "answers": "original", "rows": "all", "links": True, "thumbnails": False, "locale": "en", "extras": {}}
+    richer = report_options.stored_options({"thumbnails": True, "locale": "hi", "extras": {"quotes": True, "map": False}})
+    assert richer["thumbnails"] is True and richer["locale"] == "hi" and richer["extras"] == {"quotes": True}
+    assert report_options.parse(extras="map,quotes,map").extras == ("map", "quotes")
+    assert not report_options.parse(locale="hi").default
+    with pytest.raises(report_options.OptionsInvalid):
+        report_options.parse(locale="fr")
+    with pytest.raises(report_options.OptionsInvalid):
+        report_options.parse(extras="bad key!")
     assert report_options.stored_options({})["sheets"] is None
     with pytest.raises(report_options.OptionsInvalid):
         report_options.stored_options([])
