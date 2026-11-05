@@ -205,7 +205,7 @@ function DashboardView() {
     { label: "Miscellaneous Media", icon: Images, newHref: "/media", newLabel: "Upload", group: "records" },
     { label: "Scan a code", icon: QrCode, newHref: "/scan", newLabel: "Open", group: "misc" },
     {
-      label: "View Data",
+      label: "Data",
       icon: Eye,
       newHref: canDownloadDataset(user) ? "/data" : "/search",
       newLabel: "Open",

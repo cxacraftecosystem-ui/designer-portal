@@ -1190,3 +1190,13 @@ the daily purge sets them to null after `undoUntil` (30 days), stamping `snapsho
 (`artisanId`, `askedAt`; no foreign key). The scan asks the least recently asked first, and a restarted
 worker reads the newest `askedAt` before spending the peer's daily budget again.
 Migration `20261023090000_artisan_duplicates`, additive. See [ARTISAN_DUPLICATES.md](ARTISAN_DUPLICATES.md).
+
+## Data explorer memory — added 2026-11-05
+
+**`DataReportPreference`** is one user's remembered report choices (`options`: sheets, answers, rows,
+links). **`DataFolderVisit`** is when a user last opened one folder (`userId`, `path`, unique
+together); `POST /data/visits` reads it before overwriting it, to say what is new. **`DataSavedView`**
+is a saved `/data` screen (`path`, `state` with tab, sheet, search and filters) that its owner may
+share; a shared view opens only for people who can see its folder. **`MediaWaveform`** keeps the
+800 peaks of one recording, made once. All four cascade away with their user or file.
+Migration `20261210090000_data_explorer_memory`, additive. See [DATA_EXPLORER.md](DATA_EXPLORER.md).

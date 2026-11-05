@@ -16,19 +16,19 @@ API lags the tree by however many commits have not been deployed; see
 
 | | Count |
 |---|---|
-| Prisma models | **133** |
+| Prisma models | **137** |
 | Prisma enums | **57** |
-| `@@index` declarations | 339 |
-| `@@unique` declarations | 54 |
+| `@@index` declarations | 341 |
+| `@@unique` declarations | 55 |
 
-Models: `User`, `AssignedTask`, `Feedback`, `FeedbackReport`, `UserPreference`, `AppRelease`, `CraftCategory`, `CraftSubCategory`, `Craft`, `CraftCode`, `CraftSpelling`, `CrossPortalArtisanLink`, `ArtisanCard`, `ArtisanCardEvent`, `CrossPortalAccessLog`, `Location`, `Artisan`, `Workshop`, `WorkshopArtisan`, `WorkshopCraft`, `ProductDocumentation`, `ToolDocumentation`, `ToolArtisan`, `ToolCraft`, `MediaFile`, `TranscriptInsight`, `MediaProcessingJob`, `QuestionnaireSection`, `QuestionnaireSectionStatus`, `QuestionnaireQuestion`, `QuestionnaireInterview`, `QuestionnaireInterviewArtisan`, `QuestionnaireResponse`, `QuestionnaireAnswerDraft`, `Questionnaire`, `QuestionnaireFormSection`, `QuestionnaireFormQuestion`, `QuestionnaireFormEntry`, `QuestionnaireFormAnswer`, `Process`, `ProcessStep`, `ReviewLog`, `AppSetting`, `WorkshopAssignment`, `ManagedSecret`, `UserAiCredential`, `SecretTestResult`, `DataAccessGrant`, `DataAccessScopeItem`, `EntryComment`, `RecordRevision`, `DesignWorkshop`, `DesignWorkshopViewer`, `DesignWorkshopInspector`, `DesignWorkshopOversight`, `DwArtisanImport`, `DesignWorkshopAccessRequest`, `RecordAccessToken`, `RecordAccessTokenRedemption`, `DesignWorkshopProvisionalMember`, `DwStageEntry`, `DwCustomSection`, `DwCustomField`, `DwReportExport`, `DwAiLayer`, `DwAiLayerDecision`, `Consent`, `DwWorkshopConsentDecision`, `DwInspectionFeedback`, `DwDictationDailyUsage`, `DwAiVerbDailyUsage`, `DwReviewRating`, `DesignerRoster`, `DesignerProfile`, `SanctionOrder`, `PasswordResetToken`, `PasswordResetRequest`, `TwoFactorChallenge`, `AccessRoster`, `UsageEvent`, `UsageConsentDecision`, `AnnualPlanEntry`, `SanctionOrderDesigner`, `SanctionOrderImport`, `WorkshopTypeOption`, `RegionalDirectorState`, `EmailMessage`, `DwReportDelivery`, `IdempotencyKey`, `AadhaarOtpThrottle`, `DwInspectionClearance`, `DwRoundSnapshot`, `Notification`, `MinistryDataExport`, `AadhaarLogArchive`, `AadhaarLegalHold`, `WeeklyDigest`, `SearchDocument`, `SearchIndexQueue`, `ArtisanDuplicateCandidate`, `ArtisanPeerScan`, `ArtisanMerge`, `GeoAlias`, `MinistryExportRecipient`, `MinistryExportPack`, `MinistryExportDownload`, `SttProviderState`, `SttUsage`, `SttBudget`, `TranscriptionChunk`, `TranscriptCache`, `QuestionnaireInterviewResearcher`, `QuestionnaireRecording`, `QuestionnaireRecordingTarget`, `QuestionnaireRecordingSubject`, `QuestionnaireRecordingEvent`, `QuestionnaireAnswer`, `QuestionnaireAnswerRevision`, `QuestionnaireTakeDraft`, `MediaUploadIntent`, `QuestionnaireRespondent`, `QuestionnaireRecordingRespondent`, `QuestionnaireBinding`, `QuestionnaireTypeDefault`, `AppClientVersion`, `TranscriptVersion`, `TranscriptTurn`, `TranscriptTurnEdit`, `TranscriptSpeaker`, `TranscriptSpend`, `TranscriptGlossaryTerm`, `TranscriptGlossarySighting`, `TranscriptDraftCitation`.
+Models: `User`, `AssignedTask`, `Feedback`, `FeedbackReport`, `UserPreference`, `AppRelease`, `CraftCategory`, `CraftSubCategory`, `Craft`, `CraftCode`, `CraftSpelling`, `CrossPortalArtisanLink`, `ArtisanCard`, `ArtisanCardEvent`, `CrossPortalAccessLog`, `Location`, `Artisan`, `Workshop`, `WorkshopArtisan`, `WorkshopCraft`, `ProductDocumentation`, `ToolDocumentation`, `ToolArtisan`, `ToolCraft`, `MediaFile`, `TranscriptInsight`, `MediaProcessingJob`, `QuestionnaireSection`, `QuestionnaireSectionStatus`, `QuestionnaireQuestion`, `QuestionnaireInterview`, `QuestionnaireInterviewArtisan`, `QuestionnaireResponse`, `QuestionnaireAnswerDraft`, `Questionnaire`, `QuestionnaireFormSection`, `QuestionnaireFormQuestion`, `QuestionnaireFormEntry`, `QuestionnaireFormAnswer`, `Process`, `ProcessStep`, `ReviewLog`, `AppSetting`, `WorkshopAssignment`, `ManagedSecret`, `UserAiCredential`, `SecretTestResult`, `DataAccessGrant`, `DataAccessScopeItem`, `EntryComment`, `RecordRevision`, `DesignWorkshop`, `DesignWorkshopViewer`, `DesignWorkshopInspector`, `DesignWorkshopOversight`, `DwArtisanImport`, `DesignWorkshopAccessRequest`, `RecordAccessToken`, `RecordAccessTokenRedemption`, `DesignWorkshopProvisionalMember`, `DwStageEntry`, `DwCustomSection`, `DwCustomField`, `DwReportExport`, `DwAiLayer`, `DwAiLayerDecision`, `Consent`, `DwWorkshopConsentDecision`, `DwInspectionFeedback`, `DwDictationDailyUsage`, `DwAiVerbDailyUsage`, `DwReviewRating`, `DesignerRoster`, `DesignerProfile`, `SanctionOrder`, `PasswordResetToken`, `PasswordResetRequest`, `TwoFactorChallenge`, `AccessRoster`, `UsageEvent`, `UsageConsentDecision`, `AnnualPlanEntry`, `SanctionOrderDesigner`, `SanctionOrderImport`, `WorkshopTypeOption`, `RegionalDirectorState`, `EmailMessage`, `DwReportDelivery`, `IdempotencyKey`, `AadhaarOtpThrottle`, `DwInspectionClearance`, `DwRoundSnapshot`, `Notification`, `MinistryDataExport`, `AadhaarLogArchive`, `AadhaarLegalHold`, `WeeklyDigest`, `SearchDocument`, `SearchIndexQueue`, `ArtisanDuplicateCandidate`, `ArtisanPeerScan`, `ArtisanMerge`, `GeoAlias`, `MinistryExportRecipient`, `MinistryExportPack`, `MinistryExportDownload`, `SttProviderState`, `SttUsage`, `SttBudget`, `TranscriptionChunk`, `TranscriptCache`, `QuestionnaireInterviewResearcher`, `QuestionnaireRecording`, `QuestionnaireRecordingTarget`, `QuestionnaireRecordingSubject`, `QuestionnaireRecordingEvent`, `QuestionnaireAnswer`, `QuestionnaireAnswerRevision`, `QuestionnaireTakeDraft`, `MediaUploadIntent`, `QuestionnaireRespondent`, `QuestionnaireRecordingRespondent`, `QuestionnaireBinding`, `QuestionnaireTypeDefault`, `AppClientVersion`, `TranscriptVersion`, `TranscriptTurn`, `TranscriptTurnEdit`, `TranscriptSpeaker`, `TranscriptSpend`, `TranscriptGlossaryTerm`, `TranscriptGlossarySighting`, `TranscriptDraftCitation`, `DataReportPreference`, `DataFolderVisit`, `DataSavedView`, `MediaWaveform`.
 
 Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, `ProductType`, `MarketDemand`, `MakerType`, `TraditionType`, `ReviewRecordType`, `MediaProcessingJobType`, `MediaProcessingJobStatus`, `ProcessStepType`, `DataAccessTier`, `DataAccessStatus`, `GiStatus`, `CraftStatus`, `DesignWorkshopStatus`, `DwDictationConsent`, `DwOversightCapacity`, `DwAccessRequestStatus`, `DwAccessRequestSource`, `DwCodeRecordType`, `DwTokenRedemptionOutcome`, `DwTokenRedemptionReason`, `DwAiLayerKind`, `DwAiTier`, `DwAiDecision`, `ConsentState`, `ConsentSubjectType`, `ConsentPurpose`, `ConsentBasis`, `DwReviewRound`, `CredentialLinkPurpose`, `AccessStatus`, `UsageConsent`, `UsageConsentBasis`, `AadhaarVerifyStatus`, `AadhaarVerifyMethod`, `DuplicateKind`, `DuplicateStatus`, `DuplicateSource`, `SessionState`, `SessionPurpose`, `SessionOrigin`, `ResearcherRole`, `SubjectRole`, `RepeatReason`, `TakeFlag`, `CapturedAtSource`, `RecordingFiling`, `RecordingProvenance`, `AnswerOrigin`, `AnswerAttribution`, `SectionStatus`, `RespondentKind`, `SessionSource`.
 
 ## API surface
 
-**602 operations** in the working tree — 286 GET, 207 POST, 45 DELETE,
-33 PATCH, 31 PUT. 2 of them (`/health`, `/health/ready`) are declared
+**614 operations** in the working tree — 293 GET, 209 POST, 46 DELETE,
+34 PATCH, 32 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
 | Route module | Operations |
@@ -36,6 +36,7 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `questionnaire_v2.py` | 51 |
 | `design_workshops.py` | 50 |
 | `questionnaire_forms.py` | 27 |
+| `data_explorer.py` | 23 |
 | `media.py` | 22 |
 | `questionnaire.py` | 22 |
 | `workshops.py` | 21 |
@@ -47,7 +48,6 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `annual_plan.py` | 13 |
 | `data_access.py` | 13 |
 | `usage.py` | 13 |
-| `data_explorer.py` | 11 |
 | `design_workshop_approvals.py` | 11 |
 | `artisans.py` | 10 |
 | `auth.py` | 10 |
@@ -149,8 +149,8 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 381 | 6633 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 313 | 3492 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Backend unit (`backend/tests/`) | 387 | 6676 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 316 | 3550 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 399 | 4273 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 26 | 101 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
@@ -177,10 +177,10 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 405 | 138,577 | 405 | 138,577 |
-| `frontend/app` | 129 | 36,559 | 129 | 36,559 |
-| `frontend/components` | 472 | 103,197 | 472 | 103,197 |
-| `frontend/lib` | 250 | 58,815 | 250 | 58,815 |
+| `backend/app` | 411 | 140,221 | 411 | 140,221 |
+| `frontend/app` | 129 | 36,565 | 129 | 36,565 |
+| `frontend/components` | 482 | 107,178 | 482 | 107,178 |
+| `frontend/lib` | 255 | 59,738 | 255 | 59,738 |
 | `android/app/src/main/java` | 484 | 166,302 | 484 | 166,302 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is

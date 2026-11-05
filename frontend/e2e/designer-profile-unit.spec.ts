@@ -274,7 +274,7 @@ const TILE_OFFERED: Record<UserRole, boolean> = {
   CROWDSOURCE_VOLUNTEER: false
 };
 
-test.describe("the View Data tile", () => {
+test.describe("the Data tile", () => {
   test("every tier gets the answer the owner asked for", () => {
     expect(ROLES.map((role) => ({ role, tile: canSeeDataTile(user(role)) }))).toEqual(
       ROLES.map((role) => ({ role, tile: TILE_OFFERED[role] }))
@@ -304,8 +304,8 @@ test.describe("the View Data tile", () => {
   });
 
   test("the dashboard tile reads that predicate, and the filter that consumes it is default-allow", () => {
-    const start = DASHBOARD_CODE.indexOf('label: "View Data"');
-    expect(start, "the View Data tile is gone from the dashboard").toBeGreaterThan(-1);
+    const start = DASHBOARD_CODE.indexOf('label: "Data"');
+    expect(start, "the Data tile is gone from the dashboard").toBeGreaterThan(-1);
     let open = start;
     while (open >= 0 && DASHBOARD_CODE[open] !== "{") open -= 1;
     let depth = 0;

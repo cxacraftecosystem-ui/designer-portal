@@ -360,7 +360,7 @@ export const GUIDE_STEPS: GuideStep[] = [
   },
   {
     id: "view-data",
-    label: "View Data",
+    label: "Data",
     action: "Browse records",
     icon: Eye,
     href: "/data",
