@@ -46,6 +46,64 @@ def _generic(key: str) -> str | None:
     return None
 
 
+_KEEP = frozenset(
+    {"source", "n", "pct", "reason", "name", "count", "size", "total", "date", "time"}
+)
+_SLOT = re.compile(r"\{([a-z_]+)\}")
+
+
+@functools.cache
+def _patterns(locale: str) -> tuple[tuple[re.Pattern[str], str], ...]:
+    english, local = strings(DEFAULT_LOCALE), strings(locale)
+    out = []
+    for key, template in english.items():
+        if not key.startswith("pattern.") or not local.get(key):
+            continue
+        parts = _SLOT.split(template)
+        regex = "".join(
+            f"(?P<{part}>.+?)" if index % 2 else re.escape(part) for index, part in enumerate(parts)
+        )
+        out.append((re.compile(f"^{regex}$", re.DOTALL), local[key]))
+    return tuple(sorted(out, key=lambda item: -len(item[0].pattern)))
+
+
+def _word(locale: str, text: str) -> str | None:
+    table = strings(locale)
+    upper = text[:1].upper() + text[1:]
+    forms = [text, upper]
+    if upper.endswith("sse"):
+        forms.append(upper[:-1])
+    forms.append(f"{upper}s")
+    for form in forms:
+        found = table.get(f"text.{form}")
+        if found:
+            return found
+    return None
+
+
+def _fill(template: str, values: dict[str, str]) -> str:
+    return _SLOT.sub(lambda m: values.get(m.group(1), m.group(0)), template)
+
+
+def _from_pattern(locale: str, default: str) -> str | None:
+    for regex, local in _patterns(locale):
+        match = regex.match(default)
+        if not match:
+            continue
+        values = {}
+        for slot, value in match.groupdict().items():
+            if slot in _KEEP:
+                values[slot] = value
+                continue
+            found = _word(locale, value)
+            if found is None:
+                break
+            values[slot] = found
+        else:
+            return _fill(local, values)
+    return None
+
+
 def lookup(locale: str, key: str, default: str) -> str | None:
     table = strings(locale)
     found = table.get(key)
@@ -59,7 +117,11 @@ def lookup(locale: str, key: str, default: str) -> str | None:
     if generic and generic != key:
         english = strings(DEFAULT_LOCALE).get(generic)
         if not default or english == default or key.startswith("sheet."):
-            return table.get(generic) or None
+            found = table.get(generic)
+            if found:
+                return found
+    if default and locale != DEFAULT_LOCALE:
+        return _from_pattern(locale, default)
     return None
 
 

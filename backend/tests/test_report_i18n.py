@@ -168,6 +168,18 @@ def test_sheet_names_are_valid_excel_names():
     assert {h: e for h, e in by_hindi.items() if len(e) > 1} == {}
 
 
+def test_generated_descriptions_follow_patterns():
+    hi = i18n.translator("hi")
+    out = hi("describe.artisans.dateOfBirth", "Date of birth of the artisan (Artisan.dateOfBirth).")
+    assert out.endswith("(Artisan.dateOfBirth)।") and DEVANAGARI.search(out)
+    assert "Artisan.craftId" in hi("x.y", "Identifier of the linked craft (Artisan.craftId).")
+    assert hi("x.y", "Translating 40%") == "अनुवाद जारी 40%"
+    assert (
+        hi("x.y", "Notes of the made-up thing (X.notes).")
+        == "Notes of the made-up thing (X.notes)."
+    )
+
+
 def test_translator_contract():
     en = i18n.translator("en")
     assert en("sheet.artisans", "Artisans") == "Artisans"
