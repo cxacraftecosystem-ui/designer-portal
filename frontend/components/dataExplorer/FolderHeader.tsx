@@ -97,7 +97,7 @@ export function useSelectionSize(selection: Selection, extra: QueryParams, downl
   return useSized(`selection:${keyText}:${extraKey}`, load);
 }
 
-const TYPE_TILE_KEYS: IncludeKey[] = ["images", "videos", "audios", "documents", "transcripts", "text", "other"];
+const TYPE_TILE_KEYS: IncludeKey[] = ["images", "videos", "audios", "documents", "text", "other"];
 
 export function recordTypeLabel(recordType: string | null | undefined): string | null {
   if (!recordType) return null;
