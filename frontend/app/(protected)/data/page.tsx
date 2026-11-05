@@ -1,15 +1,14 @@
 "use client";
 
-import { Database, Lock } from "lucide-react";
+import { Lock } from "lucide-react";
 import Link from "next/link";
 import { Suspense } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { DataSearchPanel } from "@/components/data/DataSearchPanel";
 import { LIST_PAGE_CEILING } from "@/components/data/cappedList";
-import { DataExplorer, type ExplorerConfig } from "@/components/dataExplorer/DataExplorer";
+import { DataExplorer, ExplorerHeader, type ExplorerConfig } from "@/components/dataExplorer/DataExplorer";
 import type { BrowseType } from "@/components/dataExplorer/BrowseByType";
-import { PageHeader } from "@/components/PageHeader";
 import { TranscriptDataPanel } from "@/components/transcript/TranscriptDataPanel";
 import { listResource } from "@/lib/api";
 import type { BrowsePage, ReportResponse } from "@/lib/dataExplorer/contract";
@@ -163,18 +162,33 @@ function tablesNotice(report: ReportResponse): string | null {
   return blocked ? "Design workshop tables are on screen only. The .xlsx carries the rest." : null;
 }
 
+const TITLE = "Data";
+const DESCRIPTION = "Browse, check and download everything you can see.";
+
+const WIDE = "sm:max-lg:mx-1 lg:mx-[calc((100%-min(1360px,100vw-80px))/2)]";
+
 const header = (
-  <PageHeader title="Data" description="Browse, check and download everything you can see." icon={<Database className="h-5 w-5" aria-hidden />} />
+  <div className="mb-4">
+    <ExplorerHeader title={TITLE} description={DESCRIPTION} />
+  </div>
 );
+
+function recordHref(kind: string, id: string): string | null {
+  const key = kind as keyof typeof RECORD_VIEW_HREF;
+  return key in RECORD_VIEW_HREF ? RECORD_VIEW_HREF[key](id) : null;
+}
 
 function Explorer({ user }: { user: User }) {
   const config: ExplorerConfig = {
+    title: TITLE,
+    description: DESCRIPTION,
     rootName: "Dataset root",
     extra: {},
     downloadExtra: {},
     statusKey: "",
     viewer: user.id,
     fileHref: (mediaId) => RECORD_VIEW_HREF.media(mediaId),
+    recordHref,
     renderSearch: (reveal, openPreview) => <DataSearchPanel onReveal={reveal} onPreview={openPreview} />,
     emptyBody: "Files appear here as soon as someone records for this folder.",
     emptyAction: canCreateRecords(user) ? (
@@ -218,11 +232,10 @@ export default function DataBrowserPage() {
   }
 
   return (
-    <>
-      {header}
+    <div className={WIDE}>
       <Suspense fallback={<section className="panel p-6 text-sm text-ink-500">Loading…</section>}>
         <Explorer user={user} />
       </Suspense>
-    </>
+    </div>
   );
 }

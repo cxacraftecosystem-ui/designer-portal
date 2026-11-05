@@ -193,3 +193,55 @@ export function OfflineNote({ loadedAt }: { loadedAt: number | null }) {
     </p>
   );
 }
+
+export function PillMenu({ label, ariaLabel, value, options, onChange, className = "" }: { label: string; ariaLabel: string; value: string; options: { value: string; label: string }[]; onChange: (value: string) => void; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: PointerEvent) => {
+      if (!box.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("pointerdown", away);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("pointerdown", away);
+      window.removeEventListener("keydown", key);
+    };
+  }, [open]);
+  const pick = (next: string) => {
+    onChange(next);
+    setOpen(false);
+  };
+  return (
+    <div className="relative" ref={box}>
+      <button type="button" aria-haspopup="listbox" aria-expanded={open} aria-label={ariaLabel} onClick={() => setOpen((shown) => !shown)} className={className}>
+        {label} ▾
+      </button>
+      {open ? (
+        <ul role="listbox" aria-label={ariaLabel} className="absolute left-0 top-[calc(100%+4px)] z-30 grid max-h-72 w-52 gap-0.5 overflow-y-auto rounded-md border border-line-200 bg-card p-1 shadow-md">
+          {options.map((option) => (
+            <li
+              key={option.value || "__any"}
+              role="option"
+              aria-selected={option.value === value}
+              tabIndex={0}
+              onClick={() => pick(option.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                pick(option.value);
+              }}
+              className={`flex min-h-10 cursor-pointer items-center rounded-sm px-3 text-sm ${option.value === value ? "bg-purple-100 font-semibold text-purple-800 dark:bg-purple-950/60 dark:text-purple-200" : "text-ink-900 hover:bg-purple-50 dark:hover:bg-purple-950/40"}`}
+            >
+              {option.label}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
