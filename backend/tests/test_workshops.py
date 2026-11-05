@@ -69,7 +69,7 @@ async def test_truncated_is_true_the_moment_the_repository_holds_one_more_than_t
 async def test_an_empty_repository_is_not_truncated(monkeypatch):
     _install(monkeypatch, [])
     payload = await routes.list_requestable_workshops(current_user=CALLER, limit=2)
-    assert payload == {"items": [], "truncated": False}
+    assert payload == {"items": [], "truncated": False, "nextOffset": None}
 
 
 
@@ -77,6 +77,6 @@ async def test_the_response_is_an_items_truncated_envelope_not_the_old_bare_arra
     _install(monkeypatch, [_workshop("w1")])
     payload = await routes.list_requestable_workshops(current_user=CALLER, limit=5)
     assert isinstance(payload, dict), "a bare list has no key for `truncated` to live on"
-    assert set(payload) == {"items", "truncated"}
+    assert set(payload) == {"items", "truncated", "nextOffset"}
     assert isinstance(payload["items"], list)
     assert payload["items"][0]["id"] == "w1"

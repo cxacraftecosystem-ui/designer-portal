@@ -1117,10 +1117,16 @@ test("a failed design-workshop read stops rendering as an account with no design
   expect(review).toContain('{ kind: "failed" }');
 });
 
-test("every design-workshop read asks for exactly as many rows as a panel can draw", () => {
+const DW_EVERY_PAGE = new Set<string>(["the questionnaires list", "the questionnaire detail"]);
+
+test("every design-workshop read asks for exactly as many rows as a panel can draw, or reads every page", () => {
   for (const [name, path] of DW_READERS) {
     const source = withoutComments(read(...path));
-    expect(source, `${name} must name one page size`).toContain("WORKSHOP_OPTION_PAGE_SIZE");
+    if (DW_EVERY_PAGE.has(name)) {
+      expect(source, `${name} must read every page`).toContain("listEveryDesignWorkshop()");
+    } else {
+      expect(source, `${name} must name one page size`).toContain("WORKSHOP_OPTION_PAGE_SIZE");
+    }
     expect(source, `${name} still asks for a round hundred`).not.toContain("pageSize: 100");
   }
   expect(RENDER_CAP).toBe(80);

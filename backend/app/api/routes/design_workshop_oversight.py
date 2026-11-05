@@ -556,6 +556,7 @@ async def list_workshop_artisans(
     offset: int = Query(0, ge=0),
     _: Any = Depends(require_workshop_assigner),
 ) -> dict[str, Any]:
+    offset = offset if isinstance(offset, int) else 0
     await _workshop_for_assignment_or_404(workshop_id)
     return await oversight.linked_artisan_rows(workshop_id, offset)
 
