@@ -210,6 +210,11 @@ function useOptions(endpoint: string, map: (row: never) => SelectOption) {
   return { options, serverQuery: { value: term, onChange: setTerm, pending, truncated } };
 }
 
+function suggestionCount(total: number | undefined): string {
+  if (!total || total < 1) return "";
+  return total === 1 ? " 1 result." : ` ${total.toLocaleString("en-IN")} results.`;
+}
+
 export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal: (path: string) => void; onPreview: (target: PreviewTarget) => void; ask?: SearchAsk | null }) {
   const { user } = useAuth();
   const [draft, setDraft] = useState("");
@@ -516,7 +521,7 @@ export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal:
                   >
                     {data.suggestion}
                   </button>
-                  ?
+                  ?{suggestionCount(data.suggestionTotal)}
                 </p>
               ) : null}
               <ActionGroup>
