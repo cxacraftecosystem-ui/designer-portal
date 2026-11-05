@@ -166,7 +166,7 @@ export function unifiedFor(q: string, scope: string | null): Json {
       groups: [group("artisans", "Artisans", 2, [item("artisans", "a-giriraj", "Giriraj Prasad Chhipa", { subtitle: "3rd Craft Toolkit" }), item("artisans", "a-giridhar", "Giridhar Soni", { subtitle: "Bagru workshop" })])]
     };
   }
-  if (text === "indgo") return { ...base, groups: [], suggestion: "indigo" };
+  if (text === "indgo") return { ...base, groups: [], suggestion: "indigo", suggestionTotal: 38 };
   if (text.includes("indigo") && scope !== "local" && text.includes("vat")) {
     return {
       ...base,
