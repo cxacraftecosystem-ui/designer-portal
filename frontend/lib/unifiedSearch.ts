@@ -83,6 +83,7 @@ export type UnifiedResponse = {
   page?: number;
   limit?: number;
   suggestion?: string | null;
+  suggestionTotal?: number;
 };
 
 export type RemoteRecord = {

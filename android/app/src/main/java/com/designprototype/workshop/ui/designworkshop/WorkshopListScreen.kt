@@ -117,6 +117,8 @@ import kotlinx.coroutines.launch
 import retrofit2.HttpException
 import java.time.Instant
 import java.util.UUID
+import com.designprototype.workshop.ui.ListReachText
+import com.designprototype.workshop.ui.ListReachButton
 
 private const val SEARCH_DEBOUNCE_MS = 350L
 
@@ -439,10 +441,13 @@ fun WorkshopListScreen(
         }
 
         partial?.let { (shown, total) ->
-            Text(
-                "Showing $shown of $total. Search to find the rest.",
-                color = MaterialTheme.field.warning,
-                style = MaterialTheme.typography.bodySmall
+            ListReachButton(
+                shown = shown,
+                total = total,
+                label = ListReachText.loadAll(total),
+                loading = loading,
+                tag = "workshops.loadall",
+                onClick = { reload++ },
             )
         }
 

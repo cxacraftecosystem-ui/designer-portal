@@ -19,8 +19,6 @@ import type { MediaFile } from "@/lib/types";
 
 const PAGE_SIZE = 100;
 
-const MAX_PAGES = 3;
-
 const CHOOSER_FLOOR = 2;
 
 export function StageMediaNoteField({
@@ -71,7 +69,7 @@ export function StageMediaNoteField({
       try {
         const collected: MediaFile[] = [];
         let serverTotal = 0;
-        for (let page = 1; page <= MAX_PAGES; page += 1) {
+        for (let page = 1; ; page += 1) {
           const result = await listResource<MediaFile>("/media", {
             linkedRecordType: role.linkedRecordType,
             linkedRecordId: refId,
@@ -81,7 +79,7 @@ export function StageMediaNoteField({
           if (cancelled || mine !== generation.current) return;
           collected.push(...result.items);
           serverTotal = result.total;
-          if (result.items.length < PAGE_SIZE) break;
+          if (result.items.length < PAGE_SIZE || collected.length >= result.total) break;
         }
         if (cancelled || mine !== generation.current) return;
         setRows(collected);

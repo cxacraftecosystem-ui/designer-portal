@@ -89,11 +89,12 @@ class DesignWorkshopListingTest {
     @Test
     fun `the walk is capped and admits the list is a prefix`() {
         var calls = 0
-        val listing = drive { page, size -> calls++; server(total = 4000)(page, size) }
+        val beyond = DW_LIST_MAX_PAGES * DW_LIST_PAGE_SIZE + 500
+        val listing = drive { page, size -> calls++; server(total = beyond)(page, size) }
 
         assertEquals(DW_LIST_MAX_PAGES, calls)
         assertEquals(DW_LIST_MAX_PAGES * DW_LIST_PAGE_SIZE, listing.items.size)
-        assertEquals(4000, listing.total)
+        assertEquals(beyond, listing.total)
         assertTrue(listing.truncated)
     }
 

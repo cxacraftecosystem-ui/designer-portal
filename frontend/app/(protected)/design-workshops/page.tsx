@@ -70,7 +70,7 @@ import {
   isContentAdmin
 } from "@/lib/permissions";
 import type { PageResult, Workshop } from "@/lib/types";
-import { listResource } from "@/lib/api";
+import { listAllPages } from "@/lib/listAllPages";
 import { sortWorkshopsByOccurrence } from "@/components/forms/WorkshopSelect";
 import {
   designWorkshopDefaultNote,
@@ -364,7 +364,7 @@ function DesignWorkshopsPageBody() {
 
   useEffect(() => {
     let cancelled = false;
-    listResource<Workshop>("/workshops", {
+    listAllPages<Workshop>("/workshops", {
       pageSize: WORKSHOP_OPTION_PAGE_SIZE,
       workshopType: "DESIGN_PROTOTYPE",
       accessibleOnly: "true"

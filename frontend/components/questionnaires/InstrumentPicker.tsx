@@ -11,7 +11,6 @@ export const SHARED_INSTRUMENT = "shared";
 export const SHARED_INSTRUMENT_LABEL = "Artisan questionnaire (shared)";
 
 const PAGE_SIZE = 100;
-const MAX_PAGES = 5;
 
 export function InstrumentPicker({
   value,
@@ -27,7 +26,6 @@ export function InstrumentPicker({
   hint?: React.ReactNode;
 }) {
   const [forms, setForms] = useState<QFormSummary[]>([]);
-  const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -39,13 +37,13 @@ export function InstrumentPicker({
       const collected: QFormSummary[] = [];
       let page = 1;
       let pages = 1;
-      for (; page <= pages && page <= MAX_PAGES; page += 1) {
+      for (; page <= pages; page += 1) {
         const result = await listQuestionnaires({ page, pageSize: PAGE_SIZE, activeOnly: true });
         collected.push(...result.items);
         pages = result.pages;
+        if (!result.items.length) break;
       }
       setForms(collected);
-      setTruncated(pages > MAX_PAGES);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load your questionnaires");
@@ -90,12 +88,6 @@ export function InstrumentPicker({
       {error ? (
         <p role="alert" className="mt-1 text-xs leading-5 text-red-700 dark:text-red-400">
           {error} — only the shared artisan questionnaire is listed.
-        </p>
-      ) : null}
-      {truncated ? (
-        <p className="mt-1 text-xs leading-5 text-ink-500">
-          Showing the first {PAGE_SIZE * MAX_PAGES} questionnaires. Open My questionnaires to search
-          the rest.
         </p>
       ) : null}
     </FieldBlock>

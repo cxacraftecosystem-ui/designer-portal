@@ -4,7 +4,7 @@ import kotlinx.coroutines.CancellationException
 
 const val DW_LIST_PAGE_SIZE = 100
 
-const val DW_LIST_MAX_PAGES = 5
+const val DW_LIST_MAX_PAGES = 200
 
 data class DesignWorkshopListing(
     val items: List<DesignWorkshopDto>,

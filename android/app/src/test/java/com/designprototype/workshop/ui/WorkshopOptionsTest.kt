@@ -210,10 +210,10 @@ class WorkshopOptionsTest {
     }
 
     @Test
-    fun `the cap sentence prints both numbers and names where the rest are`() {
+    fun `the cap sentence prints both numbers and says how to get the rest`() {
         val line = workshopCapLine(shown = 20, total = 121, kind = WorkshopListKind.DESIGN)
         assertEquals(
-            "Latest 20 of 121. Search in Design workshops for others.",
+            "Showing 20 of 121. The rest didn't load. Open this again to retry.",
             line
         )
     }

@@ -82,7 +82,8 @@ internal fun dwBulkAddedSentence(outcome: DwBulkAdd, truncated: Boolean, fieldLa
             "Added ${plural(outcome.created.size, "row")}."
         }
 
-internal fun dwBulkCutShortNote(shown: Int): String = "Showing the first $shown. Search to find the rest."
+internal fun dwBulkCutShortNote(shown: Int): String =
+    "Showing the first $shown, more than a stage holds ($DW_STAGE_ENTRY_CAP). Search for others."
 
 internal const val DW_BULK_NO_LIST = "This list is not on this phone yet. Connect and try again."
 

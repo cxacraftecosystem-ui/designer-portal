@@ -113,6 +113,20 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
   const [trail, setTrail] = useState<AccountUsageTrail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [older, setOlder] = useState(false);
+
+  async function loadOlder() {
+    if (!trail) return;
+    setOlder(true);
+    try {
+      const next = await loadAccountUsageTrail(trail.userId, { from, to, offset: trail.events.length });
+      setTrail((current) => (current ? { ...current, limit: next.limit, events: [...current.events, ...next.events] } : current));
+    } catch (err) {
+      setError(readableError(err, "Older activity couldn't be loaded. Try again."));
+    } finally {
+      setOlder(false);
+    }
+  }
 
   async function load(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -208,9 +222,14 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
               </table>
             </div>
           )}
-          <p className="text-xs leading-5 text-ink-500">
-            Showing {trail.events.length} of at most {trail.maxRows} per page, newest first.
-          </p>
+          <p className="text-xs leading-5 text-ink-500">Showing {trail.events.length}, newest first.</p>
+          {trail.events.length > 0 && trail.events.length % trail.limit === 0 ? (
+            <ActionGroup>
+              <button type="button" className="field-button-secondary min-h-10" data-testid="usage-trail-older" disabled={older} onClick={() => void loadOlder()}>
+                {older ? "Loading…" : "Show older"}
+              </button>
+            </ActionGroup>
+          ) : null}
           <ul className="list-disc space-y-1 pl-5 text-xs leading-5 text-ink-500">
             {trail.notes.map((note) => (
               <li key={note}>{note}</li>

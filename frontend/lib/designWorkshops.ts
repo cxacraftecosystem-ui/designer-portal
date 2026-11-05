@@ -5,6 +5,7 @@ import type { CostFindingsPayload } from "@/lib/costIntegrity";
 import { pyStrip, type MarketFindingsPayload } from "@/lib/marketAnalysis";
 import type { DwReportHistory } from "@/lib/reportDiff";
 import { isStoredRichTextEmpty, richSummary, type StoredRichDoc } from "@/lib/richText";
+import { listAllPages } from "@/lib/listAllPages";
 import type { PageResult } from "@/lib/types";
 import { exportFilename } from "@/lib/naming";
 
@@ -637,6 +638,12 @@ export type DwListParams = {
   includeDeleted?: boolean;
   deletedOnly?: boolean;
 };
+
+export function listEveryDesignWorkshop(params: Omit<DwListParams, "page" | "pageSize"> = {}) {
+  return listAllPages<DwSummary>("/design-workshops", { pageSize: 100 }, (_path, query) =>
+    listDesignWorkshops({ ...params, page: Number(query.page), pageSize: Number(query.pageSize) })
+  );
+}
 
 export function listDesignWorkshops(params: DwListParams) {
   return apiFetch<PageResult<DwSummary>>(

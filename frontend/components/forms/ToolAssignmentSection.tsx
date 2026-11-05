@@ -18,7 +18,8 @@ import {
 } from "@/components/forms/recordPickers";
 import { CraftSelect } from "@/components/forms/CraftSelect";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
-import { apiFetch, listResource } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
+import { listAllPages } from "@/lib/listAllPages";
 import { countNoun, formatDate } from "@/lib/format";
 import { loadCachedRegister } from "@/lib/referenceCache";
 import {
@@ -66,7 +67,7 @@ export function ToolAssignmentSection() {
           decode: optionToTool,
           encode: toolToOption,
           fetch: async () => {
-            const page = await listResource<ToolDocumentation>("/tools", { pageSize: LIST_PAGE_CEILING });
+            const page = await listAllPages<ToolDocumentation>("/tools", { pageSize: LIST_PAGE_CEILING });
             if (!cancelled) setCuts((previous) => ({ ...previous, tools: listCut(page, "tools") }));
             return page.items;
           },
@@ -81,7 +82,7 @@ export function ToolAssignmentSection() {
           decode: optionToArtisan,
           encode: artisanToOption,
           fetch: async () => {
-            const page = await listResource<Artisan>("/artisans", { pageSize: LIST_PAGE_CEILING });
+            const page = await listAllPages<Artisan>("/artisans", { pageSize: LIST_PAGE_CEILING });
             if (!cancelled) setCuts((previous) => ({ ...previous, artisans: listCut(page, "artisans") }));
             return page.items;
           },
@@ -115,7 +116,7 @@ export function ToolAssignmentSection() {
       decode: optionToArtisan,
       encode: artisanToOption,
       fetch: async () => {
-        const page = await listResource<Artisan>("/artisans", {
+        const page = await listAllPages<Artisan>("/artisans", {
           craftIds: ids.join(","),
           craftId: ids.length === 1 ? ids[0] : undefined,
           pageSize: LIST_PAGE_CEILING

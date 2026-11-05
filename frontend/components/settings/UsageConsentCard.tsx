@@ -59,12 +59,29 @@ function MyTrail() {
   const [trail, setTrail] = useState<MyUsageTrail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [trailRange, setTrailRange] = useState<{ from: string; to: string } | null>(null);
+  const [older, setOlder] = useState(false);
+
+  async function loadOlder() {
+    if (!trail || !trailRange) return;
+    setOlder(true);
+    try {
+      const next = await loadMyUsageTrail({ ...trailRange, offset: trail.events.length });
+      setTrail((current) => (current ? { ...current, limit: next.limit, events: [...current.events, ...next.events] } : current));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't load older entries. Try again.");
+    } finally {
+      setOlder(false);
+    }
+  }
 
   async function load() {
     setBusy(true);
     setError(null);
     try {
-      setTrail(await loadMyUsageTrail({ from: daysAgoIso(7), to: nowIso() }));
+      const range = { from: daysAgoIso(7), to: nowIso() };
+      setTrailRange(range);
+      setTrail(await loadMyUsageTrail(range));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't load your record. Try again.");
     } finally {
@@ -123,9 +140,15 @@ function MyTrail() {
             </div>
           )}
           <p className="text-xs leading-5 text-ink-500">
-            Showing {trail.events.length} of at most {trail.maxRows} per page, over{" "}
-            {trail.window.days} day{trail.window.days === 1 ? "" : "s"}.
+            Showing {trail.events.length} over {trail.window.days} day{trail.window.days === 1 ? "" : "s"}.
           </p>
+          {trail.events.length > 0 && trail.events.length % trail.limit === 0 ? (
+            <ActionGroup>
+              <button type="button" className="field-button-secondary min-h-10" data-testid="my-trail-older" disabled={older} onClick={() => void loadOlder()}>
+                {older ? "Loading…" : "Show older"}
+              </button>
+            </ActionGroup>
+          ) : null}
           <ul className="grid list-disc gap-1 pl-5 text-xs leading-5 text-ink-500">
             {trail.notes.map((note) => (
               <li key={note}>{note}</li>

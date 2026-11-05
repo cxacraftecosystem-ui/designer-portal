@@ -9,6 +9,7 @@ import type { LgdRegister, UnmatchedItem } from "@/components/map/coverage/cover
 
 export function UnmatchedPlacesPanel({ onMapped }: { onMapped: () => void }) {
   const [items, setItems] = useState<UnmatchedItem[] | null>(null);
+  const [showAll, setShowAll] = useState(false);
   const [register, setRegister] = useState<LgdRegister | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,7 +37,7 @@ export function UnmatchedPlacesPanel({ onMapped }: { onMapped: () => void }) {
       </h2>
       {items.length === 0 ? <p className="text-sm text-ink-500">Every place is on the map.</p> : null}
       <ul className="grid gap-2">
-        {items.slice(0, 50).map((item) => (
+        {(showAll ? items : items.slice(0, 50)).map((item) => (
           <UnmatchedRow
             key={`${item.model}|${item.rawState}|${item.rawDistrict}`}
             item={item}
@@ -48,7 +49,14 @@ export function UnmatchedPlacesPanel({ onMapped }: { onMapped: () => void }) {
           />
         ))}
       </ul>
-      {items.length > 50 ? <p className="text-xs text-ink-500">Showing the busiest 50.</p> : null}
+      {items.length > 50 && !showAll ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-xs text-ink-500">Showing the busiest 50.</p>
+          <button type="button" className="field-button-secondary min-h-9 px-3 text-xs" data-testid="unmatched-all" onClick={() => setShowAll(true)}>
+            Show all {items.length}
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }

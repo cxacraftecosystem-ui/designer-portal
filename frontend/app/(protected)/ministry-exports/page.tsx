@@ -144,11 +144,13 @@ function MinistryExportsScreen() {
     router.replace(`/ministry-exports?period=${month}`, { scroll: false });
   };
 
-  const periodPills = useMemo(() => {
+  const allPeriods = useMemo(() => {
     const all = new Set(periods);
     if (period) all.add(period);
-    return [...all].sort().reverse().slice(0, 13);
+    return [...all].sort().reverse();
   }, [periods, period]);
+  const periodPills = useMemo(() => allPeriods.slice(0, 13), [allPeriods]);
+  const earlierPeriods = useMemo(() => allPeriods.slice(13), [allPeriods]);
 
   const download = async (pack: Pack, file: PackFile) => {
     setBusy(`${pack.id}:${file}`);
@@ -215,6 +217,21 @@ function MinistryExportsScreen() {
                 {periodLabel(month)}
               </button>
             ))}
+            {earlierPeriods.length ? (
+              <div className="w-44">
+                <SearchableSelect
+                  ariaLabel="Earlier month"
+                  placeholder={`Earlier (${earlierPeriods.length})`}
+                  options={earlierPeriods.map((month) => ({ value: month, label: periodLabel(month) }))}
+                  value={earlierPeriods.includes(period ?? "") ? (period ?? "") : ""}
+                  onChange={(month) => {
+                    if (month) choosePeriod(month);
+                  }}
+                  searchable
+                  advanceOnSelect={false}
+                />
+              </div>
+            ) : null}
           </div>
         ) : null}
 

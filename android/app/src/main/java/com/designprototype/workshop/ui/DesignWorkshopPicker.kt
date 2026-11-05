@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.designprototype.workshop.data.DesignWorkshopDto
 import com.designprototype.workshop.data.DesignWorkshopPageDto
+import com.designprototype.workshop.data.visibleDesignWorkshops
 import com.designprototype.workshop.data.SchemaResponse
 import com.designprototype.workshop.data.StageSchemaStore
 import com.designprototype.workshop.data.WorkshopRepository
@@ -275,7 +276,6 @@ class DesignWorkshopPickerState(initialId: String) {
     }
 }
 
-private const val DESIGN_WORKSHOP_PAGE = 20
 
 @Composable
 fun rememberDesignWorkshopPicker(
@@ -290,7 +290,11 @@ fun rememberDesignWorkshopPicker(
     LaunchedEffect(resetKey) {
         val half = repository.loadAllottedDesignWorkshops(
             context = context,
-            fetch = { repository.designWorkshops(page = 1, pageSize = DESIGN_WORKSHOP_PAGE) },
+            fetch = {
+                repository.visibleDesignWorkshops().let { listing ->
+                    DesignWorkshopPageDto(items = listing.items, total = listing.total, page = 1, pageSize = listing.items.size, pages = 1)
+                }
+            },
             rowsOf = { it.items },
             onCached = { rows, load -> state.markCached(rows, load) },
         )

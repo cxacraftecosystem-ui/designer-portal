@@ -35,7 +35,8 @@ import {
   WorkshopScopeSelect,
   workshopScopeFromSearchParams
 } from "@/components/WorkshopScopeSelect";
-import { apiFetch, buildQuery, listResource } from "@/lib/api";
+import { apiFetch, buildQuery } from "@/lib/api";
+import { listAllPages } from "@/lib/listAllPages";
 import type { DwSummary } from "@/lib/designWorkshops";
 import { formatDateTime } from "@/lib/format";
 import { canViewDesignWorkshopData } from "@/lib/permissions";
@@ -136,7 +137,7 @@ export default function SearchPage() {
 
   useEffect(() => {
     let cancelled = false;
-    listResource<Artisan>("/artisans", { pageSize: LIST_PAGE_CEILING })
+    listAllPages<Artisan>("/artisans", { pageSize: LIST_PAGE_CEILING })
       .then((result) => {
         if (cancelled) return;
         setArtisans(result.items);

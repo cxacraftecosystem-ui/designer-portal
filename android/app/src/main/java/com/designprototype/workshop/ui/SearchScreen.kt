@@ -3,7 +3,6 @@ package com.designprototype.workshop.ui
 import com.designprototype.workshop.data.occurrenceDate
 import com.designprototype.workshop.data.workshopDisplayTitle
 import com.designprototype.workshop.data.userMessage
-
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -80,6 +79,8 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.height
 
 object SearchRecordTypes {
     const val ARTISAN = "artisan"
@@ -542,7 +543,7 @@ internal data class SearchRow(
     val matchedIn: List<String> = emptyList()
 )
 
-private data class SearchBucket(
+internal data class SearchBucket(
     val recordType: String,
     val title: String,
     val total: Int,
@@ -556,7 +557,7 @@ private fun SearchResultsDto.totalsReported(): Boolean =
     total > 0 || totals.artisans > 0 || totals.workshops > 0 || totals.products > 0 ||
         totals.tools > 0 || totals.media > 0 || totals.designWorkshops > 0
 
-private fun SearchResultsDto.toSearchBuckets(
+internal fun SearchResultsDto.toSearchBuckets(
     designWorkshopRoute: Boolean = false,
 ): List<SearchBucket> {
     val reported = totalsReported()
@@ -667,6 +668,9 @@ internal const val QUICK_SEARCH_LIMIT = 8
 
 internal const val QUICK_SEARCH_MIN_CHARS = 2
 
+internal fun quickSearchRuns(filters: SearchFilters, browse: Boolean): Boolean =
+    browse || filters.query.trim().length >= QUICK_SEARCH_MIN_CHARS || filters.hasFilters
+
 @Stable
 internal class QuickSearchState(private val repository: WorkshopRepository) {
     var hits by mutableStateOf<List<SearchRow>>(emptyList())
@@ -734,12 +738,13 @@ internal class QuickSearchState(private val repository: WorkshopRepository) {
 internal fun rememberQuickSearch(
     repository: WorkshopRepository,
     filters: SearchFilters,
-    limit: Int = QUICK_SEARCH_LIMIT
+    limit: Int = QUICK_SEARCH_LIMIT,
+    browse: Boolean = false
 ): QuickSearchState {
     val state = remember(repository) { QuickSearchState(repository) }
     val request = remember(filters) { filters.copy(query = filters.query.trim(), place = filters.place.trim()) }
-    LaunchedEffect(state, request, limit) {
-        if (request.query.length < QUICK_SEARCH_MIN_CHARS && !request.hasFilters) {
+    LaunchedEffect(state, request, limit, browse) {
+        if (!quickSearchRuns(request, browse)) {
             state.reset()
             return@LaunchedEffect
         }
@@ -919,7 +924,7 @@ internal fun SearchFilterBar(
     }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             SearchChip(
                 text = "Everything",
                 tone = if (value.types.isEmpty()) ChipTone.ON else ChipTone.OFF,
@@ -1055,7 +1060,7 @@ private fun SearchChip(text: String, tone: ChipTone, onClick: () -> Unit, icon: 
     val background = when (tone) {
         ChipTone.ON -> MaterialTheme.colorScheme.primary
         ChipTone.PART -> MaterialTheme.colorScheme.primaryContainer
-        ChipTone.OFF -> MaterialTheme.field.surface50
+        ChipTone.OFF -> MaterialTheme.colorScheme.surface
     }
     val foreground = when (tone) {
         ChipTone.ON -> MaterialTheme.colorScheme.onPrimary
@@ -1066,20 +1071,21 @@ private fun SearchChip(text: String, tone: ChipTone, onClick: () -> Unit, icon: 
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
         modifier = Modifier
+            .height(36.dp)
             .clip(CircleShape)
             .clickable(onClick = onClick)
             .background(background, CircleShape)
             .then(
                 if (tone == ChipTone.OFF) Modifier.border(1.dp, MaterialTheme.field.hairline, CircleShape) else Modifier
             )
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .padding(horizontal = 12.dp)
     ) {
         if (icon != null) {
-            Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(14.dp))
+            Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(16.dp))
         }
         Text(
             text,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.bodyMedium,
             color = foreground,
             maxLines = 1
         )

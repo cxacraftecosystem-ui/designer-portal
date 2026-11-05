@@ -37,6 +37,30 @@ fun dwMergeReferenceOptions(list: DwReferenceList, extra: List<DwReferenceOption
     return if (added.isEmpty()) list else list.copy(items = list.items + added)
 }
 
+const val EVERY_PAGE_CAP = 200
+
+suspend fun <T> readEveryPage(
+    maxPages: Int = EVERY_PAGE_CAP,
+    fetch: suspend (page: Int) -> PageResponse<T>,
+): PageResponse<T> {
+    val first = fetch(1)
+    val rows = first.items.toMutableList()
+    var page = 1
+    while (page < first.pages.coerceAtMost(maxPages) && rows.size < first.total) {
+        page += 1
+        val next = try {
+            fetch(page)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            break
+        }
+        if (next.items.isEmpty()) break
+        rows += next.items
+    }
+    return PageResponse(items = rows, total = maxOf(first.total, rows.size), page = 1, pageSize = rows.size, pages = 1)
+}
+
 suspend fun <T> readAllListPages(
     maxPages: Int = 20,
     fetch: suspend (page: Int) -> PageResponse<T>,
