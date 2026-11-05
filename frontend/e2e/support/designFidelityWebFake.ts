@@ -148,6 +148,52 @@ function summaryOf(id: string): Json | null {
   return null;
 }
 
+function item(type: string, id: string, title: string, rest: Json = {}): Json {
+  return { portal: "designer", local: true, type, id, title, href: `/data?path=${encodeURIComponent(GIRIRAJ)}`, ...rest };
+}
+
+function group(type: string, label: string, total: number, items: Json[]): Json {
+  return { type, label, total, localTotal: total, remoteTotal: 0, items };
+}
+
+export function unifiedFor(q: string, scope: string | null): Json {
+  const text = q.trim().toLowerCase();
+  const remote = { portal: "fieldRepository", label: "Field Repository", status: "ok" };
+  const base = { query: q, mode: "text", remote, typesRefused: [] as string[] };
+  if (text.startsWith("giri")) {
+    return {
+      ...base,
+      groups: [group("artisans", "Artisans", 2, [item("artisans", "a-giriraj", "Giriraj Prasad Chhipa", { subtitle: "3rd Craft Toolkit" }), item("artisans", "a-giridhar", "Giridhar Soni", { subtitle: "Bagru workshop" })])]
+    };
+  }
+  if (text === "indgo") return { ...base, groups: [], suggestion: "indigo" };
+  if (text.includes("indigo") && scope !== "local" && text.includes("vat")) {
+    return {
+      ...base,
+      groups: [
+        group("transcripts", "Transcripts", 23, [
+          { portal: "fieldRepository", local: false, type: "transcripts", id: "fr-bagru-dyers", title: "Bagru dyers · group interview", snippet: "…the indigo vat has to rest for three days…", highlights: [[7, 13], [14, 17]], startMs: 192_000, mediaType: "AUDIO", href: "", openUrl: "https://field-repository.example.org/data?preview=fr-bagru-dyers" }
+        ]),
+        group("tools", "Tools", 14, [item("tools", "t-vat", "Indigo vat stirrer", { subtitle: "2 artisans · 2 workshops" })]),
+        group("artisans", "Artisans", 1, [item("artisans", "a-giriraj", "Giriraj Prasad Chhipa", { subtitle: "48 files here, 31 in Field Repository", alsoIn: { portal: "fieldRepository", id: "fr-giriraj", subtitle: "48 files here, 31 in Field Repository", openUrl: "https://field-repository.example.org/data?artisan=fr-giriraj" } })])
+      ]
+    };
+  }
+  if (text.includes("indigo")) {
+    return {
+      ...base,
+      groups: [
+        group("transcripts", "Transcripts", 21, [item("transcripts", AUDIO_ID, "Section D · Materials · Group of 3", { snippet: "We mix the mud with gum and lime so it resists the indigo where we press the block…", highlights: [[11, 14], [39, 46], [51, 57]], startMs: 724_000, mediaType: "AUDIO", subtitle: "Giriraj Prasad Chhipa · 3rd Craft Toolkit Workshop · 22 Sep 2026" })]),
+        group("tools", "Tools", 3, [item("tools", "t-vat", "Indigo vat stirrer", { snippet: "Used after the mud resist dries, to keep the vat even.", highlights: [[15, 25]], subtitle: "Giriraj Prasad Chhipa, Manisha Verma · 3rd Craft Toolkit, Jaipur Blue Pottery" })]),
+        group("processes", "Processes", 6, [item("processes", "p-dabu", "Dabu mud resist application", { snippet: "Step 4 of 9 · before the indigo dip.", highlights: [[25, 31]], subtitle: "Giriraj Prasad Chhipa · 3rd Craft Toolkit Workshop" })]),
+        group("artisans", "Artisans", 4, []),
+        group("media", "Media", 4, [])
+      ]
+    };
+  }
+  return { ...base, groups: [] };
+}
+
 export const QUEUE_FILES = 926;
 export const KILN_ID = "vid-g2";
 export const KILN_NAME = "Kiln-firing_wide_07.mov";
@@ -177,6 +223,13 @@ export class DesignFidelityWebFake extends DesignFidelityFake {
 
   override answer(method: string, path: string, query: URLSearchParams, body: Json | null): Answer | null {
     const at = query.get("path") ?? "";
+    if (path === "/data/tree" && at === "") {
+      const base = super.answer(method, path, query, body);
+      const json = base?.json as Json | undefined;
+      if (!json) return base;
+      const entries = (json.entries as Json[]).map((entry) => (entry.path === "workshops" ? { ...entry, count: 3412 } : entry));
+      return { status: 200, json: { ...json, entries } };
+    }
     if (path === "/data/tree" && at === GIRIRAJ) {
       const base = super.answer(method, path, query, body);
       const json = base?.json as Json | undefined;
@@ -230,6 +283,23 @@ export class DesignFidelityWebFake extends DesignFidelityFake {
     }
     if (path === "/data/visits" && method === "POST") {
       return { status: 200, json: { path: body?.path, visitedAt: "2026-11-05T10:00:00Z", previousVisitAt: "2026-11-01T10:00:00Z", newFiles: 38, newTranscripts: 4 } };
+    }
+    if (path === "/search/unified") return { status: 200, json: unifiedFor(query.get("q") ?? "", query.get("scope")) };
+    if (path === "/data/tree" && at === `${WORKSHOP}/deepak`) {
+      return {
+        status: 200,
+        json: {
+          path: at,
+          crumbs: [{ name: "All workshops", path: "workshops" }, { name: "3rd Craft Toolkit Workshop", path: WORKSHOP }, { name: "Deepak Prajapati", path: at }],
+          entries: [],
+          nextCursor: null,
+          total: 0,
+          truncated: false,
+          info: null,
+          taxonomies: [{ id: "workshops", name: "Workshop", path: "workshops", description: "Each workshop and its records.", default: true }],
+          taxonomy: "workshops"
+        }
+      };
     }
     if (path === "/transcripts/batch") {
       const ids = (query.get("ids") ?? "").split(",").filter(Boolean);

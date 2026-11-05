@@ -48,7 +48,7 @@ export type ExplorerConfig = {
   description?: string;
   headerExtra?: ReactNode;
   toolbarExtra?: ReactNode;
-  emptyBody: string;
+  emptyBody: string | ((folder: string) => string);
   emptyAction?: ReactNode;
   browseTypes: BrowseType[];
   browseScope?: { control: ReactNode; workshopIds?: string };
@@ -68,7 +68,7 @@ export function taxonomyChip(name: string): string {
 
 export function taxonomyRoot(name: string): string {
   const bare = name.replace(/^by\s+/i, "").trim().toLowerCase();
-  if (!bare || bare === name.toLowerCase()) return name;
+  if (!bare) return name;
   return `All ${bare.endsWith("s") ? bare : `${bare}s`}`;
 }
 
@@ -76,8 +76,8 @@ export function ExplorerHeader({ title, description, actions }: { title: string;
   return (
     <div className="flex flex-wrap items-end justify-between gap-4" data-testid="explorer-header">
       <div className="min-w-0">
-        <h1 className="font-display text-[30px] leading-[1.25] font-extrabold tracking-[-0.01em] text-ink-900">{title}</h1>
-        {description ? <p className="mt-1 text-sm text-ink-500">{description}</p> : null}
+        <h1 className="font-display text-[30px] leading-[1.25] font-extrabold tracking-[-0.01em] text-ink-900 max-lg:text-[26px]">{title}</h1>
+        {description ? <p className="mt-1 text-sm text-ink-500 max-lg:hidden">{description}</p> : null}
       </div>
       {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
     </div>
@@ -135,7 +135,7 @@ function ViewTabs({ view, counts, onView, trailing }: { view: ExplorerView; coun
   };
   return (
     <div className="flex items-end gap-1 border-line-200 px-3 pt-2 max-sm:p-0 sm:border-b">
-      <div role="tablist" aria-label="Contents" className="flex gap-1 max-sm:w-full max-sm:rounded-lg max-sm:border max-sm:border-line-200 max-sm:bg-card max-sm:p-1">
+      <div role="tablist" aria-label="Contents" className="flex gap-1 max-sm:w-full max-sm:rounded-md max-sm:border max-sm:border-line-200 max-sm:bg-card max-sm:p-[3px]">
         {VIEW_TABS.map((tab) => {
           const selected = view === tab.value;
           const count = counts[tab.value];
@@ -150,7 +150,7 @@ function ViewTabs({ view, counts, onView, trailing }: { view: ExplorerView; coun
               tabIndex={selected ? 0 : -1}
               onClick={() => onView(tab.value)}
               onKeyDown={onKey}
-              className={`inline-flex min-h-11 items-center justify-center px-3.5 text-sm transition max-sm:min-h-10 max-sm:flex-1 max-sm:rounded-md ${
+              className={`inline-flex min-h-11 items-center justify-center px-3.5 text-sm transition max-sm:min-h-10 max-sm:flex-1 max-sm:rounded-[9px] max-sm:text-[13px] ${
                 selected
                   ? "font-semibold text-purple-800 shadow-[inset_0_-2px_0_var(--purple-700)] max-sm:bg-purple-700 max-sm:text-white max-sm:shadow-none dark:text-purple-200 dark:shadow-[inset_0_-2px_0_#c090f5] max-sm:dark:bg-purple-300 max-sm:dark:text-purple-950"
                   : "text-ink-700 hover:text-ink-900"
@@ -776,19 +776,19 @@ export function DataExplorer({ config }: { config: ExplorerConfig }) {
           }
         }}
         actions={[
-          { key: "D", label: "Download", run: (hit: PaletteHit) => void withPath(hit, (path) => {
+          { key: "D", label: "Download folder", icon: "↓", run: (hit: PaletteHit) => void withPath(hit, (path) => {
             reveal(path);
             setPendingDownload(path);
           }) },
-          { key: "R", label: "Report", run: (hit: PaletteHit) => void withPath(hit, (path) => {
+          { key: "R", label: "Report (.xlsx)", icon: "▦", run: (hit: PaletteHit) => void withPath(hit, (path) => {
             reveal(path);
             setReportOpen(true);
           }) },
-          { key: "T", label: "Transcripts", run: (hit: PaletteHit) => void withPath(hit, (path) => {
+          { key: "T", label: "Transcripts (.zip)", icon: "¶", run: (hit: PaletteHit) => void withPath(hit, (path) => {
             tree.expand(ancestorsOf(path));
             navigate({ path, view: "transcripts", sheet: "", q: "" }, "push");
           }) },
-          { key: "L", label: "Copy link", run: (hit: PaletteHit) => void withPath(hit, (path) => {
+          { key: "L", label: "Copy link to this folder", icon: "⧉", run: (hit: PaletteHit) => void withPath(hit, (path) => {
             void navigator.clipboard?.writeText(`${window.location.origin}${pathname}${writeUrlState({ ...latest.current, path, preview: "", t: 0, find: "" })}`);
           }) }
         ]}

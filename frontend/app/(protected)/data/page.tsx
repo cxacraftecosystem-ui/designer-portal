@@ -190,9 +190,9 @@ function Explorer({ user }: { user: User }) {
     fileHref: (mediaId) => RECORD_VIEW_HREF.media(mediaId),
     recordHref,
     renderSearch: (reveal, openPreview) => <DataSearchPanel onReveal={reveal} onPreview={openPreview} />,
-    emptyBody: "Files appear here as soon as someone records for this folder.",
+    emptyBody: (folder) => `Files appear as soon as someone records for ${folder}.`,
     emptyAction: canCreateRecords(user) ? (
-      <Link href="/media" className="field-button">
+      <Link href="/media" className="inline-flex min-h-11 items-center rounded-md bg-purple-700 px-4 text-sm font-semibold text-white hover:bg-purple-800 dark:bg-purple-300 dark:text-purple-950">
         Record now
       </Link>
     ) : undefined,

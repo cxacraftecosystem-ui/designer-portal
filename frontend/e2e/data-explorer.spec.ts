@@ -995,8 +995,8 @@ test.describe("@qf:X1 saved views", () => {
       const dialog = page.getByRole("dialog", { name: "Saved views" });
       await expect(dialog.getByRole("list", { name: "Saved views" })).toContainText("Shared by Ravi Kumar");
       await expect(dialog.getByLabel("Save this screen as")).toHaveValue("Bagru 2026");
-      await dialog.getByRole("button", { name: "Save and copy link" }).click();
-      await expect(dialog.getByRole("button", { name: "Link copied" })).toBeVisible();
+      await dialog.getByRole("button", { name: "Save current view" }).click();
+      await expect(dialog.getByRole("status").filter({ hasText: "Link copied" })).toBeVisible();
       const posted = fake.calledWith("POST", "/data/views")[0].body as { path: string; state: { view: string } };
       expect(posted.path).toBe("workshops/bagru");
       expect(posted.state.view).toBe("tables");

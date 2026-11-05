@@ -175,7 +175,7 @@ export function FolderContents({
   extra: QueryParams;
   selection: Selection;
   fileHref: (mediaId: string) => string | null;
-  emptyBody: string;
+  emptyBody: string | ((folder: string) => string);
   emptyAction?: ReactNode;
   mediaStatus: ReadonlyMap<string, DownloadStatus>;
   onOpen: (path: string) => void;
@@ -351,9 +351,7 @@ export function FolderContents({
   if (error && !tree) {
     return (
       <div className="p-4">
-        <LoadFailed title="This folder didn't load" onRetry={onRetry}>
-          {error}
-        </LoadFailed>
+        <LoadFailed title="This folder didn't load" onRetry={onRetry} />
       </div>
     );
   }
@@ -365,7 +363,7 @@ export function FolderContents({
           <Square className="h-5 w-5" />
         </span>
         <h3 className="font-display text-lg leading-6 font-bold text-ink-900">Nothing recorded here yet</h3>
-        <p className="max-w-[16rem] text-sm leading-[21px] text-ink-700">{emptyBody}</p>
+        <p className="max-w-[16rem] text-sm leading-[21px] text-ink-700">{typeof emptyBody === "function" ? emptyBody(tree.crumbs?.[tree.crumbs.length - 1]?.name ?? "this folder") : emptyBody}</p>
         {emptyAction ? <div className="mt-2 flex flex-wrap justify-center gap-2">{emptyAction}</div> : null}
       </div>
     );

@@ -326,3 +326,123 @@ for (const theme of ["light", "dark"] as const) {
     }
   });
 }
+
+for (const theme of ["light", "dark"] as const) {
+  const suffix = theme === "dark" ? "-dark" : "";
+
+  test(`impl States${theme === "dark" ? " · dark" : ""}`, async ({ browser }) => {
+    test.setTimeout(150_000);
+    const { context, page, fake } = await open(browser, DESKTOP, theme);
+    try {
+      const contents = () => page.getByRole("region", { name: "Contents" });
+      await page.route(/\/api\/data\/tree\?.*manisha/, () => undefined);
+      await page.goto(folderUrl(`${WORKSHOP}/manisha`));
+      await expect(page.getByRole("status", { name: "Loading" })).toBeVisible();
+      await shootAround(page, "States", `loading${suffix}`, [contents()], { x: 0, top: 0, bottom: 0 });
+
+      await page.goto(folderUrl(`${WORKSHOP}/deepak`));
+      await expect(page.getByRole("heading", { name: "Nothing recorded here yet" })).toBeVisible();
+      await shootAround(page, "States", `empty${suffix}`, [contents()], { x: 0, top: 0, bottom: 0 });
+
+      fake.treeFailures.set(`${WORKSHOP}/nandkishor`, 50);
+      await page.goto(folderUrl(`${WORKSHOP}/nandkishor`));
+      await expect(page.getByRole("alert").filter({ hasText: "This folder didn't load" })).toBeVisible();
+      await shootAround(page, "States", `error${suffix}`, [contents()], { x: 0, top: 0, bottom: 0 });
+
+      await page.goto(folderUrl(GIRIRAJ));
+      await folderReady(page);
+      await context.setOffline(true);
+      await expect(page.getByText("You're offline.")).toBeVisible();
+      await shootAround(page, "States", `offline${suffix}`, [page.getByText("You're offline.").locator("xpath=.."), page.getByTestId("download-folder")], { x: 0, top: 0, bottom: 0 });
+      await context.setOffline(false);
+
+      await page.getByRole("searchbox", { name: "Search all data" }).fill("indgo");
+      const results = page.getByTestId("search-results");
+      await expect(results.getByRole("heading", { name: /No matches/ })).toBeVisible();
+      await shootAround(page, "States", `noresults${suffix}`, [results], { x: 0, top: 0, bottom: 0 });
+    } finally {
+      await context.close();
+    }
+  });
+
+  test(`impl CommandPalette${theme === "dark" ? " · dark" : ""}`, async ({ browser }) => {
+    const { context, page } = await open(browser, { width: 1440, height: 760 }, theme);
+    try {
+      await page.goto(folderUrl(GIRIRAJ));
+      await folderReady(page);
+      await page.getByTestId("download-folder").getByRole("heading").first().click();
+      await page.keyboard.press("Control+k");
+      const palette = page.getByRole("dialog", { name: "Quick jump" });
+      await palette.getByRole("combobox", { name: "Jump to anything" }).fill("giri");
+      await expect(palette.getByRole("option", { name: /Giridhar Soni/ })).toBeVisible();
+      await shoot(page, "CommandPalette", theme === "dark" ? "dark" : undefined);
+      await page.keyboard.press("Escape");
+      await expect(palette).toHaveCount(0);
+      await page.getByTestId("download-folder").getByRole("heading").first().click();
+      await page.keyboard.press("?");
+      await expect(page.getByRole("dialog", { name: /Shortcuts/ })).toBeVisible();
+      await shoot(page, "CommandPalette", `shortcuts${suffix}`);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test(`impl ReportOptions${theme === "dark" ? " · dark" : ""}`, async ({ browser }) => {
+    const { context, page } = await open(browser, { width: 1440, height: 860 }, theme);
+    try {
+      await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+      await page.goto(folderUrl(GIRIRAJ, { view: "tables", q: "indigo" }));
+      await folderReady(page);
+      await page.getByTestId("download-folder").getByRole("button", { name: "Report (.xlsx)" }).click();
+      await expect(page.getByRole("dialog", { name: "Report (.xlsx)" })).toBeVisible();
+      await page.waitForTimeout(800);
+      await shoot(page, "ReportOptions", theme === "dark" ? "dark" : undefined);
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Saved views" }).click();
+      const views = page.getByRole("dialog", { name: "Saved views" });
+      await expect(views.getByRole("list", { name: "Saved views" })).toBeVisible();
+      await views.getByRole("button", { name: "Save current view" }).click();
+      await expect(views.getByRole("status").filter({ hasText: "Link copied" })).toBeVisible();
+      await shoot(page, "ReportOptions", `saved-views${suffix}`);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test(`impl WebSearch${theme === "dark" ? " · dark" : ""}`, async ({ browser }) => {
+    const { context, page } = await open(browser, DESKTOP, theme);
+    try {
+      await page.goto(folderUrl(GIRIRAJ));
+      await folderReady(page);
+      await page.getByRole("searchbox", { name: "Search all data" }).fill("indigo mud resist");
+      const results = page.getByTestId("search-results");
+      await expect(results.getByText(/Section D · Materials/).first()).toBeVisible();
+      await shootAround(page, "WebSearch", theme === "dark" ? "dark" : undefined, [page.locator("[data-explorer-search]")], { x: 0, top: 0, bottom: 0 });
+    } finally {
+      await context.close();
+    }
+  });
+
+  test(`impl SearchBoth${theme === "dark" ? " · dark" : ""}`, async ({ browser }) => {
+    const { context, page } = await open(browser, PHONE, theme);
+    try {
+      await page.goto(folderUrl(GIRIRAJ));
+      await folderReady(page);
+      await page.getByRole("searchbox", { name: "Search all data" }).fill("indigo vat");
+      const results = page.getByTestId("search-results");
+      await expect(results).toBeVisible();
+      const both = page.getByRole("radio", { name: "Both portals" });
+      if (await both.isVisible().catch(() => false)) await both.click();
+      else {
+        const filters = page.getByRole("button", { name: /Filters/ }).first();
+        if (await filters.isVisible().catch(() => false)) await filters.click();
+        await page.getByRole("radio", { name: "Both portals" }).click();
+      }
+      await expect(results.getByText(/Bagru dyers/)).toBeVisible();
+      await page.locator("[data-explorer-search]").evaluate((node) => window.scrollTo(0, node.getBoundingClientRect().top + window.scrollY - 16));
+      await shoot(page, "SearchBoth", theme === "dark" ? "phone-web-dark" : "phone-web");
+    } finally {
+      await context.close();
+    }
+  });
+}
