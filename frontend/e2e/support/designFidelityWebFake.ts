@@ -212,7 +212,7 @@ export class DesignFidelityWebFake extends DesignFidelityFake {
 
   private workshopManifest(): Json[] {
     return Array.from({ length: QUEUE_FILES }, (_, index) => ({
-      path: index >= 573 && index < 613 ? `Giriraj Prasad Chhipa/Take ${index - 572}/Interview_Dabu-mud-resist_Take-1.mp4` : `Artisan ${(index % 12) + 1}/Clip_${String(index + 1).padStart(3, "0")}.jpg`,
+      path: index >= 500 && index < 613 ? `Giriraj Prasad Chhipa/Take ${index - 499}/Interview_Dabu-mud-resist_Take-1.mp4` : `Artisan ${(index % 12) + 1}/Clip_${String(index + 1).padStart(3, "0")}.jpg`,
       url: `/e2e-files/wk-${index}`,
       mediaId: `wk-${index}`,
       mediaType: "IMAGE",
