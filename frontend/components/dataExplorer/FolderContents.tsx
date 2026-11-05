@@ -524,7 +524,7 @@ export function FolderContents({
                           <div className="min-w-0 flex-1">
                             <div className={`truncate text-sm font-semibold ${isPlaying ? "text-purple-800 dark:text-purple-100" : "text-ink-900"}`}>
                               {href ? (
-                                <Link href={href} className="hover:text-purple-700 hover:underline">
+                                <Link href={href} aria-label={file.name} className="hover:text-purple-700 hover:underline">
                                   <FileName entry={file} />
                                 </Link>
                               ) : (
