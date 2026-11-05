@@ -21,6 +21,7 @@ dependencies = [
     "pydub>=0.25.1",
     "audioop-lts>=0.2.2",
     "openpyxl>=3.1.5",
+    "XlsxWriter>=3.3.1",
     "reportlab>=5.1.0",
     "anthropic>=2.3.0",
     "cryptography>=50.0.2",
