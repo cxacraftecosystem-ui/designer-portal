@@ -80,6 +80,7 @@ def _photo(artisan_id: str, filename: str = "portrait.jpg") -> Row:
         artisanId=artisan_id,
         originalFilename=filename,
         url=f"https://objects.test/{artisan_id}/{filename}",
+        objectKey=f"media/{artisan_id}/{filename}",
         linkedRecordType=None,
         linkedRecordId=None,
     )
@@ -588,6 +589,7 @@ class TestDesignWorkshopHalf:
             linkedRecordId="dw-1",
             originalFilename="sketch-3.jpg",
             url="https://objects.test/sketch-3.jpg",
+            objectKey="media/sketch-3.jpg",
         )
         manifest = asyncio.run(
             _dw_manifest(
@@ -611,6 +613,7 @@ class TestDesignWorkshopHalf:
             linkedRecordId=None,
             originalFilename="courtyard.jpg",
             url="https://objects.test/courtyard.jpg",
+            objectKey="media/courtyard.jpg",
         )
         manifest = asyncio.run(
             _dw_manifest(monkeypatch, designworkshop=[_dw()], mediafile=[loose])

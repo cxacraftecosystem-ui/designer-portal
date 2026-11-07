@@ -29,7 +29,7 @@ _AADHAAR_RESULT_KEYS = (
 
 _IDENTITY_KEYS = ("aadhaarNumber", "pehchanCardNumber")
 
-_MEDIA_URL_KEYS = ("url", "publicUrl", "objectKey")
+_MEDIA_URL_KEYS = ("url", "publicUrl", "objectKey", "cleanedObjectKey")
 
 _TRANSCRIPT_KEYS = ("transcriptText", "transcriptSummary")
 

@@ -191,11 +191,11 @@ def test_an_html_typed_row_is_signed_as_an_inert_attachment(flag, signer):
     assert signer.calls[0]["disposition"] == "attachment"
 
 
-def test_an_svg_keeps_its_type_and_is_never_inline(flag, signer):
+def test_an_svg_is_signed_as_an_inert_attachment(flag, signer):
     flag(True)
     records.public_encode(_encoded_media(mimeType="image/svg+xml"), _viewer(user_id=UPLOADER))
 
-    assert signer.calls[0]["mime_type"] == "image/svg+xml"
+    assert signer.calls[0]["mime_type"] == "application/octet-stream"
     assert signer.calls[0]["disposition"] == "attachment", (
         "an SVG navigated to is an HTML document with script in it, whatever the picker calls it"
     )
@@ -340,10 +340,10 @@ def test_an_unknown_disposition_is_spelled_attachment(fake_storage):
 
 
 
-def test_the_flag_defaults_to_off_in_the_declared_settings():
+def test_the_flag_defaults_to_on_in_the_declared_settings():
     field = config.Settings.model_fields["media_presigned_reads"]
 
-    assert field.default is False
+    assert field.default is True
     assert field.alias == "MEDIA_PRESIGNED_READS"
 
 

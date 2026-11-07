@@ -38,6 +38,7 @@ from app.services import (
     app_settings,
     design_workshop_posts,
     dictation_consent,
+    media_mime,
     transcribe_choice,
     transcript_insights,
     transcription_jobs,
@@ -201,76 +202,10 @@ async def _public(
     return encoded
 
 
-_UPLOAD_MIME_DENIED = frozenset(
-    {
-        "text/html",
-        "text/html-sandboxed",
-        "application/xhtml+xml",
-        "application/javascript",
-        "application/x-javascript",
-        "application/ecmascript",
-        "text/javascript",
-        "text/ecmascript",
-        "application/x-msdownload",
-        "application/hta",
-    }
-)
-
-_UPLOAD_MIME_FAMILIES: tuple[str, ...] = (
-    "image/",
-    "video/",
-    "audio/",
-    "text/",
-    "model/",
-    "font/",
-    "application/vnd.",
-)
-
-_UPLOAD_MIME_ALLOWED = frozenset(
-    {
-        "application/pdf",
-        "application/msword",
-        "application/rtf",
-        "application/json",
-        "application/xml",
-        "application/zip",
-        "application/x-zip-compressed",
-        "application/gzip",
-        "application/x-gzip",
-        "application/x-tar",
-        "application/octet-stream",
-    }
-)
-
-
-def _normalized_mime(raw: str | None) -> str:
-    return (raw or "").split(";")[0].strip().lower()
-
-
-def is_uploadable_mime(mime_type: str | None) -> bool:
-    normalized = _normalized_mime(mime_type)
-    return normalized not in _UPLOAD_MIME_DENIED and (
-        normalized in _UPLOAD_MIME_ALLOWED
-        or any(normalized.startswith(family) for family in _UPLOAD_MIME_FAMILIES)
-    )
-
-
-_INLINE_SAFE_MIME_FAMILIES: tuple[str, ...] = ("image/", "audio/", "video/")
-
-_INLINE_SAFE_MIME = frozenset({"application/pdf"})
-
-_INLINE_UNSAFE_MIME = frozenset({"image/svg+xml"})
-
-
-def signed_read_headers(mime_type: str | None) -> tuple[str, str]:
-    normalized = _normalized_mime(mime_type)
-    if not is_uploadable_mime(normalized):
-        return "application/octet-stream", "attachment"
-    inline = normalized not in _INLINE_UNSAFE_MIME and (
-        normalized in _INLINE_SAFE_MIME
-        or any(normalized.startswith(family) for family in _INLINE_SAFE_MIME_FAMILIES)
-    )
-    return normalized, "inline" if inline else "attachment"
+_UPLOAD_MIME_DENIED = media_mime.UPLOAD_MIME_DENIED
+_normalized_mime = media_mime.normalized_mime
+is_uploadable_mime = media_mime.is_uploadable_mime
+signed_read_headers = media_mime.signed_read_headers
 
 
 def _assert_uploadable(mime_type: str, size_bytes: int | None, settings: Any) -> None:
@@ -280,8 +215,8 @@ def _assert_uploadable(mime_type: str, size_bytes: int | None, settings: Any) ->
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"{normalized or 'That file type'} cannot be uploaded here.",
         )
-    ceiling = int(getattr(settings, "media_upload_max_bytes", 0) or 0)
-    if ceiling and size_bytes is not None and int(size_bytes) > ceiling:
+    ceiling = media_mime.upload_ceiling(settings)
+    if media_mime.over_ceiling(size_bytes, settings):
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=(
@@ -299,12 +234,12 @@ async def presign_media_upload(
     _assert_uploadable(payload.mimeType, payload.sizeBytes, settings)
     object_key = make_object_key(current_user.id, payload.filename)
     return {
-        "uploadUrl": presign_put_url(object_key, payload.mimeType),
+        "uploadUrl": presign_put_url(object_key, payload.mimeType, payload.sizeBytes),
         "method": "PUT",
         "objectKey": object_key,
         "bucket": settings.aws_s3_bucket,
         "headers": {"Content-Type": payload.mimeType},
-        "publicUrl": public_url_for_key(object_key),
+        "publicUrl": None,
     }
 
 
@@ -439,7 +374,7 @@ async def create_multipart(
         "bucket": settings.aws_s3_bucket,
         "partSize": MULTIPART_PART_SIZE,
         "partCount": part_count,
-        "publicUrl": public_url_for_key(object_key),
+        "publicUrl": None,
     }
 
 
@@ -449,6 +384,12 @@ async def presign_multipart_parts(
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     _assert_owns_object(payload.objectKey, current_user)
+    ceiling_part = media_mime.max_part_number(get_settings())
+    if len(payload.partNumbers) > ceiling_part or any(n > ceiling_part for n in payload.partNumbers):
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="That upload has more parts than the upload limit allows.",
+        )
     urls: dict[str, str] = {}
     for part_number in payload.partNumbers:
         urls[str(part_number)] = await asyncio.to_thread(
@@ -476,7 +417,7 @@ async def complete_multipart(
     return {
         "objectKey": payload.objectKey,
         "bucket": settings.aws_s3_bucket,
-        "publicUrl": public_url_for_key(payload.objectKey),
+        "publicUrl": None,
     }
 
 

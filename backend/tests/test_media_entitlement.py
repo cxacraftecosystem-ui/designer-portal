@@ -574,6 +574,7 @@ def _encoded_media(**extra) -> dict:
         "objectKey": "media/user-the-colleague-who-uploaded-it/pit-loom.jpg",
         "url": UNIT_URL,
         "publicUrl": UNIT_URL,
+        "cleanedObjectKey": "media/user-the-colleague-who-uploaded-it/pit-loom-cleaned.m4a",
         "transcriptText": TEAM_TRANSCRIPT,
         "transcriptSummary": "A pit loom, four hands and a span.",
         **extra,
@@ -668,7 +669,7 @@ def test_public_encode_carries_the_workshops_only_when_the_call_site_passes_them
         media_urls={UNIT_VIEWER},
         media_workshops=frozenset({UNIT_WORKSHOP}),
     )
-    assert passed["url"] == UNIT_URL
+    assert "X-Amz-Signature=" in passed["url"]
     assert _takeable(passed) == set(records._MEDIA_TAKEABLE_KEYS)
 
     omitted = records.public_encode(_tagged_media(), viewer, media_urls={UNIT_VIEWER})
@@ -751,7 +752,7 @@ def test_a_co_designer_is_handed_the_url_of_the_workshops_own_photograph(env, co
     row = _media_row(colleague_client, env["team_photo"])
 
     assert row["id"] == env["team_photo"]
-    assert row["url"] == TEAM_PHOTO_URL
+    assert "X-Amz-Signature=" in row["url"]
     assert "objectKey" in row, "the key travels with the URL; one is the other"
 
 

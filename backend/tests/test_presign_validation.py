@@ -102,8 +102,8 @@ def test_the_phones_own_apk_is_accepted():
     _assert_ok("application/vnd.android.package-archive")
 
 
-def test_svg_is_accepted_and_the_belt_stays_on_the_cdn():
-    _assert_ok("image/svg+xml")
+def test_svg_is_refused_because_it_is_a_script_capable_xml_document():
+    assert _refusal("image/svg+xml").status_code == 422
 
 
 def test_a_charset_parameter_does_not_change_the_answer():
