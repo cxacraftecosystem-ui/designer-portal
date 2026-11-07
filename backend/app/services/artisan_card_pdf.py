@@ -28,6 +28,7 @@ PHOTO_H = 28 * mm
 PHOTO_MAX_PX = 600
 PHOTO_MAX_BYTES = 8 * 1024 * 1024
 PHOTO_RAW_MAX_BYTES = 1536 * 1024
+PHOTO_MAX_PIXELS = 60_000_000
 SHEET_COLUMNS = 2
 SHEET_ROWS = 5
 SHEET_PER_PAGE = SHEET_COLUMNS * SHEET_ROWS
@@ -110,6 +111,9 @@ def scale_photo(data: bytes) -> bytes | None:
         return None
     try:
         with Image.open(BytesIO(data)) as opened:
+            if opened.width * opened.height > PHOTO_MAX_PIXELS:
+                return None
+            opened.draft("RGB", (PHOTO_MAX_PX, PHOTO_MAX_PX))
             image = opened.convert("RGB")
             image.thumbnail((PHOTO_MAX_PX, PHOTO_MAX_PX))
             out = BytesIO()

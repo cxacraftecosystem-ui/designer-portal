@@ -19,6 +19,7 @@ from app.services.aadhaar.secure_qr import normalise_gender, parse_dob, parse_re
 
 MAX_MEMBERS = 4
 MAX_XML_BYTES = 5 * 1024 * 1024
+MAX_XML_TAGS = 4096
 _AES_EXTRA_ID = 0x9901
 _AES_KEY_BYTES = {1: 16, 2: 24, 3: 32}
 
@@ -72,7 +73,10 @@ def _aes_member(archive: bytes, info: zipfile.ZipInfo, password: bytes) -> bytes
     counters = b"".join((index + 1).to_bytes(16, "little") for index in range(blocks))
     encryptor = Cipher(algorithms.AES(aes_key), modes.ECB()).encryptor()
     stream = encryptor.update(counters) + encryptor.finalize()
-    plain = bytes(a ^ b for a, b in zip(ciphertext, stream, strict=False))
+    size = len(ciphertext)
+    plain = (
+        int.from_bytes(ciphertext, "little") ^ int.from_bytes(stream[:size], "little")
+    ).to_bytes(size, "little")
     if method == zipfile.ZIP_DEFLATED:
         inflater = zlib.decompressobj(-zlib.MAX_WBITS)
         plain = inflater.decompress(plain, MAX_XML_BYTES)
@@ -164,6 +168,8 @@ def verify_offline_xml(
     email: str | None = None,
     now: datetime,
 ) -> VerifiedIdentity:
+    if xml.count(b"<") > MAX_XML_TAGS:
+        raise AadhaarError("xml_format", NOT_A_KYC_ZIP)
     try:
         root = xmldsig.parse(xml)
     except xmldsig.SignatureError:

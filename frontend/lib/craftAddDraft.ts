@@ -24,9 +24,23 @@ function restorable(element: Element): element is Control {
   return !(element instanceof HTMLInputElement && SKIPPED_TYPES.has(element.type));
 }
 
+const RETURN_BASE = "https://return.invalid";
+
+function hasControlOrBackslash(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f || code === 0x5c) return true;
+  }
+  return false;
+}
+
 export function safeReturnPath(value: string | null | undefined): string | null {
-  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) return null;
-  return value;
+  if (!value || !value.startsWith("/") || hasControlOrBackslash(value)) return null;
+  try {
+    return new URL(value, RETURN_BASE).origin === RETURN_BASE ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 export function addCraftHref(href: string, returnTo: string): string {

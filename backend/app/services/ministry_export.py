@@ -138,6 +138,7 @@ def _write_workbook(
     generated_at: datetime,
 ) -> tuple[bytes, int]:
     from openpyxl import Workbook
+    from openpyxl.cell import WriteOnlyCell
 
     per_entity = collected.per_entity
     withheld_custom = collected.withheld_custom
@@ -147,25 +148,37 @@ def _write_workbook(
     included = collected.workshops
 
     wb = Workbook(write_only=True)
+
+    def text_row(sheet: Any, values: list[Any]) -> list[Any]:
+        out: list[Any] = []
+        for value in values:
+            if isinstance(value, str):
+                cell = WriteOnlyCell(sheet, value=value)
+                cell.data_type = "s"
+                out.append(cell)
+            else:
+                out.append(value)
+        return out
+
     used: set[str] = set()
     readme = wb.create_sheet(_sheet_title("About this file", used))
-    readme.append(["Ministry stage-data export"])
-    readme.append(["Generated", generated_at.strftime("%d %b %Y %H:%M UTC")])
-    readme.append(["Scope", scope_label])
+    readme.append(text_row(readme, ["Ministry stage-data export"]))
+    readme.append(text_row(readme, ["Generated", generated_at.strftime("%d %b %Y %H:%M UTC")]))
+    readme.append(text_row(readme, ["Scope", scope_label]))
     narrowing = ", ".join(f"{key}: {value}" for key, value in filters.items() if value) or "None"
-    readme.append(["Filters", narrowing])
-    readme.append(["Workshops", f"{included} of {workshops_total}"])
-    readme.append(["Stage rows", rows_written])
-    readme.append(["Identity numbers", "Masked to the last four characters."])
-    readme.append(["Photographs and files", "Listed by id only."])
+    readme.append(text_row(readme, ["Filters", narrowing]))
+    readme.append(text_row(readme, ["Workshops", f"{included} of {workshops_total}"]))
+    readme.append(text_row(readme, ["Stage rows", rows_written]))
+    readme.append(text_row(readme, ["Identity numbers", "Masked to the last four characters."]))
+    readme.append(text_row(readme, ["Photographs and files", "Listed by id only."]))
     if withheld_custom:
-        readme.append(["Designers' own questions", f"{withheld_custom} rows not included."])
+        readme.append(text_row(readme, ["Designers' own questions", f"{withheld_custom} rows not included."]))
     if unknown:
-        readme.append(["Newer form versions", f"{unknown} rows not shown."])
+        readme.append(text_row(readme, ["Newer form versions", f"{unknown} rows not shown."]))
     if included < workshops_total:
-        readme.append(["Stopped", f"Only the first {included} workshops are included."])
+        readme.append(text_row(readme, ["Stopped", f"Only the first {included} workshops are included."]))
     if stopped:
-        readme.append(["Stopped", f"Only the first {MAX_EXPORT_ROWS} stage rows are included."])
+        readme.append(text_row(readme, ["Stopped", f"Only the first {MAX_EXPORT_ROWS} stage rows are included."]))
 
     identity_cols = [column.key for column in dw.WORKSHOP_IDENTITY_COLUMNS]
     identity_labels = [column.label for column in dw.WORKSHOP_IDENTITY_COLUMNS]
@@ -179,14 +192,17 @@ def _write_workbook(
             f"{column.label} ({column.unit})" if column.unit else column.label
             for column in table.columns
         ]
-        sheet.append([*identity_labels, "Row", *labels])
+        sheet.append(text_row(sheet, [*identity_labels, "Row", *labels]))
         for row in rows:
             sheet.append(
-                [
-                    *(row.get(key, "") for key in identity_cols),
-                    row.get("entry.ordinal", ""),
-                    *(row.get(key, "") for key in columns),
-                ]
+                text_row(
+                    sheet,
+                    [
+                        *(row.get(key, "") for key in identity_cols),
+                        row.get("entry.ordinal", ""),
+                        *(row.get(key, "") for key in columns),
+                    ],
+                )
             )
     buffer = BytesIO()
     wb.save(buffer)

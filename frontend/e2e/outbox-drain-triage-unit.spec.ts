@@ -447,7 +447,7 @@ function owned(ownerUserId: string | null | undefined, failure: string | null = 
   };
 }
 
-test("a null owner passes, because an entry queued before the stamp must replay as it was queued", () => {
+test("a null owner is not another account, so it is held for a claim rather than counted against one", () => {
   expect(outboxEntryIsForAnotherAccount(null, "designer-a")).toBe(false);
   expect(outboxEntryIsForAnotherAccount(undefined, "designer-a")).toBe(false);
 });
@@ -461,9 +461,9 @@ test("one designer's entry is not another's to send", () => {
   expect(outboxEntryIsForAnotherAccount("designer-a", "designer-b")).toBe(true);
 });
 
-test("a refusal is counted as a refusal whoever captured it", () => {
+test("another account's entries are counted for that account, refused or not", () => {
   const entries = [owned("designer-a"), owned("designer-a", "The server refused this."), owned("designer-b"), owned(null)];
-  expect(outboxEntriesForAnotherAccount(entries, "designer-b")).toBe(1);
+  expect(outboxEntriesForAnotherAccount(entries, "designer-b")).toBe(2);
   expect(outboxEntriesForAnotherAccount(entries, "designer-a")).toBe(1);
   expect(outboxEntriesForAnotherAccount(entries, null)).toBe(0);
   expect(outboxEntriesForAnotherAccount([owned(null), owned(null)], "designer-b")).toBe(0);
@@ -512,10 +512,9 @@ test("the stamp is written by the queue and not by the six forms that reach it",
 });
 
 test("another account's entries leave the WAITING count, or the banner promises a send that cannot happen", () => {
-  expect(BANNER_SOURCE).toContain("const waiting = entries.length - rejected.length - otherAccount;");
-  expect(BANNER_SOURCE, "and the sentence is the library's, so it is pinned above rather than typed in JSX").toContain(
-    "outboxOtherAccountLine(otherAccount)"
-  );
+  expect(BANNER_SOURCE).toContain("const entries = outboxEntriesForThisAccount(stored, signedIn);");
+  expect(BANNER_SOURCE).toContain("const waiting = entries.length - rejected.length;");
+  expect(BANNER_SOURCE, "held entries are a count and a choice, never a list").toContain("<OutboxAccountHold");
   expect(BANNER_SOURCE).toContain("{waiting ? (");
 });
 

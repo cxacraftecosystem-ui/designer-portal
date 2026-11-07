@@ -774,9 +774,12 @@ def dictation(monkeypatch):
     async def _load_allowance(user_id, *, now=None):
         return state.allowance
 
-    async def _spend(user_id, day):
+    async def _reserve(user_id, day, limit):
         seen.spends.append((user_id, day))
         return state.allowance.used + 1
+
+    async def _refund(user_id, day):
+        seen.spends.remove((user_id, day))
 
     state = SimpleNamespace(
         consent="GRANTED",
@@ -798,7 +801,8 @@ def dictation(monkeypatch):
     monkeypatch.setattr(routes, "transcribe_audio_bytes", _transcribe)
     monkeypatch.setattr(routes, "get_settings", SimpleNamespace)
     monkeypatch.setattr(routes.dictation_cap, "load_allowance", _load_allowance)
-    monkeypatch.setattr(routes.dictation_cap, "spend", _spend)
+    monkeypatch.setattr(routes.dictation_cap, "reserve", _reserve)
+    monkeypatch.setattr(routes.dictation_cap, "refund", _refund)
 
     async def _keep(content, file, result, user, record):
         seen.kept.append((len(content), result.get("status"), getattr(record, "id", None)))
@@ -958,11 +962,11 @@ def test_the_two_hundred_carries_the_allowance_so_a_phone_need_never_be_refused_
 def test_a_counter_that_could_not_be_written_reports_the_count_it_can_stand_behind(
     dictation, monkeypatch
 ):
-    async def _failed_spend(user_id, day):
+    async def _failed_reserve(user_id, day, limit):
         return None
 
     dictation.state.allowance = Allowance(day="2026-08-12", limit=40, used=27)
-    monkeypatch.setattr(dictation.routes.dictation_cap, "spend", _failed_spend)
+    monkeypatch.setattr(dictation.routes.dictation_cap, "reserve", _failed_reserve)
     payload = asyncio.run(
         dictation.routes.dictate_for_workshop(
             "wsp_1", request=_plain_request(), file=_Clip(), languageHint=None, current_user=_person("DESIGNER")

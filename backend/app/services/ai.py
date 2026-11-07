@@ -19,6 +19,7 @@ from app.services import (
     anthropic_verbs,
     app_settings,
     managed_secrets,
+    paid_ai_allowance,
     subtitles,
     user_ai_keys,
 )
@@ -1849,6 +1850,8 @@ async def analyze_measurement_image_bytes(
     mime_type: str,
     settings: Settings,
     dimension: str | None = None,
+    *,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     await managed_secrets.refresh_if_stale()
     if not managed_secrets.gemini_key_pool():
@@ -1862,6 +1865,7 @@ async def analyze_measurement_image_bytes(
             ),
             **_measurement_provenance(None, settings).payload(),
         }
+    paid_ai_allowance.take(paid_ai_allowance.MEASUREMENT, user_id)
     try:
         return await asyncio.to_thread(
             _post_gemini_measurement,

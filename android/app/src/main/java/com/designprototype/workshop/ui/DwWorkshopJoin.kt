@@ -68,9 +68,13 @@ data class DwPendingInduction(
     val attempts: Int = 0,
     val kind: String = DW_INDUCTION_ASK,
     val bootId: String = "",
+    val ownerUserId: String? = null,
 ) {
-    val queueKey: String get() = "$kind:$workshopId"
+    val queueKey: String get() = listOfNotNull(kind, workshopId, ownerUserId).joinToString(":")
 }
+
+internal fun dwInductionHeldForAnotherAccount(row: DwPendingInduction, signedInUserId: String?): Boolean =
+    signedInUserId == null || row.ownerUserId == null || row.ownerUserId != signedInUserId
 
 const val DW_INDUCTION_ASK = "ASK"
 
@@ -184,6 +188,7 @@ object DwInductionQueue {
                 bootWallClockMs = wall - elapsed,
                 kind = kind,
                 bootId = mark.bootId,
+                ownerUserId = TokenStore(context).getUser()?.id,
             )
             mutex.withLock {
                 val merged = dwMergeInduction(read(context), row)
@@ -207,8 +212,19 @@ object DwInductionQueue {
         }
     }
 
+    suspend fun heldForAnotherAccount(context: Context): List<DwPendingInduction> {
+        val me = TokenStore(context).getUser()?.id ?: return emptyList()
+        return all(context).filter { dwInductionHeldForAnotherAccount(it, me) }
+    }
+
+    suspend fun discardHeldForAnotherAccount(context: Context) = withContext(Dispatchers.IO) {
+        val me = TokenStore(context).getUser()?.id ?: return@withContext
+        mutex.withLock { write(context, read(context).filterNot { dwInductionHeldForAnotherAccount(it, me) }) }
+    }
+
     suspend fun flush(context: Context): List<Pair<DwPendingInduction, DwJoinOutcome>> {
-        val rows = all(context)
+        val me = TokenStore(context).getUser()?.id
+        val rows = all(context).filterNot { dwInductionHeldForAnotherAccount(it, me) }
         if (rows.isEmpty()) return emptyList()
         return rows.map { row ->
             val outcome = if (row.kind == DW_INDUCTION_JOIN) {

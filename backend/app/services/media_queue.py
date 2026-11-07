@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import os
 import tempfile
@@ -14,6 +15,7 @@ from app.services import (
     ai_verb_cap,
     audio_isolation,
     dictation_consent,
+    paid_ai_allowance,
     transcribe_choice,
     transcript_insights,
     transcript_pipeline,
@@ -302,7 +304,7 @@ async def process_next_media_jobs(
             locked = await _lock_job(job.id, worker_id)
             if locked is None:
                 continue
-            await _process_job(locked, settings)
+            await _run_locked(locked, settings, worker_id)
             succeeded += 1
             if locked.jobType == TRANSCRIPTION:
                 _clear_rate_limit_cooldown()
@@ -543,6 +545,31 @@ def _attempts_exhausted(job: Any) -> bool:
     return attempts >= max(max_attempts, 1)
 
 
+LOCK_HEARTBEAT_SECONDS = 300.0
+
+
+async def _hold_lock(job_id: str, worker_id: str) -> None:
+    while True:
+        await asyncio.sleep(LOCK_HEARTBEAT_SECONDS)
+        try:
+            await db.mediaprocessingjob.update_many(
+                where={"id": job_id, "status": PROCESSING, "lockedBy": worker_id},
+                data={"lockedAt": datetime.now(UTC)},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not refresh the lock on job %s: %s", job_id, exc)
+
+
+async def _run_locked(job: Any, settings: Settings, worker_id: str) -> None:
+    beat = asyncio.create_task(_hold_lock(job.id, worker_id))
+    try:
+        await _process_job(job, settings)
+    finally:
+        beat.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await beat
+
+
 async def _lock_job(job_id: str, worker_id: str) -> Any | None:
     job = await db.mediaprocessingjob.find_unique(where={"id": job_id})
     if not job or job.status != QUEUED:
@@ -682,15 +709,42 @@ async def _process_job(job: Any, settings: Settings) -> None:
                 },
             )
             return
-        result = await analyze_measurement_image_bytes(
-            content,
-            media.originalFilename or "measurement.jpg",
-            media.mimeType or "image/jpeg",
-            settings,
-        )
+        try:
+            result = await analyze_measurement_image_bytes(
+                content,
+                media.originalFilename or "measurement.jpg",
+                media.mimeType or "image/jpeg",
+                settings,
+                user_id=_measurement_payer(job, media),
+            )
+        except paid_ai_allowance.AllowanceSpent as exc:
+            await _defer_for_allowance(job, exc)
+            return
         await _apply_measurement_result(job, result)
         return
     raise RuntimeError(f"Unsupported media processing job type: {job.jobType}")
+
+
+def _measurement_payer(job: Any, media: Any) -> str | None:
+    return _value(job, "requestedById") or _value(media, "uploadedById") or None
+
+
+async def _defer_for_allowance(job: Any, exc: Any) -> None:
+    try:
+        attempts = int(_value(job, "attempts") or 0)
+    except (TypeError, ValueError):
+        attempts = 0
+    await db.mediaprocessingjob.update(
+        where={"id": job.id},
+        data={
+            "status": QUEUED,
+            "lockedAt": None,
+            "lockedBy": None,
+            "attempts": max(attempts - 1, 0),
+            "runAfter": datetime.now(UTC) + timedelta(seconds=max(int(exc.retry_after), 1)),
+            "error": str(exc.message)[:2000],
+        },
+    )
 
 
 async def _apply_transcription_result(job: Any, result: dict[str, Any]) -> None:
@@ -1005,12 +1059,13 @@ async def process_next_insights_jobs(
     outcome = {"processed": 0, "succeeded": 0, "failed": 0}
 
     async def one(job: Any, n: int) -> None:
-        locked = await _lock_job(job.id, f"{worker_id}-{n}")
+        holder = f"{worker_id}-{n}"
+        locked = await _lock_job(job.id, holder)
         if locked is None:
             return
         outcome["processed"] += 1
         try:
-            await _process_job(locked, settings)
+            await _run_locked(locked, settings, holder)
             outcome["succeeded"] += 1
         except Exception as exc:  # noqa: BLE001 - the queue's own failure path
             outcome["failed"] += 1
