@@ -368,6 +368,7 @@ async def test_a_link_whose_issuer_was_outranked_reads_as_withdrawn(
 
     monkeypatch.setattr(auth_routes.credential_links, "describe_token", _describe)
     monkeypatch.setattr(auth_routes, "db", SimpleNamespace(user=_Users()))
+    monkeypatch.setattr(auth_routes, "roster_barred", _never_barred)
     verdict = await auth_routes._link_verdict("a-link")  # noqa: SLF001
     assert verdict.ok is ok
     if not ok:
@@ -673,6 +674,7 @@ async def test_the_masters_google_sign_in_promotes_no_account_somebody_else_hold
             raise AssertionError("the master's sign-in created a second account beside the first")
 
     monkeypatch.setattr(auth_routes, "db", SimpleNamespace(user=_Users()))
+    monkeypatch.setattr(auth_routes, "roster_barred", _never_barred)
 
     if promoted:
         user, _access = await auth_routes.login_with_google("stand-in-for-a-real-token")
@@ -1263,6 +1265,7 @@ async def test_neither_door_writes_the_token_to_a_log(monkeypatch, caplog):
 
     monkeypatch.setattr(auth_routes.credential_links, "describe_token", _describe)
     monkeypatch.setattr(auth_routes, "db", SimpleNamespace(user=_Users()))
+    monkeypatch.setattr(auth_routes, "roster_barred", _never_barred)
     with (
         caplog.at_level(logging.DEBUG),
         caplog.at_level(logging.DEBUG, logger=auth_routes.logger.name),
@@ -1280,3 +1283,7 @@ async def test_neither_door_writes_the_token_to_a_log(monkeypatch, caplog):
     assert len(refusals) == 2, "the line under test was not written"
     assert all("acct-target" in r.getMessage() for r in refusals)
     assert LINK_TOKEN not in caplog.text
+
+
+async def _never_barred(_user):
+    return False

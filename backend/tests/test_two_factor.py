@@ -629,6 +629,7 @@ def test_no_serializer_carries_a_secret_user_field():
         "twoFactorEnabled": True,
         "twoFactorEnabledAt": now,
         "passwordHash": "$2b$12$" + "x" * 53,
+        "passwordIssuerKnown": True,
         "twoFactorSecret": "v1.a.b.c",
         "twoFactorPendingSecret": "v1.d.e.f",
         "twoFactorPendingSince": now,
