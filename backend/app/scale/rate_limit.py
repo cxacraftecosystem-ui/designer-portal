@@ -93,12 +93,12 @@ def trusted_viewer_address(scope: Scope) -> str | None:
         return None
 
 
-def _verified_subject(token: bytes) -> str | None:
+def _bearer_subject(token: bytes) -> str | None:
     from app.core.security import decode_access_token
 
     try:
         claims = decode_access_token(token.decode("latin-1"))
-    except ValueError:
+    except (ValueError, UnicodeDecodeError):
         return None
     subject = claims.get("sub")
     return str(subject) if subject else None
@@ -111,9 +111,9 @@ def _identity(scope: Scope, *, ignore_bearer: bool = False) -> str:
                 continue
             token = value.strip()
             if token[:7].lower() == b"bearer " and len(token) > 7:
-                subject = _verified_subject(token[7:].strip())
+                subject = _bearer_subject(token[7:].strip())
                 if subject:
-                    return "t:" + hashlib.sha256(subject.encode("utf-8")).hexdigest()[:16]
+                    return "u:" + hashlib.sha256(subject.encode("utf-8")).hexdigest()[:16]
             break
     return client_address(scope)
 

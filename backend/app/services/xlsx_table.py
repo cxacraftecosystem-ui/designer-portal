@@ -5,13 +5,15 @@ import unicodedata
 from dataclasses import dataclass
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
-from zipfile import BadZipFile
+from zipfile import BadZipFile, ZipFile
 
 if TYPE_CHECKING:
     from openpyxl.worksheet.worksheet import Worksheet
 
 __all__ = [
     "FALSEISH",
+    "MAX_CELLS",
+    "MAX_COLUMNS",
     "OLE2_MAGIC",
     "TRUEISH",
     "ZIP_MAGIC",
@@ -19,7 +21,9 @@ __all__ = [
     "ParseProblem",
     "XlsxTableError",
     "as_text_rows",
+    "bounded_rows",
     "cell_text",
+    "check_archive",
     "clip",
     "formula_map",
     "label_after",
@@ -37,6 +41,50 @@ __all__ = [
 
 class XlsxTableError(ValueError):
     pass
+
+
+MAX_COLUMNS = 512
+MAX_CELLS = 2_000_000
+MAX_INFLATED_BYTES = 200 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 2_000
+
+TOO_LARGE = (
+    "The workbook is too large to read. Delete empty rows and columns, or split it into "
+    "smaller workbooks, and upload it again."
+)
+
+
+class _CellBudget:
+    def __init__(self, cells: int = MAX_CELLS) -> None:
+        self.left = cells
+
+    def spend(self, cells: int) -> None:
+        self.left -= cells
+        if self.left < 0:
+            raise XlsxTableError(TOO_LARGE)
+
+
+def bounded_rows(ws: Any, *, max_rows: int, budget: _CellBudget | None = None) -> Any:
+    reset = getattr(ws, "reset_dimensions", None)
+    if reset is not None:
+        reset()
+    for row in ws.iter_rows(min_row=1, max_row=max_rows, values_only=True):
+        kept = row[:MAX_COLUMNS]
+        if budget is not None:
+            budget.spend(len(kept))
+        yield kept
+
+
+def check_archive(data: bytes) -> None:
+    try:
+        with ZipFile(BytesIO(data)) as archive:
+            members = archive.infolist()
+    except (BadZipFile, OSError, ValueError):
+        return
+    if len(members) > MAX_ARCHIVE_MEMBERS:
+        raise XlsxTableError(TOO_LARGE)
+    if sum(member.file_size for member in members) > MAX_INFLATED_BYTES:
+        raise XlsxTableError(TOO_LARGE)
 
 
 _SPACEY = re.compile(r"[\s  -\u200b  　]+")
@@ -157,12 +205,15 @@ def scan_header(
 
 
 def sheet_rows(
-    ws: Worksheet, formulas: dict[tuple[int, int], str], *, max_rows: int
+    ws: Worksheet,
+    formulas: dict[tuple[int, int], str],
+    *,
+    max_rows: int,
+    budget: _CellBudget | None = None,
 ) -> list[tuple[int, list[str]]]:
     out: list[tuple[int, list[str]]] = []
-    for row_number, row in enumerate(ws.iter_rows(values_only=True), start=1):
-        if row_number > max_rows:
-            break
+    rows = bounded_rows(ws, max_rows=max_rows, budget=budget or _CellBudget())
+    for row_number, row in enumerate(rows, start=1):
         cells: list[str] = []
         for column, value in enumerate(row, start=1):
             text = cell_text(value)
@@ -177,12 +228,15 @@ def sheet_rows(
 
 
 def sheet_value_rows(
-    ws: Worksheet, formulas: dict[tuple[int, int], str], *, max_rows: int
+    ws: Worksheet,
+    formulas: dict[tuple[int, int], str],
+    *,
+    max_rows: int,
+    budget: _CellBudget | None = None,
 ) -> list[tuple[int, list[Any]]]:
     out: list[tuple[int, list[Any]]] = []
-    for row_number, row in enumerate(ws.iter_rows(values_only=True), start=1):
-        if row_number > max_rows:
-            break
+    rows = bounded_rows(ws, max_rows=max_rows, budget=budget or _CellBudget())
+    for row_number, row in enumerate(rows, start=1):
         cells: list[Any] = []
         for column, value in enumerate(row, start=1):
             if not cell_text(value):
@@ -211,12 +265,12 @@ def formula_map(
         wb = load_workbook(BytesIO(data), data_only=False, read_only=True)
     except (InvalidFileException, OSError, ValueError, KeyError, TypeError):
         return found
+    budget = _CellBudget()
     try:
         for ws in wb.worksheets[:max_sheets]:
             per_sheet: dict[tuple[int, int], str] = {}
-            for row_number, row in enumerate(ws.iter_rows(values_only=True), start=1):
-                if row_number > max_rows:
-                    break
+            rows = bounded_rows(ws, max_rows=max_rows, budget=budget)
+            for row_number, row in enumerate(rows, start=1):
                 for column, value in enumerate(row, start=1):
                     if isinstance(value, str) and value.startswith("="):
                         per_sheet[(row_number, column)] = value
@@ -254,6 +308,7 @@ def load_sheets(
 ) -> dict[str, list[tuple[int, list[str]]]]:
     from openpyxl import load_workbook
     from openpyxl.utils.exceptions import InvalidFileException
+    check_archive(data)
     try:
         wb = load_workbook(BytesIO(data), data_only=True, read_only=True)
     except (InvalidFileException, BadZipFile, OSError, ValueError, KeyError, TypeError) as exc:
@@ -262,8 +317,11 @@ def load_sheets(
     try:
         formulas = formula_map(data, max_sheets=max_sheets, max_rows=max_rows)
         sheets: dict[str, list[tuple[int, list[str]]]] = {}
+        budget = _CellBudget()
         for ws in wb.worksheets[:max_sheets]:
-            sheets[ws.title] = sheet_rows(ws, formulas.get(ws.title, {}), max_rows=max_rows)
+            sheets[ws.title] = sheet_rows(
+                ws, formulas.get(ws.title, {}), max_rows=max_rows, budget=budget
+            )
     finally:
         wb.close()
     return sheets
@@ -274,6 +332,7 @@ def load_value_sheets(
 ) -> dict[str, list[tuple[int, list[Any]]]]:
     from openpyxl import load_workbook
     from openpyxl.utils.exceptions import InvalidFileException
+    check_archive(data)
     try:
         wb = load_workbook(BytesIO(data), data_only=True, read_only=True)
     except (InvalidFileException, BadZipFile, OSError, ValueError, KeyError, TypeError) as exc:
@@ -282,8 +341,11 @@ def load_value_sheets(
     try:
         formulas = formula_map(data, max_sheets=max_sheets, max_rows=max_rows)
         sheets: dict[str, list[tuple[int, list[Any]]]] = {}
+        budget = _CellBudget()
         for ws in wb.worksheets[:max_sheets]:
-            sheets[ws.title] = sheet_value_rows(ws, formulas.get(ws.title, {}), max_rows=max_rows)
+            sheets[ws.title] = sheet_value_rows(
+                ws, formulas.get(ws.title, {}), max_rows=max_rows, budget=budget
+            )
     finally:
         wb.close()
     return sheets

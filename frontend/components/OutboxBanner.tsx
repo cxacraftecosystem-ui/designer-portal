@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { CircleAlert, CloudOff, Link2, RefreshCw, Trash2, TriangleAlert } from "lucide-react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { OutboxAccountHold } from "@/components/OutboxAccountHold";
 import { FieldDialog } from "@/components/dialogs/FieldDialog";
 import { DownloadMediaButton } from "@/components/media/DownloadMediaButton";
 import { MediaActionButton } from "@/components/media/MediaActionButton";
@@ -15,7 +16,9 @@ import { listResource } from "@/lib/api";
 import { downloadLocalMedia } from "@/lib/localMediaDownload";
 import {
   acknowledgeOutboxTrouble,
+  claimUnownedOutboxEntries,
   danglingKeys,
+  discardHeldOutboxEntries,
   discardOutboxEntry,
   getOutboxHealth,
   getOutboxQueuedHere,
@@ -26,8 +29,11 @@ import {
   markDifferentPerson,
   markSamePerson,
   outboxEntriesForAnotherAccount,
+  outboxEntriesForThisAccount,
+  outboxEntriesWithoutOwner,
   outboxIsAnswering,
   outboxOtherAccountLine,
+  outboxSessionUser,
   referenceFieldNoun,
   refreshOutbox,
   repickEmptyLine,
@@ -241,13 +247,17 @@ function RepickDialog({
 }
 
 export function OutboxBanner() {
-  const entries = useSyncExternalStore(subscribeOutbox, getOutboxSnapshot, getServerOutboxSnapshot);
+  const stored = useSyncExternalStore(subscribeOutbox, getOutboxSnapshot, getServerOutboxSnapshot);
   const health = useSyncExternalStore(subscribeOutbox, getOutboxHealth, getServerOutboxHealth);
   const queuedHere = useSyncExternalStore(subscribeOutbox, getOutboxQueuedHere, getServerOutboxQueuedHere);
   const [syncing, setSyncing] = useState(false);
   const [repicking, setRepicking] = useState<{ entry: OutboxEntry; field: string } | null>(null);
   const { toast } = useToast();
   const { user, loading: authLoading } = useAuth();
+  const signedIn = authLoading ? null : (user?.id ?? null);
+  const entries = outboxEntriesForThisAccount(stored, signedIn);
+  const otherAccount = outboxEntriesForAnotherAccount(stored, signedIn);
+  const unowned = outboxEntriesWithoutOwner(stored, signedIn);
 
   useEffect(() => {
     if (authLoading) return;
@@ -309,7 +319,7 @@ export function OutboxBanner() {
 
   useEffect(() => {
     function onOnline() {
-      if (getOutboxSnapshot().length) drain("auto");
+      if (outboxEntriesForThisAccount(getOutboxSnapshot(), outboxSessionUser()).length) drain("auto");
     }
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
@@ -317,11 +327,26 @@ export function OutboxBanner() {
 
   const trouble = !outboxIsAnswering(health);
 
-  if (!entries.length && !trouble) return null;
+  const held = otherAccount + unowned;
+
+  if (!entries.length && !held && !trouble) return null;
 
   const rejected = entries.filter((entry) => entry.failure);
-  const otherAccount = outboxEntriesForAnotherAccount(entries, user?.id ?? null);
-  const waiting = entries.length - rejected.length - otherAccount;
+  const waiting = entries.length - rejected.length;
+
+  const holdPanel = held ? (
+    <OutboxAccountHold
+      otherAccount={otherAccount}
+      unowned={unowned}
+      busy={syncing}
+      onClaim={() =>
+        void claimUnownedOutboxEntries()
+          .then(() => drain("manual"))
+          .catch(() => undefined)
+      }
+      onDiscard={(which) => void discardHeldOutboxEntries(which).catch(() => undefined)}
+    />
+  ) : null;
 
   const troublePanel = trouble ? (
     <section
@@ -347,7 +372,18 @@ export function OutboxBanner() {
     </section>
   ) : null;
 
-  if (!entries.length) return troublePanel;
+  if (!entries.length) {
+    return (
+      <>
+        {troublePanel}
+        {holdPanel ? (
+          <section aria-live="polite" className="mb-4 grid gap-2 rounded-lg border border-amber-500/40 bg-amber-100/60 p-4 text-ink-900">
+            {holdPanel}
+          </section>
+        ) : null}
+      </>
+    );
+  }
 
   return (
     <>
@@ -388,9 +424,6 @@ export function OutboxBanner() {
                   :
                     "Nothing here is waiting for a connection."}
             </p>
-            {otherAccount ? (
-              <p className="mt-1 text-xs font-medium text-amber-800 dark:text-amber-100">{outboxOtherAccountLine(otherAccount)}</p>
-            ) : null}
           </div>
         </div>
         {waiting ? (
@@ -400,6 +433,8 @@ export function OutboxBanner() {
           </button>
         ) : null}
       </div>
+
+      {holdPanel}
 
       <ul className="grid gap-1.5">
         {entries.map((entry) => (

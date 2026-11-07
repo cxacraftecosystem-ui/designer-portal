@@ -39,6 +39,7 @@ from app.services import (
     design_workshop_posts,
     dictation_consent,
     media_mime,
+    paid_ai_allowance,
     transcribe_choice,
     transcript_insights,
     transcription_jobs,
@@ -449,7 +450,7 @@ async def analyze_media_measurement(
     request: Request,
     file: UploadFile = File(...),
     dimension: str | None = Query(default=None),
-    _: Any = Depends(require_record_creator),
+    current_user: Any = Depends(require_record_creator),
 ) -> dict[str, Any]:
     try:
         requested = normalize_dimension(dimension)
@@ -473,13 +474,21 @@ async def analyze_media_measurement(
             detail=f"{mime_type or 'That file type'} cannot be read; send a JPEG, PNG or WebP.",
         )
 
-    result = await analyze_measurement_image_bytes(
-        content,
-        file.filename or "measurement.jpg",
-        mime_type,
-        get_settings(),
-        requested,
-    )
+    try:
+        result = await analyze_measurement_image_bytes(
+            content,
+            file.filename or "measurement.jpg",
+            mime_type,
+            get_settings(),
+            requested,
+            user_id=current_user.id,
+        )
+    except paid_ai_allowance.AllowanceSpent as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=exc.message,
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
     if not result.get("available"):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -82,7 +83,7 @@ from app.services.records import (
     require_record,
     with_id_tiebreak,
 )
-from app.services.uploads import read_upload_bounded
+from app.services.uploads import read_body_bounded, read_upload_bounded
 from app.services.xlsx_report import xlsx_response
 
 router = APIRouter(prefix="/questionnaires", tags=["questionnaires"])
@@ -274,8 +275,8 @@ async def import_questionnaire_bundle(
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Choose a bundle file.")
         raw = await upload.read(limit + 1)
     else:
-        raw = await request.body()
-    if len(raw) > limit:
+        raw = await read_body_bounded(request, limit)
+    if raw is None or len(raw) > limit:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="This bundle is too large.")
     document = library.read_bundle_bytes(raw)
     tables = unified_forms.tables(db, await unified_forms.authoring_unified())
@@ -336,7 +337,9 @@ async def upload_questionnaire(
     _require_designer(current_user)
     content = await _read_upload(file, request)
     try:
-        parsed = parse_questionnaire_workbook(content, filename=file.filename)
+        parsed = await asyncio.to_thread(
+            parse_questionnaire_workbook, content, filename=file.filename
+        )
     except QuestionnaireXlsxError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -371,7 +374,9 @@ async def reupload_questionnaire(
     await _refuse_its_workshops_holder(record, current_user)
     content = await _read_upload(file, request)
     try:
-        parsed = parse_questionnaire_workbook(content, filename=file.filename)
+        parsed = await asyncio.to_thread(
+            parse_questionnaire_workbook, content, filename=file.filename
+        )
     except QuestionnaireXlsxError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)

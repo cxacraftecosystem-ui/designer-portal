@@ -125,7 +125,7 @@ jobs:
   wait-for-checks:
     name: Wait for Checks on this commit
     needs: changes
-    if: ${{ needs.changes.outputs.backend == 'true' && github.event_name != 'workflow_dispatch' }}
+    if: ${{ needs.changes.outputs.backend == 'true' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 25
     permissions:
@@ -213,7 +213,7 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          echo "::error::timed out after 20 minutes waiting for the Checks jobs on ${SHA}. Nothing was deployed. If the suite is genuinely this slow now, raise the loop bound here rather than deleting the gate; to ship past it in an emergency, run this workflow from the Actions tab — workflow_dispatch skips the wait by design."
+          echo "::error::timed out after 20 minutes waiting for the Checks jobs on ${SHA}. Nothing was deployed. If the suite is genuinely this slow now, raise the loop bound here rather than deleting the gate; a dispatch of this workflow waits for the same Checks, so re-run Checks on this commit first."
           exit 1
 
   deploy:
@@ -221,10 +221,12 @@ jobs:
     if: >-
       ${{ !cancelled()
           && needs.changes.result == 'success'
-          && (needs.wait-for-checks.result == 'success' || needs.wait-for-checks.result == 'skipped')
+          && github.ref == 'refs/heads/main'
+          && needs.wait-for-checks.result == 'success'
           && needs.wait-for-checks.outputs.superseded != 'true'
           && (needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-26.04
+    environment: backend-production
     env:
       BOX_PYTHON_VERSION: "3.15.2"
       BOX_PYTHON_BUILD: "20261026"
@@ -260,11 +262,13 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
 
-      - name: Add EC2 host to known_hosts, and set the SSH keepalives every step below inherits
+      - name: Pin the EC2 host key, and set the SSH keepalives every step below inherits
+        env:
+          HOST: ${{ secrets.EC2_HOST }}
+          HOST_KEYS: ${{ secrets.EC2_SSH_HOST_KEYS }}
         run: |
           set -euo pipefail
-          mkdir -p ~/.ssh
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+          bash scripts/ci/pin_ssh_host.sh
 
           cat >> ~/.ssh/config <<'SSHCFG'
           Host *

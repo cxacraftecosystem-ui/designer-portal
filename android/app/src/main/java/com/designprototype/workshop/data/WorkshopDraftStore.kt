@@ -286,6 +286,9 @@ object WorkshopDraftStore {
         }
     }
 
+    private fun signedInUserId(context: Context): String? =
+        runCatching { TokenStore(context).getUser()?.id }.getOrNull()?.takeIf { it.isNotBlank() }
+
     suspend fun load(context: Context, workshopId: String): WorkshopDraft? =
         withContext(Dispatchers.IO) { mutex.withLock { readLocked(context, workshopId) } }
 
@@ -298,7 +301,8 @@ object WorkshopDraftStore {
                 createdAt = existing?.createdAt?.takeIf { it.isNotBlank() }
                     ?: draft.createdAt.takeIf { it.isNotBlank() }
                     ?: now,
-                updatedAt = now
+                updatedAt = now,
+                ownerUserId = draft.ownerUserId ?: existing?.ownerUserId ?: signedInUserId(context)
             )
             writeLocked(context, stamped, existing)
             stamped
@@ -314,11 +318,13 @@ object WorkshopDraftStore {
             val now = Instant.now().toString()
             val current = readLocked(context, workshopId)
                 ?: WorkshopDraft(workshopId = workshopId, createdAt = now, updatedAt = now)
-            val next = transform(current).copy(
+            val transformed = transform(current)
+            val next = transformed.copy(
                 schemaVersion = WORKSHOP_DRAFT_SCHEMA_VERSION,
                 workshopId = workshopId,
                 createdAt = current.createdAt.takeIf { it.isNotBlank() } ?: now,
-                updatedAt = now
+                updatedAt = now,
+                ownerUserId = transformed.ownerUserId ?: signedInUserId(context)
             )
             writeLocked(context, next, current)
             next

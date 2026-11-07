@@ -404,6 +404,7 @@ import com.designprototype.workshop.ui.TwoStepVerificationScreen
 import com.designprototype.workshop.ui.AccountPasswordScreen
 import com.designprototype.workshop.ui.ForgotPasswordScreen
 import com.designprototype.workshop.ui.HelpThemBackInActions
+import com.designprototype.workshop.ui.HeldForAnotherAccountPrompt
 import com.designprototype.workshop.ui.AddPersonCard
 import com.designprototype.workshop.data.SignInOutcome
 import com.designprototype.workshop.ui.aadhaar.AadhaarSelfScreen
@@ -1525,6 +1526,7 @@ private fun RepositoryApp(
                 }
             }
         }
+        if (!bannersHeld) HeldForAnotherAccountPrompt(user?.id)
         if (showOutboxTray && !passwordHeld) {
             OfflineOutboxTray(
                 repository = repository,

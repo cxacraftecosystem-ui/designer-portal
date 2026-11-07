@@ -1,13 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { apiToken, CREDENTIALS_MISSING, signInWithToken } from "./support/session";
+import { API, apiToken, bearer, CREDENTIALS_MISSING, signInWithToken } from "./support/session";
 
 test.skip(!!CREDENTIALS_MISSING, CREDENTIALS_MISSING);
 
 const PREVIOUS_RUN = "a-run-that-is-not-this-one";
 
-async function seedRefusedEntry(page: Page, skewRun: string | null) {
-  return page.evaluate(async (stale) => {
+async function seedRefusedEntry(page: Page, skewRun: string | null, ownerUserId: string) {
+  return page.evaluate(async ({ stale, owner }) => {
     const db: IDBDatabase = await new Promise((resolve, reject) => {
       const open = indexedDB.open("field-repo-outbox", 1);
       open.onupgradeneeded = () => {
@@ -34,14 +34,15 @@ async function seedRefusedEntry(page: Page, skewRun: string | null) {
           failure:
             "This copy of the app and the repository are out of step, so the repository could not read what " +
             "was sent. Nothing you entered is wrong and nothing has been thrown away.",
-          skewRun: stale
+          skewRun: stale,
+          ownerUserId: owner
         });
       rq.onsuccess = () => resolve(null);
       rq.onerror = () => reject(rq.error);
     });
     db.close();
     return true;
-  }, skewRun);
+  }, { stale: skewRun, owner: ownerUserId });
 }
 
 async function storedEntry(page: Page) {
@@ -69,7 +70,8 @@ test("a queued record refused by an earlier run is re-sent by a new one, and the
   await page.goto("/dashboard");
   await expect(page).toHaveURL(/dashboard/, { timeout: 30_000 });
 
-  await seedRefusedEntry(page, PREVIOUS_RUN);
+  const me = (await (await page.request.get(`${API}/api/auth/me`, { headers: bearer(token) })).json()) as { id: string };
+  await seedRefusedEntry(page, PREVIOUS_RUN, me.id);
 
   let replays = 0;
   page.on("request", (request) => {
