@@ -203,7 +203,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -587,7 +589,7 @@ import kotlinx.coroutines.launch
 import coil3.compose.AsyncImage
 import retrofit2.HttpException
 import androidx.activity.compose.BackHandler
-import androidx.compose.material3.Checkbox
+import com.designprototype.workshop.ui.FieldCheckbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DrawerValue
@@ -902,6 +904,11 @@ private enum class EntryMode(
 }
 
 private fun Screen.memoryKey(): Screen = if (this is Screen.DesignWorkshops) Screen.DesignWorkshops() else this
+
+private val ScreenSaver = Saver<Screen, String>(
+    save = { s -> if (s is Screen.DataBrowser || (s is Screen.View && s.from is Screen.DataBrowser)) "data" else "home" },
+    restore = { if (it == "data") Screen.DataBrowser else Screen.Dashboard },
+)
 
 private sealed interface Screen {
     data object Dashboard : Screen
@@ -1557,6 +1564,7 @@ private fun LoginScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .imePadding()
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.Center
     ) {
@@ -1868,9 +1876,11 @@ private fun HomeScreen(
     var sections by remember { mutableStateOf<List<QuestionnaireSectionDto>>(emptyList()) }
     var crafts by remember { mutableStateOf<List<CraftDto>>(emptyList()) }
     var artisans by remember { mutableStateOf<List<ArtisanDto>>(emptyList()) }
-    var screen by remember { mutableStateOf<Screen>(Screen.Dashboard) }
+    var screen by rememberSaveable(stateSaver = ScreenSaver) { mutableStateOf<Screen>(Screen.Dashboard) }
     var questionnaireNewForm by remember { mutableIntStateOf(0) }
-    var dataBrowserPath by remember { mutableStateOf("") }
+    var dataBrowserPath by rememberSaveable { mutableStateOf("") }
+    val dataExplorer = key(user.id) { com.designprototype.workshop.explorer.ui.rememberDataExplorerState() }
+    val dataHolder = rememberSaveableStateHolder()
     val searchMemory = remember { SearchMemory() }
     val listScroll = remember { mutableMapOf<Screen, Int>() }
     var restoreScrollFor by remember { mutableStateOf<Screen?>(null) }
@@ -1887,10 +1897,6 @@ private fun HomeScreen(
     val notificationOpenRequest by NotificationState.openRequests.collectAsState()
     LaunchedEffect(notificationOpenRequest) {
         if (notificationOpenRequest > 0L) screen = Screen.Notifications
-    }
-    val viewLink by com.designprototype.workshop.explorer.ui.ExplorerViewLinks.requests.collectAsState()
-    LaunchedEffect(viewLink) {
-        if (viewLink != null && screen !is Screen.DataBrowser) screen = Screen.DataBrowser
     }
     val downloadsTap by com.designprototype.workshop.explorer.data.ExplorerDownloadsTap.requests.collectAsState()
     LaunchedEffect(downloadsTap) {
@@ -2092,6 +2098,17 @@ private fun HomeScreen(
             pendingExit = leave
         } else {
             leave()
+        }
+    }
+
+    val viewLink by com.designprototype.workshop.explorer.ui.ExplorerViewLinks.requests.collectAsState()
+    var linkAsked by remember { mutableStateOf<com.designprototype.workshop.explorer.ui.ExplorerLinkRequest?>(null) }
+    LaunchedEffect(viewLink, pendingExit) {
+        val link = viewLink ?: return@LaunchedEffect
+        if (screen is Screen.DataBrowser) return@LaunchedEffect
+        when {
+            linkAsked !== link -> { linkAsked = link; attemptExit { message = null; screen = Screen.DataBrowser } }
+            pendingExit == null -> com.designprototype.workshop.explorer.ui.ExplorerViewLinks.consume(link)
         }
     }
 
@@ -2417,8 +2434,9 @@ private fun HomeScreen(
                     .appMenuHidesPage(drawerState.appMenuShowing)
             ) {
                 when (screen) {
-                    is Screen.DataBrowser -> DataBrowserScreen(
+                    is Screen.DataBrowser -> dataHolder.SaveableStateProvider("data:${user.id}") { DataBrowserScreen(
                         repository = repository,
+                        state = dataExplorer,
                         onBack = { attemptExit { dataBrowserPath = ""; goBack() } },
                         onMessage = { showMessage(it) },
                         onError = { showError(it) },
@@ -2445,7 +2463,7 @@ private fun HomeScreen(
                             val artisanId = com.designprototype.workshop.ui.dataFolderArtisan(path)
                             screen = Screen.Create(EntryMode.MEDIA, artisanId?.let { Prefill(artisanId = it, artisanName = name) }, from = Screen.DataBrowser)
                         }
-                    )
+                    ) }
 
                     is Screen.Appearance -> AppearanceScreen(
                         repository = repository,
@@ -2582,6 +2600,7 @@ private fun HomeScreen(
             LocalAppNotice provides { showMessage(it) },
             LocalContentAdminChrome provides contentAdminChrome(user, adminView),
             LocalMayDelete provides canDelete,
+            com.designprototype.workshop.ui.LocalAudioExpand provides canDownloadDataset,
             LocalScreenMemory provides screenMemory,
         ) {
         ProvideCompletenessFocus((screen as? Screen.Edit)?.focus, key = screen) {
@@ -2621,7 +2640,7 @@ private fun HomeScreen(
                     showAdminHub = isAdmin && adminChrome,
                     onOpenAdminHub = { message = null; screen = Screen.AdminHub() },
                     onWalkthrough = { message = null; showWalkthrough = true },
-                    onNew = { selected -> message = null; screen = Screen.Create(selected) },
+                    onNew = { selected -> message = null; screen = if (selected == EntryMode.VIEW_DATA && canDownloadDataset) screenFor(EntryMode.DATA_BROWSER) else Screen.Create(selected) },
                     onUpdateExisting = { selected -> message = null; screen = Screen.Browse(selected) },
                     onOpenSearchFor = { recordType ->
                         message = null
@@ -5595,7 +5614,7 @@ private fun ArtisanMultiSelectField(
                             .fillMaxWidth()
                             .clickable { onToggle(artisan.id) }
                     ) {
-                        Checkbox(checked = selectedIds.contains(artisan.id), onCheckedChange = { onToggle(artisan.id) })
+                        FieldCheckbox(checked = selectedIds.contains(artisan.id), onCheckedChange = { onToggle(artisan.id) })
                         Text("${artisan.name} · ${artisan.place}", color = Body, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
@@ -7032,7 +7051,6 @@ private fun CraftForm(
             selected = stateOfOrigin,
             placeholder = "Choose states",
             searchable = true,
-            bulk = false,
             onSelectedChange = { stateOfOrigin = it }
         )
         SearchableMultiSelectField(
@@ -7041,7 +7059,6 @@ private fun CraftForm(
             selected = stateOfPractice,
             placeholder = "Choose states",
             searchable = true,
-            bulk = false,
             onSelectedChange = { stateOfPractice = it }
         )
         DropdownField(
@@ -11222,13 +11239,16 @@ private fun ViewDataScreen(
         when {
             loadingList -> Text("Loading ${mode.label.lowercase()}…", color = Muted)
             mode == EntryMode.QUESTIONNAIRE -> {
-                ArtisanMultiSelectField(
-                    label = "Involved artisans",
-                    artisans = artisanFilterList,
-                    selectedIds = selectedArtisanIds
-                ) { id ->
-                    selectedArtisanIds = if (selectedArtisanIds.contains(id)) selectedArtisanIds - id else selectedArtisanIds + id
+                val artisanFilterOptions = remember(artisanFilterList) {
+                    artisanFilterList.map { artisan -> SelectOption(artisan.id, listOf(artisan.name, artisan.place).filter { it.isNotBlank() }.joinToString(" · ")) }
                 }
+                SearchableMultiSelectField(
+                    label = "Involved artisans",
+                    options = artisanFilterOptions,
+                    selected = selectedArtisanIds,
+                    placeholder = "Narrow the list to one or more artisans",
+                    emptyMessage = "No artisans yet. Create one first."
+                ) { next -> selectedArtisanIds = next }
                 val hasArtisan = selectedArtisanIds.isNotEmpty()
                 val secondaryOptions = listOf(COMPLETION_OPTION_ID to "▦ Check completion (all artisans)") +
                     (if (hasArtisan) questionnaireOptions else emptyList())
@@ -13229,7 +13249,8 @@ private fun AndroidSavedMediaPreview(
                 uri = uri,
                 mediaType = media.mediaType,
                 onSave = { saveMediaToDevice(context, readableUrl, media.originalFilename, media.mimeType) },
-                onDismiss = { showViewer = false }
+                onDismiss = { showViewer = false },
+                expand = com.designprototype.workshop.ui.AudioExpand(media.id, media.originalFilename, sizeBytes = media.byteSize, onSave = { saveMediaToDevice(context, readableUrl, media.originalFilename, media.mimeType) }).takeIf { media.mediaType.equals("AUDIO", ignoreCase = true) }
             )
         }
     }

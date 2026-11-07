@@ -11,7 +11,6 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -66,7 +65,7 @@ private fun ConsentRow(checked: Boolean, words: String, onChange: (Boolean) -> U
             .heightIn(min = 48.dp)
             .toggleable(value = checked, role = Role.Checkbox, onValueChange = onChange),
     ) {
-        Checkbox(checked = checked, onCheckedChange = null)
+        FieldCheckbox(checked = checked, onCheckedChange = null)
         Text(words, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 8.dp))
     }
 }

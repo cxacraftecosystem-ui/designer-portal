@@ -20,7 +20,6 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -320,7 +319,7 @@ private fun UsageAgreeRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Checkbox(checked = agreed, onCheckedChange = null)
+            FieldCheckbox(checked = agreed, onCheckedChange = null)
             Text(
                 USAGE_AGREE_LABEL,
                 color = MaterialTheme.colorScheme.onSurface,

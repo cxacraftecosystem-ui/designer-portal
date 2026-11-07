@@ -146,7 +146,7 @@ async def test_the_all_view_answers_every_group_with_readable_items(world, setti
         assert group["items"], group["type"]
         for item in group["items"]:
             assert item["id"] and item["type"] == group["type"]
-            optional = {"startMs", "mediaType", "alsoIn"}
+            optional = {"startMs", "mediaType", "alsoIn", "locatable"}
             assert ANDROID_ITEM_KEYS <= set(item) <= ANDROID_ITEM_KEYS | optional
 
 

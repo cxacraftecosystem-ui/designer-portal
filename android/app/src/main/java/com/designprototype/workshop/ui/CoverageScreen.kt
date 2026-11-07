@@ -314,7 +314,6 @@ private fun CoverageFilterSheet(
             placeholder = "All crafts",
             emptyMessage = "No crafts to choose from yet.",
             searchable = true,
-            bulk = false,
             onSelectedChange = { onQuery(query.copy(craftCode = it.toList())) }
         )
         SearchableSelectField(

@@ -231,7 +231,7 @@ class ExplorerSheetsUiTest {
             link = com.designprototype.workshop.explorer.data.ExplorerLink(online = true, metered = true),
             freeBytes = 64L * 1024 * 1024 * 1024,
             speedBps = null,
-            location = "Downloads/DesignWorkshop/Toolkit.zip",
+            location = "Downloads/${com.designprototype.workshop.explorer.portal.ExplorerPortal.DOWNLOAD_FOLDER}/Toolkit.zip",
         )
         val started = mutableListOf<Pair<Boolean, String?>>()
         compose.setContent {

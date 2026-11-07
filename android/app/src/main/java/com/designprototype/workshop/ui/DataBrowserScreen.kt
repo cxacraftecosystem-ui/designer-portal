@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.explorer.data.ExplorerText
 import com.designprototype.workshop.explorer.ui.ExplorerScreen
+import com.designprototype.workshop.explorer.ui.ExplorerState
 import com.designprototype.workshop.explorer.ui.ExplorerUiText
 import com.designprototype.workshop.explorer.ui.LocalExplorerSearchAll
 
@@ -50,6 +51,7 @@ fun DataBrowserScreen(
     onRecordNow: ((folderPath: String, folderName: String) -> Unit)? = null,
     onOpenSection: ((artisanId: String, sectionKey: String) -> Unit)? = null,
     onOpenRecord: ((kind: String, id: String) -> Unit)? = null,
+    state: ExplorerState? = null,
 ) {
     ExplorerScreen(
         onBack = onBack,
@@ -58,6 +60,8 @@ fun DataBrowserScreen(
         onError = onError,
         onOpenMedia = onOpenMedia,
         startPath = startPath.takeIf { it.isNotBlank() },
+        onPathChange = onPathChange,
+        held = state,
         onRecordNow = onRecordNow,
         onOpenSection = onOpenSection,
         onOpenRecord = onOpenRecord,
@@ -82,18 +86,20 @@ fun dataFolderArtisan(path: String): String? =
 internal fun quickSearchFetch(repository: WorkshopRepository, filters: SearchFilters): SearchPageFetch {
     val (dateFrom, dateTo) = filters.resolveDateRange()
     return { types, page, pageSize ->
-        repository.search(
-            q = filters.query.trim().ifBlank { null },
-            craftId = filters.craftId.ifBlank { null },
-            place = filters.place.trim().ifBlank { null },
-            artisanId = filters.artisanId.ifBlank { null },
-            mediaType = filters.mediaType.ifBlank { null },
-            types = types,
-            dateFrom = dateFrom,
-            dateTo = dateTo,
-            page = page,
-            pageSize = pageSize,
-        )
+        searchWithCrafts(filters, types, page, pageSize, { p, s -> repository.searchCrafts(filters.query, p, s) }) { recordTypes ->
+            repository.search(
+                q = filters.query.trim().ifBlank { null },
+                craftId = filters.craftId.ifBlank { null },
+                place = filters.place.trim().ifBlank { null },
+                artisanId = filters.artisanId.ifBlank { null },
+                mediaType = filters.mediaType.ifBlank { null },
+                types = recordTypes,
+                dateFrom = dateFrom,
+                dateTo = dateTo,
+                page = page,
+                pageSize = pageSize,
+            )
+        }
     }
 }
 

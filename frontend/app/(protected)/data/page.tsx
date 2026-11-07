@@ -11,7 +11,7 @@ import { DataExplorer, ExplorerHeader, type ExplorerConfig } from "@/components/
 import type { BrowseType } from "@/components/dataExplorer/BrowseByType";
 import { TranscriptDataPanel } from "@/components/transcript/TranscriptDataPanel";
 import { listResource } from "@/lib/api";
-import type { BrowsePage, ReportResponse } from "@/lib/dataExplorer/contract";
+import type { BrowseKind, BrowsePage, ReportResponse } from "@/lib/dataExplorer/contract";
 import { canCreateRecords, canDownloadDataset, canExportDesignWorkshopData, canViewDesignWorkshopData } from "@/lib/permissions";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
 import { toolRowLabel } from "@/lib/toolArtisans";
@@ -47,7 +47,7 @@ type BrowseDef = {
   load: (page: number, q: string) => Promise<BrowsePage>;
 };
 
-const BROWSE_TYPES: Record<string, BrowseDef> = {
+const BROWSE_TYPES: Record<BrowseKind, BrowseDef> = {
   artisan: {
     label: "Artisans",
     editHref: (id) => `/artisans/${id}/edit`,
@@ -108,7 +108,7 @@ const BROWSE_TYPES: Record<string, BrowseDef> = {
         createdAt: x.createdAt
       }))
   },
-  questionnaire: {
+  interview: {
     label: "Questionnaire",
     editHref: (id) => `/questionnaire/sessions/${encodeURIComponent(id)}`,
     viewHref: RECORD_VIEW_HREF.interview,
@@ -174,6 +174,7 @@ const header = (
 );
 
 function recordHref(kind: string, id: string): string | null {
+  if (kind === "designWorkshop") return `/design-workshops/${encodeURIComponent(id)}`;
   const key = kind as keyof typeof RECORD_VIEW_HREF;
   return key in RECORD_VIEW_HREF ? RECORD_VIEW_HREF[key](id) : null;
 }
