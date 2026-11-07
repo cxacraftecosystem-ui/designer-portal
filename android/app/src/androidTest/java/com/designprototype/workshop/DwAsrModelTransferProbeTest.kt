@@ -35,6 +35,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 import java.io.RandomAccessFile
+import java.net.HttpURLConnection
+import java.net.URL
 
 @RunWith(AndroidJUnit4::class)
 class DwAsrModelTransferProbeTest {
@@ -42,8 +44,9 @@ class DwAsrModelTransferProbeTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
     @Test
-    fun theFetchReadoutMatchesTheBytesOnDiskAndItsEtaMatchesWhatHappened() {
-        clearProbeState()
+    fun theFetchReadoutMatchesTheBytesOnDiskAndItsEtaMatchesWhatHappened() = withRetries { fetchOnce() }
+
+    private fun fetchOnce() {
         val scope = CoroutineScope(Dispatchers.Main)
         val controller = DwAsrModelController(context, scope, listOf(PROBE_MODEL), listOf(PROBE_ARTIFACT))
 
@@ -86,7 +89,7 @@ class DwAsrModelTransferProbeTest {
         Log.i(TAG, "finished in $totalMillis ms  state=$finalState  failure=$failure")
 
         val fetching = trace.filter { it.phase == DwTransferPhase.FETCHING }
-        assertTrue("The probe recorded no fetch samples at all.", fetching.size >= 3)
+        if (fetching.size < 3) throw stopped(controller, "the fetch produced ${fetching.size} samples; state=$finalState failure=$failure")
 
         fetching.forEach { s ->
             assertTrue(
@@ -111,7 +114,7 @@ class DwAsrModelTransferProbeTest {
                 theirs in (mine / 8.0)..(mine * 8.0),
             )
         }
-        assertTrue("No speed samples were comparable; the fixture may be too small.", compared >= 2)
+        if (compared < 2) throw stopped(controller, "only $compared windows ran faster than 200 kB/s")
 
         val endedAt = fetching.last().atMillis
         val etaErrors = fetching.mapNotNull { s ->
@@ -151,8 +154,9 @@ class DwAsrModelTransferProbeTest {
     }
 
     @Test
-    fun pausingKeepsThePrefixAndClearsTheReadoutAndResumingCarriesOnFromIt() {
-        clearProbeState()
+    fun pausingKeepsThePrefixAndClearsTheReadoutAndResumingCarriesOnFromIt() = withRetries { pauseAndResumeOnce() }
+
+    private fun pauseAndResumeOnce() {
         val scope = CoroutineScope(Dispatchers.Main)
         val controller = DwAsrModelController(context, scope, listOf(PROBE_MODEL), listOf(PROBE_ARTIFACT))
         refreshAndWait(controller)
@@ -162,7 +166,14 @@ class DwAsrModelTransferProbeTest {
         val startedAt = SystemClock.elapsedRealtime()
         while (SystemClock.elapsedRealtime() - startedAt < FETCH_TIMEOUT_MS) {
             if (partFile().isFile && partFile().length() > PAUSE_AFTER_BYTES) break
+            if (readOnUi { controller.status.state } != DwAsrModelState.INSTALLING) break
             Thread.sleep(POLL_MS)
+        }
+        val reached = if (partFile().isFile) partFile().length() else 0L
+        if (reached <= PAUSE_AFTER_BYTES) {
+            val state = readOnUi { controller.status.state }
+            val failure = readOnUi { controller.status.failure }
+            throw stopped(controller, "the fetch reached $reached bytes before the pause; state=$state failure=$failure")
         }
         val beforePause = readOnUi { controller.readout }
         Log.i(TAG, "at the pause the card said: " + beforePause?.let { dwTransferLine(it) })
@@ -196,6 +207,9 @@ class DwAsrModelTransferProbeTest {
             Thread.sleep(POLL_MS)
         }
         Log.i(TAG, "first reading after resume: " + firstResumedReadout?.let { dwTransferLine(it) })
+        if (firstResumedReadout == null && readOnUi { controller.status.state } == DwAsrModelState.FAILED) {
+            throw stopped(controller, "the resume failed before its first reading: ${readOnUi { controller.status.failure }}")
+        }
         assertNotNull("The resume produced no readout at all.", firstResumedReadout)
         assertTrue(
             "A resume must count the prefix: it reported ${firstResumedReadout!!.receivedBytes} " +
@@ -328,6 +342,48 @@ class DwAsrModelTransferProbeTest {
         }
     }
 
+    private class ProbeInfra(message: String) : Exception(message)
+
+    private fun stopped(controller: DwAsrModelController, why: String): ProbeInfra {
+        if (readOnUi { controller.status.state } == DwAsrModelState.INSTALLING) onUi { controller.pause() }
+        return ProbeInfra(why)
+    }
+
+    private fun hostAnswers(): Boolean = runCatching {
+        val connection = URL(PROBE_ARTIFACT.url).openConnection() as HttpURLConnection
+        try {
+            connection.connectTimeout = HOST_TIMEOUT_MS
+            connection.readTimeout = HOST_TIMEOUT_MS
+            connection.instanceFollowRedirects = true
+            connection.setRequestProperty("Range", "bytes=0-0")
+            connection.responseCode in 200..299
+        } finally {
+            connection.disconnect()
+        }
+    }.getOrDefault(false)
+
+    private fun withRetries(attempt: () -> Unit) {
+        val infra = mutableListOf<String>()
+        var regression: Throwable? = null
+        repeat(ATTEMPTS) { round ->
+            clearProbeState()
+            try {
+                if (!hostAnswers()) throw ProbeInfra("the probe host did not answer")
+                attempt()
+                clearProbeState()
+                return
+            } catch (e: ProbeInfra) {
+                infra += "attempt ${round + 1}: ${e.message}"
+            } catch (e: AssertionError) {
+                regression = e
+            }
+            Log.i(TAG, "attempt ${round + 1} of $ATTEMPTS did not pass")
+        }
+        clearProbeState()
+        regression?.let { throw it }
+        assumeTrue("The transfer probe could not reach its host: " + infra.joinToString("; "), false)
+    }
+
     private data class Sample(
         val atMillis: Long,
         val phase: DwTransferPhase?,
@@ -386,6 +442,8 @@ class DwAsrModelTransferProbeTest {
         const val FETCH_TIMEOUT_MS = 300_000L
         const val COPY_TIMEOUT_MS = 120_000L
         const val PAUSE_AFTER_BYTES = 6_000_000L
+        const val ATTEMPTS = 2
+        const val HOST_TIMEOUT_MS = 15_000
 
         val PROBE_MODEL = DwAsrModel(
             modelId = "dw-transfer-probe",

@@ -9,6 +9,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import android.view.View
 import com.designprototype.workshop.explorer.ui.LocalExplorerSearchAll
 import androidx.compose.ui.test.SemanticsNodeInteractionsProvider
 import androidx.compose.ui.test.assertHasClickAction
@@ -361,5 +366,38 @@ class DataSearchReachUiTest {
         assertEquals(listOf("artisan:a1"), opened)
         assertEquals("", compose.onNodeWithTag("explorer.search").fetchSemanticsNode().config.getOrNull(SemanticsProperties.EditableText)?.text)
         assertTrue(gone("explorer.search.summary"))
+    }
+
+    private fun focusedNodes(): Int =
+        compose.onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.Focused, true), useUnmergedTree = true).fetchSemanticsNodes().size
+
+    private fun keyboardUp(view: View?): Boolean =
+        view != null && ViewCompat.getRootWindowInsets(view)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+
+    @Test
+    fun openingAQuickJumpResultPutsTheKeyboardAway() {
+        val repo = repository()
+        val opened = mutableListOf<String>()
+        var view: View? = null
+        compose.setContent {
+            view = LocalView.current
+            MaterialTheme {
+                DataRecordSearch(repo) { type, id, _ -> opened += "$type:$id" }
+            }
+        }
+        compose.onNodeWithTag("explorer.search").performTextInput("indigo")
+        waitFor("explorer.search.summary")
+        assertTrue(focusedNodes() > 0)
+        compose.onNode(hasClickAction().and(hasText("Artisan 1"))).performSemanticsAction(SemanticsActions.OnClick)
+        compose.waitUntil(15_000) { focusedNodes() == 0 && !keyboardUp(view) }
+        assertEquals(listOf("artisan:a1"), opened)
+    }
+
+    @Test
+    fun theFullSearchOpenedWithAQueryLeavesTheKeyboardDown() {
+        showUnified()
+        waitFor("data.search.item.artisans.a1")
+        compose.waitForIdle()
+        assertEquals(0, focusedNodes())
     }
 }

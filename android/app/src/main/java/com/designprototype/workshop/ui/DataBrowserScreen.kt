@@ -171,6 +171,8 @@ internal fun DataRecordSearch(repository: WorkshopRepository, onOpen: (recordTyp
         if (active) {
             search.hits.forEach { hit ->
                 SearchResultRow(row = hit, onOpen = {
+                    focusManager.clearFocus()
+                    keyboard?.hide()
                     onOpen(hit.recordType, hit.id, hit.title)
                     filters = SearchFilters()
                     browsing = false
@@ -188,6 +190,8 @@ internal fun DataRecordSearch(repository: WorkshopRepository, onOpen: (recordTyp
             filters = picked,
             fetch = remember(picked) { quickSearchFetch(repository, picked) },
             onOpen = { type, id, title ->
+                focusManager.clearFocus()
+                keyboard?.hide()
                 onOpen(type, id, title)
                 filters = SearchFilters()
                 browsing = false
