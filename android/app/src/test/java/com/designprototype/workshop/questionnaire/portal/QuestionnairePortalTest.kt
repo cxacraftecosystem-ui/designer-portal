@@ -1,24 +1,40 @@
 package com.designprototype.workshop.questionnaire.portal
 
+import com.designprototype.workshop.data.AadhaarAtRest
 import com.designprototype.workshop.data.ArtisanCreateRequest
 import com.designprototype.workshop.questionnaire.ui.NewArtisan
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 class QuestionnairePortalTest {
+    private object ReversingSealer : AadhaarAtRest.Sealer {
+        override fun seal(plain: ByteArray): ByteArray = plain.reversedArray()
+        override fun open(sealed: ByteArray): ByteArray = sealed.reversedArray()
+    }
+
+    @Before fun sealer() {
+        AadhaarAtRest.sealerForTests = ReversingSealer
+    }
+
+    @After fun restore() {
+        AadhaarAtRest.sealerForTests = null
+    }
+
     @Test fun `an artisan registered on the phone needs what the server needs, and travels as the create body`() {
         assertFalse(NewArtisan(name = "Meena", place = "Bankura", dos = "Ask first", donts = "No flash").valid)
         val shared = NewArtisan(name = "Meena", place = "Bankura", aadhaarNotShared = true, dos = "Ask first", donts = "No flash")
         assertTrue(shared.valid)
         val withNumber = NewArtisan(name = "Meena", place = "Bankura", aadhaar = "1234 5678 9012", dos = "a", donts = "b")
         assertTrue(withNumber.valid)
-        val body = QuestionnairePortal.json.decodeFromString(ArtisanCreateRequest.serializer(), QuestionnairePortal.artisanCreateJson(withNumber, "w1"))
+        val body = QuestionnairePortal.json.decodeFromString(ArtisanCreateRequest.serializer(), QuestionnairePortal.openedArtisanBody(QuestionnairePortal.artisanCreateJson(withNumber, "w1")))
         assertEquals("123456789012", body.aadhaarNumber)
         assertEquals("w1", body.designWorkshopId)
-        assertNull(QuestionnairePortal.json.decodeFromString(ArtisanCreateRequest.serializer(), QuestionnairePortal.artisanCreateJson(shared, null)).aadhaarNumber)
+        assertNull(QuestionnairePortal.json.decodeFromString(ArtisanCreateRequest.serializer(), QuestionnairePortal.openedArtisanBody(QuestionnairePortal.artisanCreateJson(shared, null))).aadhaarNumber)
     }
 
 

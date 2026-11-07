@@ -102,9 +102,11 @@ def serializer(monkeypatch, own_uploads_only):
     async def nothing(*_a, **_k):
         return {}
 
-    monkeypatch.setattr(recordings.transcription, "is_paused", not_paused)
-    monkeypatch.setattr(recordings.transcription, "previews", previews)
-    monkeypatch.setattr(recordings.consent_gate, "verdict_details", nothing)
+    from app.services import questionnaire_consent, questionnaire_transcription
+
+    monkeypatch.setattr(questionnaire_transcription, "is_paused", not_paused)
+    monkeypatch.setattr(questionnaire_transcription, "previews", previews)
+    monkeypatch.setattr(questionnaire_consent, "verdict_details", nothing)
     monkeypatch.setattr(recordings.titles, "title_inputs", nothing)
     monkeypatch.setattr(recordings.chips, "for_rows", nothing)
     return recordings
