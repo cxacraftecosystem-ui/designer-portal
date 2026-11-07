@@ -2416,6 +2416,7 @@ private fun HomeScreen(
                         repository = repository,
                         onBack = { attemptExit { dataBrowserPath = ""; goBack() } },
                         onMessage = { showMessage(it) },
+                        onError = { showError(it) },
                         onOpenMedia = { mediaId ->
                             message = null
                             screen = Screen.View(EntryMode.MEDIA, mediaId, from = Screen.DataBrowser)
