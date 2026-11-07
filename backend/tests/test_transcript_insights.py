@@ -82,7 +82,9 @@ def fake(monkeypatch):
     async def scope(_viewer):
         return db.scope
 
-    monkeypatch.setattr(routes, "media_url_scope", scope)
+    from app.services import records
+
+    monkeypatch.setattr(records, "media_url_scope", scope)
     monkeypatch.setattr(design_workshop_posts, "refuse_a_holders_media_write", _noop)
     db.spent = []
 
