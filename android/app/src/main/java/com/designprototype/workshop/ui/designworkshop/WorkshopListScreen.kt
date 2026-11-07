@@ -56,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -89,6 +90,11 @@ import com.designprototype.workshop.data.computeWorkshopCompleteness
 import com.designprototype.workshop.data.dwAdoptCandidateNotice
 import com.designprototype.workshop.data.dwAdoptNoCandidatesMessage
 import com.designprototype.workshop.data.dwDraftIsForAnotherAccount
+import com.designprototype.workshop.data.DwHeldDrafts
+import com.designprototype.workshop.data.dwHeldDraftAsks
+import com.designprototype.workshop.data.dwHeldDraftDiscardBody
+import com.designprototype.workshop.data.dwHeldDraftDiscardTitle
+import com.designprototype.workshop.ui.destructiveAction
 import com.designprototype.workshop.data.dwNamedDesignerId
 import com.designprototype.workshop.data.dwNamedDesignerTeam
 import com.designprototype.workshop.data.dwOrderedDesignerPicks
@@ -144,8 +150,10 @@ private data class WorkshopRow(
     val status: WorkshopSyncStatus? = null,
     val fromServer: Boolean = false,
     val otherAccount: Boolean = false,
+    val heldKept: Boolean = false,
 ) {
     val localOnly: Boolean get() = remoteId == null
+    val asksHeld: Boolean get() = dwHeldDraftAsks(otherAccount, heldKept)
 }
 
 private fun blockedLine(blocked: Int): String = if (blocked <= 0) "" else {
@@ -182,6 +190,7 @@ fun WorkshopListScreen(
     var localTitle by remember { mutableStateOf("") }
     var showCreate by remember(startCreating) { mutableStateOf(startCreating && mayCreate) }
     var adopting by remember { mutableStateOf<WorkshopRow?>(null) }
+    var discarding by remember { mutableStateOf<WorkshopRow?>(null) }
     var busy by remember { mutableStateOf(false) }
     var reload by remember { mutableIntStateOf(0) }
     var offline by remember { mutableStateOf(false) }
@@ -257,6 +266,7 @@ fun WorkshopListScreen(
                         draft = draft,
                     ).copy(
                         otherAccount = dwDraftIsForAnotherAccount(draft.ownerUserId, signedInUserId),
+                        heldKept = DwHeldDrafts.kept(appContext, signedInUserId, id),
                     )
                 }
                 .filter { row ->
@@ -579,6 +589,11 @@ fun WorkshopListScreen(
                         null
                     },
                     onOpen = { onOpen(row.localId) },
+                    onKeepHeld = {
+                        DwHeldDrafts.keep(appContext, cachedSession?.id, row.localId)
+                        rows = rows.map { if (it.localId == row.localId) it.copy(heldKept = true) else it }
+                    },
+                    onDiscardHeld = { discarding = row },
                     onSend = {
                         busy = true
                         scope.launch {
@@ -673,6 +688,32 @@ fun WorkshopListScreen(
         )
     }
 
+    discarding?.let { row ->
+        AlertDialog(
+            onDismissRequest = { discarding = null },
+            title = { Text(dwHeldDraftDiscardTitle()) },
+            text = { Text(dwHeldDraftDiscardBody(row.title)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        discarding = null
+                        busy = true
+                        scope.launch {
+                            val removed = runCatching {
+                                DwHeldDrafts.discard(appContext, repository.cachedUser()?.id, row.localId)
+                            }.getOrDefault(false)
+                            if (removed) onMessage("Draft discarded.") else onError("Couldn't discard that draft.")
+                            busy = false
+                            reload++
+                        }
+                    },
+                    modifier = Modifier.testTag("workshops.held.discard.confirm"),
+                ) { Text("Discard", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { discarding = null }) { Text("Cancel") } },
+        )
+    }
+
     if (showCreate) {
         CreateWorkshopDialog(
             repository = repository,
@@ -700,6 +741,8 @@ private fun WorkshopCard(
     onSend: () -> Unit,
     onFreeSpace: () -> Unit,
     onAdopt: (() -> Unit)? = null,
+    onKeepHeld: () -> Unit = {},
+    onDiscardHeld: () -> Unit = {},
 ) {
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.field.surface50),
@@ -747,6 +790,20 @@ private fun WorkshopCard(
                     style = MaterialTheme.typography.bodySmall,
                     lineHeight = 16.sp
                 )
+            }
+            if (row.asksHeld) {
+                ActionRow(modifier = Modifier.testTag("workshops.held.${row.localId}")) {
+                    OutlinedButton(
+                        onClick = onKeepHeld,
+                        enabled = !busy,
+                        modifier = Modifier.heightIn(min = 48.dp).testTag("workshops.held.keep"),
+                    ) { Text("Keep", style = MaterialTheme.typography.labelLarge) }
+                    OutlinedButton(
+                        onClick = onDiscardHeld,
+                        enabled = !busy,
+                        modifier = Modifier.destructiveAction().heightIn(min = 48.dp).testTag("workshops.held.discard"),
+                    ) { Text("Discard", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge) }
+                }
             }
             val status = row.status.takeUnless { row.otherAccount }
             if (status != null) {
