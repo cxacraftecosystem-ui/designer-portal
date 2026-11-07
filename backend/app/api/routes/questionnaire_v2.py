@@ -296,6 +296,7 @@ async def sessions_insights(session_id: str, user: Any = Depends(get_current_use
     from app.api.routes.transcript_insights import may_edit
     from app.core.db import db
     from app.services import transcript_insights
+    from app.services.records import transcript_readable_ids
 
     await sessions.require_session(db, session_id)
     if not transcript_insights.enabled():
@@ -305,6 +306,8 @@ async def sessions_insights(session_id: str, user: Any = Depends(get_current_use
     if not by_media:
         return {"items": []}
     media_rows = await db.mediafile.find_many(where={"id": {"in": list(by_media)}})
+    readable = await transcript_readable_ids(media_rows, user)
+    media_rows = [m for m in media_rows if str(m.id) in readable]
     current = await transcript_insights.current_insights(list(by_media))
     jobs = await transcript_insights.latest_jobs(list(by_media))
     items = []

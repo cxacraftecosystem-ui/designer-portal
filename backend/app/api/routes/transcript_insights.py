@@ -14,7 +14,7 @@ from app.services import (
     dictation_consent,
     transcript_insights as insights,
 )
-from app.services.records import media_url_scope, public_encode
+from app.services.records import transcript_readable_ids
 from prisma import Json
 
 router = APIRouter(prefix="/media", tags=["media"])
@@ -36,17 +36,7 @@ def may_edit(user: Any, media: Any) -> bool:
 
 
 async def readable_media_ids(rows: list[Any], viewer: Any) -> set[str]:
-    if not rows:
-        return set()
-    media_urls, media_workshops = await media_url_scope(viewer)
-    encoded = public_encode(
-        list(rows), viewer, media_urls=media_urls, media_workshops=media_workshops
-    )
-    return {
-        str(out.get("id"))
-        for out in encoded
-        if isinstance(out, dict) and "transcriptText" in out
-    }
+    return await transcript_readable_ids(rows, viewer)
 
 
 async def _readable_media_or_404(media_id: str, viewer: Any) -> Any:

@@ -398,3 +398,87 @@ def test_a_bundle_cannot_prefill_aadhaar_or_pehchan_columns():
     assert prefill_value(artisan, "aadhaarVerifyName") is None
     assert prefill_value(artisan, "pehchanCardNumber") is None
     assert prefill_value(artisan, "name") == "Kamla"
+
+
+class _Inserted(Exception):
+    pass
+
+
+def _merge_world(monkeypatch, *, holds, current, after, merged):
+    from datetime import timedelta
+
+    from app.services import artisan_merge
+
+    record = SimpleNamespace(
+        id="merge-1", undoneAt=None, snapshotPurgedAt=None, survivorId="keep", mergedId="gone",
+        undoUntil=datetime.now(UTC) + timedelta(days=5), moves={}, crossPortal=None,
+        snapshot={"merged": merged, "survivorBefore": {}, "survivorAfter": after},
+    )
+    seen: dict[str, Any] = {}
+
+    class _Tx:
+        artisan = SimpleNamespace(find_first=lambda **_k: _none())
+
+        async def execute_raw(self, sql, *args):
+            if sql.startswith('INSERT INTO "Artisan"'):
+                seen["inserted"] = json.loads(args[0])
+                raise _Inserted
+
+    async def _none():
+        return None
+
+    class _TxContext:
+        async def __aenter__(self):
+            return _Tx()
+
+        async def __aexit__(self, *_a):
+            return False
+
+    async def find_unique(**_k):
+        return record
+
+    async def find_first(**_k):
+        return None
+
+    async def hold_rows(**_k):
+        return holds
+
+    async def rows(_client, ids, lock=False):
+        return {"keep": current}
+
+    async def nothing(*_a, **_k):
+        return None
+
+    fake = SimpleNamespace(
+        artisanmerge=SimpleNamespace(find_unique=find_unique, find_first=find_first),
+        aadhaarlegalhold=SimpleNamespace(find_many=hold_rows),
+        tx=lambda **_k: _TxContext(),
+    )
+    monkeypatch.setattr(artisan_merge, "db", fake)
+    monkeypatch.setattr(artisan_merge, "_rows", rows)
+    monkeypatch.setattr(artisan_merge, "_write_survivor", nothing)
+    return artisan_merge, seen
+
+
+def test_merge_undo_refuses_while_a_record_is_under_an_aadhaar_legal_hold(monkeypatch):
+    artisan_merge, seen = _merge_world(
+        monkeypatch, holds=[SimpleNamespace(recordType="artisan")], current={"id": "keep"}, after={}, merged={"id": "gone"},
+    )
+    with pytest.raises(HTTPException) as refused:
+        _run(artisan_merge.undo("merge-1", user=SimpleNamespace(id="admin"), settings=SimpleNamespace()))
+    assert refused.value.status_code == 409
+    assert "inserted" not in seen
+
+
+def test_merge_undo_does_not_restore_a_withdrawn_aadhaar_verification(monkeypatch):
+    artisan_merge, seen = _merge_world(
+        monkeypatch,
+        holds=[],
+        current={"id": "keep", "aadhaarVerifyStatus": None, "aadhaarVerifyName": None},
+        after={"aadhaarVerifyStatus": "VERIFIED", "aadhaarVerifyName": "Dummy UIDAI Name"},
+        merged={"id": "gone", "name": "Gone", "aadhaarVerifyStatus": "VERIFIED", "aadhaarVerifyName": "Dummy UIDAI Name"},
+    )
+    with pytest.raises(_Inserted):
+        _run(artisan_merge.undo("merge-1", user=SimpleNamespace(id="admin"), settings=SimpleNamespace()))
+    assert seen["inserted"]["aadhaarVerifyName"] is None
+    assert seen["inserted"]["aadhaarVerifyStatus"] is None

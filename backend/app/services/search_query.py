@@ -28,6 +28,7 @@ class Scope:
     date_to: datetime | None = None
     workshop_ids: list[str] = field(default_factory=list)
     artisan_ids: list[str] = field(default_factory=list)
+    transcripts: Any = None
 
 
 @dataclass
@@ -62,6 +63,11 @@ def _where(scope: Scope, p: _Params) -> str:
         "(d.\"audience\" = 'ALL' OR (d.\"audience\" = 'DW' AND ("
         f'{p.add(bool(scope.may_read_dw))}::boolean OR d."designWorkshopId" = ANY({p.array(scope.visible_dw_ids)}))))'
     )
+    if scope.transcripts is not None:
+        clauses.append(
+            "(d.\"entityType\" <> 'transcripts' OR EXISTS (SELECT 1 FROM \"MediaFile\" tm "
+            f'WHERE tm."id" = d."entityId" AND {scope.transcripts.sql("tm", p.add)}))'
+        )
     if scope.shareable_only:
         clauses.append('d."shareable"')
     if scope.require_artisan_links:

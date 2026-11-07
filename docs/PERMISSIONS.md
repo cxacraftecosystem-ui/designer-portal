@@ -2586,6 +2586,24 @@ transcript zip, languages and Browse by type routes added in 0.0.12, needs datas
 (`require_dataset_downloader`) and reads only the media the caller's access scope reaches.
 Removed recordings answer 404. See [DATA_EXPLORER.md](DATA_EXPLORER.md).
 
+### Withheld transcripts and identity numbers (0.0.15)
+
+One rule decides whether a reader gets a recording's transcript: `records.transcript_scope`,
+`transcript_withheld` and `transcript_readable_ids` in `backend/app/services/records.py`. PROFESSOR
+and above read every transcript. Everyone else reads their own uploads, those of owners who granted
+them access, and files tagged to a design workshop they can open. The record encoder, the
+questionnaire session, recordings and artisan-record reads, the consolidated questionnaire (JSON and
+CSV), session insights, answer drafting, the recording search, and unified search all use it.
+When a file is withheld, every copy goes with it: `transcriptSegments`, `cleanedObjectKey`, the
+insight, layer and turn relations, and each processing job's `result`. The Data page transcript
+list also hides text whose consent verdict is not ALLOW (`transcript_export.withheld_ids`).
+
+Identity numbers: below PROFESSOR, the Aadhaar lookup and the duplicate check stop matching typed
+Aadhaar or Pehchan numbers after 100 misses in a day (`backend/app/services/identity_probe.py`).
+Report sheets mask Pehchan numbers by the live-read rule (`datareport.exclusions.identity_view`), and
+the Everything sheet drops every column the export exclusions list. Editing an artisan's name or
+Aadhaar number withdraws its Aadhaar verification.
+
 ## 5. Route guards on the web client
 
 The client's half of gating is declared **once**, in `ROUTE_GUARDS` in `frontend/lib/permissions.ts`,
