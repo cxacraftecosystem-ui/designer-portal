@@ -203,7 +203,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -897,6 +899,11 @@ private enum class EntryMode(
 }
 
 private fun Screen.memoryKey(): Screen = if (this is Screen.DesignWorkshops) Screen.DesignWorkshops() else this
+
+private val ScreenSaver = Saver<Screen, String>(
+    save = { s -> if (s is Screen.DataBrowser || (s is Screen.View && s.from is Screen.DataBrowser)) "data" else "home" },
+    restore = { if (it == "data") Screen.DataBrowser else Screen.Dashboard },
+)
 
 private sealed interface Screen {
     data object Dashboard : Screen
@@ -1864,9 +1871,11 @@ private fun HomeScreen(
     var sections by remember { mutableStateOf<List<QuestionnaireSectionDto>>(emptyList()) }
     var crafts by remember { mutableStateOf<List<CraftDto>>(emptyList()) }
     var artisans by remember { mutableStateOf<List<ArtisanDto>>(emptyList()) }
-    var screen by remember { mutableStateOf<Screen>(Screen.Dashboard) }
+    var screen by rememberSaveable(stateSaver = ScreenSaver) { mutableStateOf<Screen>(Screen.Dashboard) }
     var questionnaireNewForm by remember { mutableIntStateOf(0) }
-    var dataBrowserPath by remember { mutableStateOf("") }
+    var dataBrowserPath by rememberSaveable { mutableStateOf("") }
+    val dataExplorer = key(user.id) { com.designprototype.workshop.explorer.ui.rememberDataExplorerState() }
+    val dataHolder = rememberSaveableStateHolder()
     val searchMemory = remember { SearchMemory() }
     val listScroll = remember { mutableMapOf<Screen, Int>() }
     var restoreScrollFor by remember { mutableStateOf<Screen?>(null) }
@@ -1883,10 +1892,6 @@ private fun HomeScreen(
     val notificationOpenRequest by NotificationState.openRequests.collectAsState()
     LaunchedEffect(notificationOpenRequest) {
         if (notificationOpenRequest > 0L) screen = Screen.Notifications
-    }
-    val viewLink by com.designprototype.workshop.explorer.ui.ExplorerViewLinks.requests.collectAsState()
-    LaunchedEffect(viewLink) {
-        if (viewLink != null && screen !is Screen.DataBrowser) screen = Screen.DataBrowser
     }
     val downloadsTap by com.designprototype.workshop.explorer.data.ExplorerDownloadsTap.requests.collectAsState()
     LaunchedEffect(downloadsTap) {
@@ -2088,6 +2093,17 @@ private fun HomeScreen(
             pendingExit = leave
         } else {
             leave()
+        }
+    }
+
+    val viewLink by com.designprototype.workshop.explorer.ui.ExplorerViewLinks.requests.collectAsState()
+    var linkAsked by remember { mutableStateOf<com.designprototype.workshop.explorer.ui.ExplorerLinkRequest?>(null) }
+    LaunchedEffect(viewLink, pendingExit) {
+        val link = viewLink ?: return@LaunchedEffect
+        if (screen is Screen.DataBrowser) return@LaunchedEffect
+        when {
+            linkAsked !== link -> { linkAsked = link; attemptExit { message = null; screen = Screen.DataBrowser } }
+            pendingExit == null -> com.designprototype.workshop.explorer.ui.ExplorerViewLinks.consume(link)
         }
     }
 
@@ -2413,8 +2429,9 @@ private fun HomeScreen(
                     .appMenuHidesPage(drawerState.appMenuShowing)
             ) {
                 when (screen) {
-                    is Screen.DataBrowser -> DataBrowserScreen(
+                    is Screen.DataBrowser -> dataHolder.SaveableStateProvider("data:${user.id}") { DataBrowserScreen(
                         repository = repository,
+                        state = dataExplorer,
                         onBack = { attemptExit { dataBrowserPath = ""; goBack() } },
                         onMessage = { showMessage(it) },
                         onError = { showError(it) },
@@ -2440,7 +2457,7 @@ private fun HomeScreen(
                             val artisanId = com.designprototype.workshop.ui.dataFolderArtisan(path)
                             screen = Screen.Create(EntryMode.MEDIA, artisanId?.let { Prefill(artisanId = it, artisanName = name) }, from = Screen.DataBrowser)
                         }
-                    )
+                    ) }
 
                     is Screen.Appearance -> AppearanceScreen(
                         repository = repository,
@@ -2617,7 +2634,7 @@ private fun HomeScreen(
                     showAdminHub = isAdmin && adminChrome,
                     onOpenAdminHub = { message = null; screen = Screen.AdminHub() },
                     onWalkthrough = { message = null; showWalkthrough = true },
-                    onNew = { selected -> message = null; screen = Screen.Create(selected) },
+                    onNew = { selected -> message = null; screen = if (selected == EntryMode.VIEW_DATA && canDownloadDataset) screenFor(EntryMode.DATA_BROWSER) else Screen.Create(selected) },
                     onUpdateExisting = { selected -> message = null; screen = Screen.Browse(selected) },
                     onOpenSearchFor = { recordType ->
                         message = null
