@@ -177,7 +177,7 @@ object WorkshopDraftStore {
             .ifBlank { "unnamed" }
 
     private fun readLocked(context: Context, workshopId: String): WorkshopDraft? =
-        readDraftIn(workshopDir(context, workshopId), workshopId)
+        readDraftIn(File(rootDir(context), safeName(workshopId)), workshopId)
 
     internal fun readDraftIn(dir: File, workshopId: String): WorkshopDraft? {
         val file = File(dir, "draft.json")
