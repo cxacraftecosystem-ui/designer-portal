@@ -31,7 +31,7 @@ class WorkshopOriginsTest {
             .firstOrNull { it.isFile } ?: File("src/main/java/com/designprototype/workshop/MainActivity.kt")
         val text = main.readText()
         val built = Regex("""Screen\.DesignWorkshopStages\(""").findAll(text).count()
-        assertEquals(3, built)
+        assertEquals(4, built)
         assertTrue(text.contains("workshopOrigins.opened(workshopId, screen)"))
         assertTrue(text.contains("workshopOrigins.openedFromList(id)"))
         assertTrue(text.contains("is Screen.DesignWorkshopStage -> workshopIndex(s.workshopId)"))

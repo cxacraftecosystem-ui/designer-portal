@@ -970,7 +970,7 @@ private fun decodeScreenTokens(t: List<String?>): Screen? {
         "browse" -> Screen.Browse(mode(1))
         "admin" -> Screen.AdminHub(arg(1)?.let { AdminHubEntry.valueOf(it) })
         "dws" -> Screen.DesignWorkshops(cluster = arg(1))
-        "stages" -> Screen.DesignWorkshopStages(id(1), from = from(2))
+        "stages" -> stagesScreen(id(1), from(2))
         "stage" -> Screen.DesignWorkshopStage(id(1), id(2))
         "report" -> Screen.DesignWorkshopReport(id(1))
         "reportHistory" -> Screen.DesignWorkshopReportHistory(id(1))
@@ -990,6 +990,9 @@ private fun decodeScreenTokens(t: List<String?>): Screen? {
     }
 }
 
+private fun stagesScreen(workshopId: String, from: Screen?): Screen =
+    Screen.DesignWorkshopStages(workshopId, from = from)
+
 internal fun restoredScreenToken(raw: String): String = encodeScreen(decodeScreen(raw))
 
 internal fun restorableScreenSamples(): List<String> = listOf(
@@ -1000,7 +1003,7 @@ internal fun restorableScreenSamples(): List<String> = listOf(
     Screen.AdminHub(),
     Screen.AdminHub(AdminHubEntry.entries.first()),
     Screen.DesignWorkshops(cluster = "Bagru"),
-    Screen.DesignWorkshopStages("w1", from = Screen.DesignWorkshops()),
+    stagesScreen("w1", Screen.DesignWorkshops()),
     Screen.DesignWorkshopStage("w1", "ideation"),
     Screen.DesignWorkshopReport("w1"),
     Screen.DesignWorkshopReportHistory("w1"),
