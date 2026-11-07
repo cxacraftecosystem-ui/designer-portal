@@ -942,7 +942,8 @@ async def read_corpus(client: Any, user: Any) -> Corpus:
     from app.services import annual_plan, ministry_dashboard
 
     wheres = await build_record_wheres(user)
-    wheres["media"] = live_media_where(wheres["media"])
+    if "media" in wheres:
+        wheres["media"] = live_media_where(wheres["media"])
     dw_where = design_workshop_where({})
     scope = ministry_dashboard.scope_clause(user)
     if scope is not None:
