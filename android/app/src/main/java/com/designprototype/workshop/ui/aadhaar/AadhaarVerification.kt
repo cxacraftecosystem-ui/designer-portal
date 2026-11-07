@@ -30,7 +30,7 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
+import com.designprototype.workshop.ui.FieldCheckbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -344,7 +344,7 @@ fun AadhaarVerifyCard(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth().clickable { agreed = !agreed },
                 ) {
-                    Checkbox(checked = agreed, onCheckedChange = { agreed = it })
+                    FieldCheckbox(checked = agreed, onCheckedChange = { agreed = it })
                     Text(AadhaarCopy.consentStatement(subject), style = MaterialTheme.typography.bodyMedium)
                 }
                 Button(onClick = { step = Step.METHOD }, enabled = agreed, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {

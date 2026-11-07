@@ -329,10 +329,33 @@ def _user_type_where(slug: str, scope: Scope) -> dict[str, Any]:
     return _USER_TYPE_WHERE[slug]
 
 
-def _taxonomies_for(scope: Scope) -> list[dict[str, Any]]:
-    if scope.design_workshops:
-        return TAXONOMIES
-    return [taxonomy for taxonomy in TAXONOMIES if taxonomy["id"] != "by-design-workshop"]
+_LEGACY_TREES = frozenset({"by-workshop", "by-uploader"})
+
+
+def _taxonomies_for(scope: Scope, *, legacy: bool = True) -> list[dict[str, Any]]:
+    shown = [
+        taxonomy
+        for taxonomy in TAXONOMIES
+        if (scope.design_workshops or taxonomy["id"] != "by-design-workshop")
+        and (legacy or taxonomy["id"] not in _LEGACY_TREES)
+    ]
+    ids = [taxonomy["id"] for taxonomy in shown]
+    if "by-design-workshop" in ids:
+        default = "by-design-workshop"
+    elif "by-workshop" in ids:
+        default = "by-workshop"
+    else:
+        default = ids[0] if ids else None
+    ordered = sorted(shown, key=lambda taxonomy: taxonomy["id"] != default)
+    return [{**taxonomy, "default": taxonomy["id"] == default} for taxonomy in ordered]
+
+
+async def _legacy_trees_filled(scope: Scope) -> bool:
+    return await db.workshop.find_first(where=scope.records) is not None
+
+
+async def _visible_taxonomies(scope: Scope) -> list[dict[str, Any]]:
+    return _taxonomies_for(scope, legacy=await _legacy_trees_filled(scope))
 
 
 def _live(where: dict[str, Any]) -> dict[str, Any]:
@@ -722,7 +745,7 @@ async def _list_level(path: str, scope: Scope) -> Level:
 
     if not segs:
         return [
-            _folder(t["name"], t["path"], "taxonomy") for t in _taxonomies_for(scope)
+            _folder(t["name"], t["path"], "taxonomy") for t in await _visible_taxonomies(scope)
         ], None
 
     head = segs[0]
@@ -1332,7 +1355,14 @@ def _dw_info(record: Any, answered_stages: int, entry_count: int) -> dict[str, A
         }
     )
     fields.append({"label": "Rows recorded", "value": str(entry_count)})
-    return {"title": str(getattr(record, "title", "") or "Design workshop"), "fields": fields}
+    info: dict[str, Any] = {
+        "title": str(getattr(record, "title", "") or "Design workshop"),
+        "fields": fields,
+    }
+    record_id = getattr(record, "id", None)
+    if isinstance(record_id, str) and record_id:
+        info["record"] = {"kind": "designWorkshop", "id": record_id}
+    return info
 
 
 def _dw_rows_text(title: str, columns: Sequence[Any], rows: list[dict[str, str]]) -> str:
@@ -1722,6 +1752,87 @@ async def _artisan_path(aid: str, scope: Scope) -> str | None:
     return f"by-workshop/{workshop.id}/crafts/{craft}/artisans/{artisan.id}"
 
 
+async def _design_workshop_path(where: dict[str, Any], scope: Scope) -> str | None:
+    if not scope.design_workshops:
+        return None
+    found = await db.designworkshop.find_first(
+        where={**where, "deletedAt": None}, order={"updatedAt": "desc"}
+    )
+    return f"by-design-workshop/{found.id}" if found else None
+
+
+async def _craft_path(craft_id: str, scope: Scope) -> str | None:
+    link = await db.workshopcraft.find_first(where={"craftId": craft_id})
+    if link is not None and (
+        not scope.records
+        or await db.workshop.find_first(where=_and({"id": link.workshopId}, scope.records))
+    ):
+        return f"by-workshop/{link.workshopId}/crafts/{craft_id}"
+    return await _design_workshop_path({"craftId": craft_id}, scope)
+
+
+async def _artisan_or_design_workshop_path(aid: str, scope: Scope) -> str | None:
+    path = await _artisan_path(aid, scope)
+    if path:
+        return path
+    artisan = await db.artisan.find_first(where=_and({"id": aid}, scope.records))
+    if artisan is None or not getattr(artisan, "designWorkshopId", None):
+        return None
+    return await _design_workshop_path({"id": artisan.designWorkshopId}, scope)
+
+
+async def _record_fallback(kind: str, record_id: str, scope: Scope) -> dict[str, str] | None:
+    if kind == "craft":
+        found = await db.craft.find_unique(where={"id": record_id})
+    elif kind == "artisan":
+        found = await db.artisan.find_first(where=_and({"id": record_id}, scope.records))
+    else:
+        return None
+    return {"kind": kind, "id": str(found.id)} if found else None
+
+
+async def locatable_ids(kind: str, ids: Sequence[str], scope: Scope) -> set[str]:
+    wanted = list(dict.fromkeys(str(i) for i in ids if i))
+    if not wanted:
+        return set()
+    if kind == "craft":
+        links = await db.workshopcraft.find_many(where={"craftId": {"in": wanted}})
+        allowed = {link.workshopId for link in links}
+        if scope.records and allowed:
+            seen = await db.workshop.find_many(
+                where=_and({"id": {"in": list(allowed)}}, scope.records)
+            )
+            allowed = {row.id for row in seen}
+        found = {link.craftId for link in links if link.workshopId in allowed}
+        if scope.design_workshops:
+            rows = await db.designworkshop.find_many(
+                where={"craftId": {"in": wanted}, "deletedAt": None}
+            )
+            found |= {row.craftId for row in rows if row.craftId}
+        return found
+    if kind == "artisan":
+        artisans = await db.artisan.find_many(where=_and({"id": {"in": wanted}}, scope.records))
+        live: set[str] = set()
+        if scope.design_workshops:
+            dw_ids = list({a.designWorkshopId for a in artisans if getattr(a, "designWorkshopId", None)})
+            if dw_ids:
+                rows = await db.designworkshop.find_many(where={"id": {"in": dw_ids}, "deletedAt": None})
+                live = {row.id for row in rows}
+        found: set[str] = set()
+        for artisan in artisans:
+            if (
+                getattr(artisan, "designWorkshopId", None) in live
+                or await _workshop_for_artisan(artisan, scope) is not None
+            ):
+                found.add(artisan.id)
+        return found
+    return set(wanted)
+
+
+async def scope_for_user(user: Any) -> Scope:
+    return await _scope_for(user)
+
+
 async def _locate_path(record_type: str, record_id: str, scope: Scope) -> str | None:
     kind = (record_type or "").strip().lower()
 
@@ -1730,17 +1841,10 @@ async def _locate_path(record_type: str, record_id: str, scope: Scope) -> str | 
         return f"by-workshop/{found.id}" if found else None
 
     if kind == "artisan":
-        return await _artisan_path(record_id, scope)
+        return await _artisan_or_design_workshop_path(record_id, scope)
 
     if kind == "craft":
-        link = await db.workshopcraft.find_first(where={"craftId": record_id})
-        if link is None:
-            return None
-        if scope.records and not await db.workshop.find_first(
-            where=_and({"id": link.workshopId}, scope.records)
-        ):
-            return None
-        return f"by-workshop/{link.workshopId}/crafts/{record_id}"
+        return await _craft_path(record_id, scope)
 
     if kind in {"product", "tool"}:
         delegate = db.productdocumentation if kind == "product" else db.tooldocumentation
@@ -1825,9 +1929,12 @@ async def data_locate(
     ),
     id: str = Query(..., min_length=1),
     current_user: Any = Depends(require_dataset_downloader),
-) -> dict[str, str | None]:
+) -> dict[str, Any]:
     scope = await _scope_for(current_user)
-    return {"path": await _locate_path(type, id, scope)}
+    path = await _locate_path(type, id, scope)
+    kind = (type or "").strip().lower()
+    record = None if path else await _record_fallback(kind, id, scope)
+    return {"path": path, "locatable": path is not None, "record": record}
 
 
 @router.get("/tree")
@@ -1855,7 +1962,7 @@ async def data_tree(
         "truncated": False,
         "total": total,
         "nextCursor": next_cursor,
-        "taxonomies": _taxonomies_for(scope),
+        "taxonomies": await _visible_taxonomies(scope),
         "taxonomy": _taxonomy_of(norm),
         "designWorkshopsVisible": scope.design_workshops,
         "designWorkshopsDownloadable": scope.design_workshop_downloads,

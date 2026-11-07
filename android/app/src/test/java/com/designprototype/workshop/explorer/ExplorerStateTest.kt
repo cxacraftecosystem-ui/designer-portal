@@ -1,9 +1,11 @@
 package com.designprototype.workshop.explorer
 
 import com.designprototype.workshop.explorer.data.ExplorerCache
+import com.designprototype.workshop.explorer.data.ExplorerCrumb
 import com.designprototype.workshop.explorer.data.ExplorerEntry
 import com.designprototype.workshop.explorer.data.ExplorerTaxonomy
 import com.designprototype.workshop.explorer.data.ExplorerTree
+import com.designprototype.workshop.explorer.ui.ExplorerRecordRef
 import com.designprototype.workshop.explorer.ui.ExplorerState
 import com.designprototype.workshop.explorer.ui.TranscriptLoad
 import kotlinx.coroutines.CoroutineScope
@@ -13,6 +15,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -160,6 +165,39 @@ class ExplorerStateTest {
         until { s.path == "located/r1" }
     }
 
+    @Test fun `a record with no folder hands its record page to the screen`() = runBlocking {
+        val api = FakeExplorerApi()
+        api.located = { _, id -> JsonObject(mapOf("path" to JsonNull, "locatable" to JsonPrimitive(false), "record" to JsonObject(mapOf("kind" to JsonPrimitive("craft"), "id" to JsonPrimitive(id))))) }
+        val s = state(api)
+        s.locate("craft", "c7", "Bidri")
+        until { s.recordToOpen != null }
+        assertEquals(ExplorerRecordRef("craft", "c7", "Bidri"), s.recordToOpen)
+        assertEquals(null, s.unfiled)
+        s.recordHandled(true)
+        assertEquals(null, s.recordToOpen)
+        assertEquals(null, s.unfiled)
+    }
+
+    @Test fun `a record page nobody can open falls back to the unfiled notice`() = runBlocking {
+        val api = FakeExplorerApi()
+        api.located = { _, id -> JsonObject(mapOf("path" to JsonNull, "record" to JsonObject(mapOf("kind" to JsonPrimitive("artisan"), "id" to JsonPrimitive(id))))) }
+        val s = state(api)
+        s.locate("artisan", "a1", "Giriraj")
+        until { s.recordToOpen != null }
+        s.recordHandled(false)
+        assertEquals(null, s.recordToOpen)
+        assertTrue(s.unfiled.orEmpty().contains("Giriraj"))
+    }
+
+    @Test fun `no path and no record shows the unfiled notice`() = runBlocking {
+        val api = FakeExplorerApi()
+        api.located = { _, _ -> JsonObject(mapOf("path" to JsonNull)) }
+        val s = state(api)
+        s.locate("artisan", "a2", "Meera")
+        until { s.unfiled != null }
+        assertEquals(null, s.recordToOpen)
+    }
+
     @Test fun `a forbidden folder shows the restricted panel`() = runBlocking {
         val api = FakeExplorerApi()
         api.trees = { _, _, _ -> throw FakeExplorerApi.httpError(403) }
@@ -237,5 +275,86 @@ class ExplorerStateTest {
         s.toggleSelect(s.files[1])
         assertEquals(718L, s.selectedBytes)
         assertEquals(0, s.selectedFolders)
+    }
+    private fun placed(api: FakeExplorerApi, places: MutableList<String>) = ExplorerState(
+        api = api,
+        scope = scope,
+        cache = null,
+        rootName = "Repository",
+        defaultStatus = null,
+        statusParamOf = { it },
+        onPlace = { places += it },
+    )
+
+    private val groupings = listOf(ExplorerTaxonomy("w", "Workshop", "by-workshop", isDefault = true), ExplorerTaxonomy("c", "Craft", "by-craft"))
+
+    private fun grouped(path: String) = when {
+        path.isEmpty() -> ExplorerTree(taxonomies = groupings)
+        else -> ExplorerTree(
+            path = path,
+            crumbs = listOf(ExplorerCrumb(path.substringBefore('/'), path.substringBefore('/'))) + if ('/' in path) listOf(ExplorerCrumb("Leaf", path)) else emptyList(),
+            entries = listOf(ExplorerEntry(name = "F", path = "$path/f", kind = "folder")),
+            taxonomies = groupings,
+            taxonomy = if (path.startsWith("by-craft")) "c" else "w",
+        )
+    }
+
+    @Test fun `a forgotten state stops its folder load and opens nothing more`() = runBlocking {
+        val api = FakeExplorerApi()
+        val started = kotlinx.coroutines.CompletableDeferred<Unit>()
+        api.trees = { path, _, _ -> started.complete(Unit); kotlinx.coroutines.awaitCancellation() }
+        val s = state(api)
+        s.open("w")
+        started.await()
+        s.onForgotten()
+        until { !s.loading || s.closed }
+        assertTrue(s.closed)
+        s.open("x")
+        delay(100)
+        assertEquals(1, api.calls.size)
+        assertEquals("w", s.path)
+    }
+
+    @Test fun `the place is written only when the folder changes`() = runBlocking {
+        val api = FakeExplorerApi()
+        val places = mutableListOf<String>()
+        val s = placed(api, places)
+        s.open("w")
+        until { s.tree != null }
+        s.open("w")
+        s.reload()
+        s.changeStatus("approved")
+        s.open("w/b")
+        until { s.path == "w/b" && s.tree != null }
+        assertEquals(listOf("w", "w/b"), places)
+    }
+
+    @Test fun `a grouping root is the top, so back leaves Data instead of opening a bare root`() = runBlocking {
+        val api = FakeExplorerApi()
+        api.trees = { path, _, _ -> grouped(path) }
+        val s = state(api)
+        s.start(null)
+        until { s.path == "by-workshop" && s.tree?.path == "by-workshop" }
+        assertTrue(s.atTop)
+        assertEquals(false, s.canGoUp)
+        assertEquals(false, s.goUp())
+        assertEquals("by-workshop", s.path)
+        s.open("by-workshop/x")
+        until { s.tree?.path == "by-workshop/x" }
+        assertTrue(s.canGoUp)
+        assertTrue(s.goUp())
+        until { s.path == "by-workshop" }
+    }
+
+    @Test fun `opening the root once groupings are known stays in the current grouping`() = runBlocking {
+        val api = FakeExplorerApi()
+        api.trees = { path, _, _ -> grouped(path) }
+        val s = state(api)
+        s.start("by-craft/x")
+        until { s.tree?.path == "by-craft/x" }
+        s.open("")
+        assertEquals("by-craft", s.path)
+        until { s.tree?.path == "by-craft" }
+        assertTrue(api.calls.none { it == "tree:::" })
     }
 }

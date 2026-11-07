@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -298,7 +297,6 @@ fun SearchableMultiSelectField(
     emptyMessage: String = "No options available.",
     enabled: Boolean = true,
     searchable: Boolean? = null,
-    bulk: Boolean = true,
     createAction: SelectCreateAction? = null,
     onQueryChange: ((String) -> Unit)? = null,
     onSelectedChange: (Set<String>) -> Unit
@@ -375,7 +373,6 @@ fun SearchableMultiSelectField(
             noneLabel = null,
             emptyMessage = emptyMessage,
             createAction = createAction,
-            bulk = bulk,
             onQueryChange = onQueryChange,
             onDismiss = { sheetOpen = false },
             onApply = onSelectedChange
@@ -426,7 +423,6 @@ fun SearchableMultiSelectSheet(
         noneLabel = null,
         emptyMessage = emptyMessage,
         createAction = createAction,
-        bulk = true,
         onSearch = onSearch,
         note = note,
         onDismiss = onDismiss,
@@ -489,7 +485,6 @@ private fun SearchablePickerSheet(
     noneLabel: String?,
     emptyMessage: String,
     createAction: SelectCreateAction? = null,
-    bulk: Boolean = true,
     onSearch: ((String) -> Unit)? = null,
     loadMore: SelectLoadMore? = null,
     note: String? = null,
@@ -625,7 +620,7 @@ private fun SearchablePickerSheet(
                             .align(Alignment.CenterVertically)
                             .semantics { liveRegion = LiveRegionMode.Polite }
                     )
-                    if (multiple && bulk) {
+                    if (multiple) {
                         TextButton(
                             onClick = { draft = draft + filtered.map { it.value } },
                             enabled = visibleUnselected > 0
@@ -804,7 +799,7 @@ private fun PickerRow(
 
     Row(verticalAlignment = Alignment.CenterVertically, modifier = rowModifier) {
         if (multiple) {
-            Checkbox(checked = selected, onCheckedChange = null)
+            FieldCheckbox(checked = selected, onCheckedChange = null)
             Spacer(Modifier.size(8.dp))
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {

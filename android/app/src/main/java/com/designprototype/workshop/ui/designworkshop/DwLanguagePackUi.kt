@@ -24,7 +24,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Checkbox
+import com.designprototype.workshop.ui.FieldCheckbox
 import com.designprototype.workshop.ui.FieldCircularProgressIndicator
 import com.designprototype.workshop.ui.FieldLinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -408,7 +408,7 @@ private fun DwLanguagePackRow(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (selectable) {
-                Checkbox(checked = checked, onCheckedChange = null)
+                FieldCheckbox(checked = checked, onCheckedChange = null)
             }
             Text(label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
             Text(

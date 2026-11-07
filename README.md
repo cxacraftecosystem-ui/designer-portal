@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-0.0.14-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Release: 0.0.14">
+  <img src="https://img.shields.io/badge/Release-0.0.15-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Release: 0.0.15">
   <img src="https://img.shields.io/badge/Web-Next.js_16-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Web: Next.js 16">
   <img src="https://img.shields.io/badge/API-FastAPI_·_Python_3.15-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="API: FastAPI on Python 3.15">
   <img src="https://img.shields.io/badge/Android-Kotlin_+_Compose-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Android: Kotlin and Compose">
@@ -310,7 +310,7 @@ stateDiagram-v2
 
 | Android | |
 |---|---|
-| Version | **0.0.14**, versionCode 39 (the line restarted at 0.0.1 on 21 Oct 2026; codes keep rising) |
+| Version | **0.0.15**, versionCode 40 (the line restarted at 0.0.1 on 21 Oct 2026; codes keep rising) |
 | Toolchain | AGP 9.5, Gradle 9.8.2, Kotlin 2.4, Compose, R8 with a 4 GB Gradle heap |
 | Network | CloudFront over HTTPS, dual-stack, so IPv6-only mobile networks work |
 | Updates | in-app release check against the published APK; `publish-android.yml` refuses a code at or below the live one |
@@ -437,6 +437,7 @@ One release per platform at a time: everything is batched, checked once and depl
 | 0.0.12 | 5 Nov 2026 | 37 | the data explorer: tree first with search as its toolbar and every download in one place, sizes before a download, multi-select, thumbnails and previews, table search and a CSV per sheet, all transcript formats in one zip, removed recordings never ship, audio as `.mp4` with the original as fallback, downloads that stream and resume |
 | 0.0.13 | 5 Nov 2026 | 38 | the data explorer redesign: report queue and options, saved views, new-since-you-looked counts, live report links, waveforms and clear voices, the workshop overview, a transcripts `.docx`, folder counts and sizes, resumable folders, scheduled reports; Android background downloads |
 | 0.0.14 | 6 Nov 2026 | 39 | every list reaches its last record on web and Android, with paging where the server stopped short; screens true to their approved design boards; the Data report shows its status filter in its options, with root questionnaires in the report; the Android publish waits for the live backend |
+| 0.0.15 | 7 Nov 2026 | 40 | android Data opens on its folders again on every phone and tablet, without flooding the server; links, saved views and locate open what they name, with the real media type and an error tone when they cannot; tablets list subfolders beside the tree; `/data/go/media` JSON names its mediaType; thumbnails show whole portrait photos letterboxed in their frames; a search hit with no folder opens its record page, and Open in Data is offered only where the record can be located; each recording gets its own audio player; the expanded audio view opened from a record shows size and length and has Save; the workshop overview Review column reads Approved, Pending or Partly approved with the counts beneath; a partly failed download card is amber, never green |
 
 ## <img src="docs/readme-kit/assets/icons/box.svg" width="32" align="top" alt="">&nbsp; Built with
 

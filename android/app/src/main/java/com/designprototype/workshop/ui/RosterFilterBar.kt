@@ -142,7 +142,6 @@ fun RosterFilterSheet(
                 selected = filters.roles,
                 placeholder = "Every tier",
                 searchable = false,
-                bulk = false,
                 onSelectedChange = { picked -> onChange(filters.copy(roles = picked)) }
             )
             RosterHint(
@@ -164,7 +163,6 @@ fun RosterFilterSheet(
                     placeholder = "Every institution",
                     emptyMessage = emptyLine ?: "No institutions are recorded on the roster.",
                     searchable = true,
-                    bulk = false,
                     onSelectedChange = { picked -> onChange(filters.copy(institutions = picked)) }
                 )
                 emptyLine?.let { RosterHint(it) }

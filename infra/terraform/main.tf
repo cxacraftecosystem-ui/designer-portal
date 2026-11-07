@@ -589,6 +589,15 @@ resource "aws_iam_user_policy" "media" {
           "s3:GetObject"
         ]
         Resource = "${aws_s3_bucket.media.arn}/report-deliveries/*"
+      },
+      {
+        Sid    = "AppThumbnails"
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:GetObject"
+        ]
+        Resource = "${aws_s3_bucket.media.arn}/thumbnails/*"
       }
     ]
   })

@@ -524,8 +524,11 @@ data class MediaFileDto(
     val linkedRecordType: String? = null,
     val linkedRecordId: String? = null,
     val questionnaireChips: com.designprototype.workshop.questionnaire.data.QChips? = null,
-    val transcriptPreview: com.designprototype.workshop.transcript.data.TranscriptPreviewDto? = null
-)
+    val transcriptPreview: com.designprototype.workshop.transcript.data.TranscriptPreviewDto? = null,
+    val sizeBytes: kotlinx.serialization.json.JsonPrimitive? = null
+) {
+    val byteSize: Long? get() = sizeBytes?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content?.toLongOrNull()?.takeIf { it > 0 }
+}
 
 @Serializable
 data class MediaProcessingJobDto(
@@ -1895,7 +1898,8 @@ data class SearchTotalsDto(
     val products: Int = 0,
     val tools: Int = 0,
     val media: Int = 0,
-    val designWorkshops: Int = 0
+    val designWorkshops: Int = 0,
+    val crafts: Int = 0
 )
 
 @Serializable
@@ -1909,6 +1913,7 @@ data class SearchResultsDto(
     val tools: List<ToolDetailDto> = emptyList(),
     val media: List<MediaFileDto> = emptyList(),
     val designWorkshops: List<DesignWorkshopDto> = emptyList(),
+    val crafts: List<CraftDto> = emptyList(),
     val totals: SearchTotalsDto = SearchTotalsDto(),
     val total: Int = 0,
     val pageCount: Int = 1,
