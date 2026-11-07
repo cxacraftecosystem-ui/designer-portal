@@ -54,6 +54,16 @@ import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -300,36 +310,39 @@ fun AppNavigationDrawerContent(
     val groups = NavGroup.entries
         .map { group -> group to items.filter { it.group == group } }
         .filter { (_, entries) -> entries.isNotEmpty() }
-    val isAdmin = FieldPermissions.isAdmin(user)
-    val largeText = LocalDensity.current.fontScale >= LARGE_TEXT_DRAWER_SCALE
+    val scrollAll = LocalDensity.current.fontScale >= DRAWER_SCROLL_ALL_SCALE
+    var confirmPush by remember { mutableStateOf(false) }
+    val showFooter = FieldPermissions.isContentAdmin(user)
 
-    ModalDrawerSheet(
-        modifier = Modifier
-            .widthIn(max = appMenuDrawerMaxWidth())
-            .semantics { paneTitle = "Menu" },
-        drawerShape = APP_MENU_DRAWER_SHAPE
-    ) {
+    val header: @Composable () -> Unit = {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.Top
+                .padding(16.dp)
+                .testTag("nav.header"),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             WorkshopLogo(modifier = Modifier.size(36.dp), cornerRadius = 10.dp)
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
+                BasicText(
                     "Design Workshop",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
+                    style = MaterialTheme.typography.titleMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    autoSize = TextAutoSize.StepBased(minFontSize = 11.sp, maxFontSize = MaterialTheme.typography.titleMedium.fontSize),
+                    modifier = Modifier.testTag("nav.appName")
                 )
                 Text(
                     "${user.name} · ${FieldPermissions.label(user.role)}",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.field.muted
+                    color = MaterialTheme.field.muted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
-            if (largeText) {
+            if (scrollAll) {
                 IconButton(onClick = onLogout, modifier = Modifier.testTag("nav.logout")) {
                     Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Logout", tint = MaterialTheme.colorScheme.error)
                 }
@@ -350,40 +363,39 @@ fun AppNavigationDrawerContent(
             }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+    }
 
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .testTag("nav.list")
-        ) {
-            rootItems.forEach { entry ->
-                NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount, awaitingInspectionCount, unreadNotifications))
-            }
-            groups.forEach { (group, entries) ->
-                NavGroupHeading(group.label)
-                entries.forEach { entry ->
-                    NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount, awaitingInspectionCount, unreadNotifications))
+    val footer: @Composable () -> Unit = {
+        if (showFooter) {
+            Column(Modifier.fillMaxWidth().testTag("nav.footer")) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                if (FieldPermissions.isContentAdmin(user)) {
+                    AppToggle(
+                        label = "Admin view",
+                        checked = adminMode,
+                        onCheckedChange = { onToggleAdminView() },
+                        description = "Shows the admin pages and controls. Off only hides them; it never takes access away.",
+                        modifier = Modifier
+                            .padding(NavigationDrawerItemDefaults.ItemPadding)
+                            .padding(horizontal = 16.dp)
+                    )
                 }
             }
-            Spacer(Modifier.padding(bottom = 8.dp))
         }
+    }
 
-        if (isAdmin || FieldPermissions.isMasterAdmin(user)) {
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+    val listItems: @Composable () -> Unit = {
+        rootItems.forEach { entry ->
+            NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount, awaitingInspectionCount, unreadNotifications))
         }
-        if (FieldPermissions.isContentAdmin(user)) {
-            AppToggle(
-                label = "Admin view",
-                checked = adminMode,
-                onCheckedChange = { onToggleAdminView() },
-                description = "Shows the admin pages and controls. Off only hides them; it never takes access away.",
-                modifier = Modifier
-                    .padding(NavigationDrawerItemDefaults.ItemPadding)
-                    .padding(horizontal = 16.dp)
-            )
+        groups.forEach { (group, entries) ->
+            NavGroupHeading(group.label)
+            entries.forEach { entry ->
+                NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount, awaitingInspectionCount, unreadNotifications))
+            }
         }
         if (FieldPermissions.isMasterAdmin(user)) {
+            NavGroupHeading("Admin actions")
             NavigationDrawerItem(
                 label = {
                     Text(
@@ -393,10 +405,58 @@ fun AppNavigationDrawerContent(
                 },
                 selected = false,
                 icon = { Icon(Icons.Filled.SystemUpdate, contentDescription = null) },
-                onClick = { if (!pushingUpdate) onPushUpdate() },
-                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                onClick = { if (!pushingUpdate) confirmPush = true },
+                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding).testTag("nav.pushUpdate")
             )
         }
+        Spacer(Modifier.padding(bottom = 8.dp))
+    }
+
+    ModalDrawerSheet(
+        modifier = Modifier
+            .widthIn(max = appMenuDrawerMaxWidth())
+            .semantics { paneTitle = "Menu" },
+        drawerShape = APP_MENU_DRAWER_SHAPE
+    ) {
+        if (scrollAll) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .testTag("nav.list")
+            ) {
+                header()
+                listItems()
+                footer()
+            }
+        } else {
+            header()
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+                    .testTag("nav.list")
+            ) {
+                listItems()
+            }
+            footer()
+        }
+    }
+
+    if (confirmPush) {
+        AlertDialog(
+            onDismissRequest = { confirmPush = false },
+            title = { Text("Push this update to everyone?") },
+            text = { Text("Every signed-in phone is offered this version the next time it opens the app.") },
+            confirmButton = {
+                TextButton(
+                    onClick = { confirmPush = false; onPushUpdate() },
+                    modifier = Modifier.testTag("nav.pushUpdate.confirm")
+                ) { Text("Push update") }
+            },
+            dismissButton = { TextButton(onClick = { confirmPush = false }) { Text("Cancel") } },
+            modifier = Modifier.testTag("nav.pushUpdate.dialog")
+        )
     }
 }
 
@@ -437,8 +497,8 @@ private fun NavRow(
     )
 }
 
-const val LARGE_TEXT_DRAWER_SCALE = 1.5f
-
 val LocalContentAdminChrome = staticCompositionLocalOf { false }
 
 val LocalMayDelete = staticCompositionLocalOf { false }
+
+const val DRAWER_SCROLL_ALL_SCALE = 1.3f
