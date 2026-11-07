@@ -963,8 +963,11 @@ def _field_columns(f: CustomFieldSpec) -> dict[str, Any]:
 async def apply_definition_plan(
     plan: DefinitionPlan, workshop_id: str, *, actor_id: str | None
 ) -> None:
+    from app.services.design_workshop_approvals import open_header
+
     now = datetime.now(UTC)
     async with db.tx() as tx:
+        await open_header(tx, workshop_id)
         for section_plan in plan.sections:
             section = section_plan.spec
             section_id = section_plan.section_id

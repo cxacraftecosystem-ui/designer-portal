@@ -762,13 +762,14 @@ def _iso(value: Any) -> str | None:
 
 
 
-def _writable_model(table: str) -> Any:
+def _writable_model(table: str, client: Any = None) -> Any:
     if table not in WRITABLE_TABLES:
         raise LayerRuleViolation(
             f"There is no AI-layer writer for {table}. AI output is annexure content and a "
             f"suggestion; it is written to {', '.join(sorted(WRITABLE_TABLES))} and nowhere else."
         )
-    return {"DwAiLayer": db.dwailayer, "DwAiLayerDecision": db.dwailayerdecision}[table]
+    target = client if client is not None else db
+    return {"DwAiLayer": target.dwailayer, "DwAiLayerDecision": target.dwailayerdecision}[table]
 
 
 JSON_COLUMNS: Mapping[str, tuple[str, ...]] = {"DwAiLayer": ("payload",)}
@@ -784,17 +785,21 @@ def _json_ready(table: str, data: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
-async def apply_plan(plan: LayerWritePlan) -> Any:
-    model = _writable_model(plan.table)
+async def apply_plan(plan: LayerWritePlan, client: Any = None) -> Any:
+    model = _writable_model(plan.table, client)
     data = _json_ready(plan.table, plan.data)
     if plan.operation is Operation.CREATE:
         return await model.create(data=data)
     return await model.update(where=dict(plan.where or {}), data=data)
 
 
-async def apply_decision(plans: DecisionPlans) -> Any:
-    layer = await apply_plan(plans.layer)
-    await apply_plan(plans.decision)
+async def apply_decision(plans: DecisionPlans, *, workshop_id: str) -> Any:
+    from app.services.design_workshop_approvals import open_header
+
+    async with db.tx() as tx:
+        await open_header(tx, workshop_id)
+        layer = await apply_plan(plans.layer, tx)
+        await apply_plan(plans.decision, tx)
     return layer
 
 
