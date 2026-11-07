@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { motion } from "framer-motion";
-import { EyeOff, Lock } from "lucide-react";
+import { EyeOff, Lock, WifiOff } from "lucide-react";
 
 import {
   adminChromeRouteFor,
@@ -23,15 +23,15 @@ import { mustChangePassword } from "@/lib/signIn";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { user, loading, logout, markPasswordChanged } = useAuth();
+  const { user, loading, reach, retryMe, logout, markPasswordChanged } = useAuth();
   const { adminMode, adminViewResolved, setAdminView } = useAdminView();
   const router = useRouter();
   const pathname = usePathname();
   const reduce = useAppReducedMotion();
 
   useEffect(() => {
-    if (!loading && !user) router.replace("/login");
-  }, [loading, router, user]);
+    if (!loading && !user && reach === "ok") router.replace("/login");
+  }, [loading, reach, router, user]);
 
   if (loading) {
     return (
@@ -40,6 +40,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </main>
     );
   }
+
+  if (!user && reach === "retrying") return <Unreachable onRetry={retryMe} />;
 
   if (!user) return null;
 
@@ -83,6 +85,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         data-surface={ministry ? "ministry" : undefined}
         className="relative mx-auto max-w-7xl px-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] pt-[calc(60px+1.25rem)] lg:pb-12 lg:pt-24"
       >
+        {reach === "retrying" ? (
+          <p role="status" className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700" data-testid="reconnecting">
+            <span className="inline-flex items-center gap-2">
+              <WifiOff className="h-4 w-4 text-ink-500" aria-hidden />
+              Connection lost. Retrying…
+            </span>
+            <button type="button" onClick={retryMe} className="font-semibold text-purple-700 underline underline-offset-2 dark:text-purple-300 pointer-coarse:min-h-11">
+              Try again
+            </button>
+          </p>
+        ) : null}
         {blocked && guard ? (
           <RouteLocked title={guard.title} message={guard.message} role={roleLabel(user.role)} />
         ) : chrome && chromeSettling ? (
@@ -94,6 +107,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
       </motion.main>
     </div>
+  );
+}
+
+function Unreachable({ onRetry }: { onRetry: () => void }) {
+  return (
+    <main id="main-content" tabIndex={-1} className="flex min-h-screen items-center justify-center bg-bg-0 px-4">
+      <section className="panel w-full max-w-md px-6 py-12 text-center" role="alert" data-testid="unreachable">
+        <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-full bg-surface-50 text-ink-500">
+          <WifiOff className="h-5 w-5" aria-hidden />
+        </div>
+        <h1 className="font-display text-xl font-bold tracking-tight text-ink-900">Can&apos;t connect</h1>
+        <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-ink-500">Retrying automatically.</p>
+        <ActionGroup className="mt-7">
+          <button type="button" onClick={onRetry} className="field-button">
+            Try again
+          </button>
+        </ActionGroup>
+      </section>
+    </main>
   );
 }
 

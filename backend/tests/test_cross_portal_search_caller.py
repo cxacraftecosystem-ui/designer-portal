@@ -156,7 +156,7 @@ async def _search(role: str = "RESEARCHER", q: str = "indigo", **kw: Any) -> dic
 
 async def test_remote_items_merge_after_local_on_a_tie(world):
     result = await _search()
-    assert result["remote"] == {"portal": "fieldRepository", "label": "Field Repository", "status": "ok"}
+    assert result["remote"] == {"portal": "fieldRepository", "label": "Field Repository", "status": "ok", "available": True}
     group = result["groups"][0]
     assert group["type"] == "artisans" and group["total"] == 5
     assert (group["localTotal"], group["remoteTotal"]) == (1, 4)
@@ -193,6 +193,18 @@ async def test_local_scope_and_switch_off_make_no_call(world):
     world.settings = _settings(cross_portal_search_enabled=False)
     assert (await _search())["remote"]["status"] == "off"
     assert world.peer_calls == []
+
+
+async def test_the_peer_is_reported_available_whatever_the_scope(world):
+    local = await _search(scope="local")
+    assert local["remote"]["status"] == "off" and local["remote"]["available"] is True
+    assert world.peer_calls == []
+    filtered = await _search(workshopIds=["w1"])
+    assert filtered["remote"]["available"] is True
+    contributor = await _search(scope="local", role="FIELD_CONTRIBUTOR")
+    assert contributor["remote"]["available"] is False
+    world.settings = _settings(cross_portal_search_enabled=False)
+    assert (await _search(scope="local"))["remote"]["available"] is False
 
 
 async def test_workshop_ids_are_local_so_the_peer_is_filtered_out(world):
