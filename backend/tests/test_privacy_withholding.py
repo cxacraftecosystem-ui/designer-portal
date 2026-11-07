@@ -484,3 +484,62 @@ def test_merge_undo_does_not_restore_a_withdrawn_aadhaar_verification(monkeypatc
         _run(artisan_merge.undo("merge-1", user=SimpleNamespace(id="admin"), settings=SimpleNamespace()))
     assert seen["inserted"]["aadhaarVerifyName"] is None
     assert seen["inserted"]["aadhaarVerifyStatus"] is None
+
+
+def test_a_cross_portal_rename_withdraws_the_aadhaar_verification(monkeypatch):
+    from app.api.routes import cross_portal as routes
+
+    artisan = SimpleNamespace(id="a1", name="Kamla Devi", aadhaarFingerprint="fp", aadhaarLast4="1234",
+                              aadhaarVerifyStatus="VERIFIED", aadhaarVerifyMethod="OFFLINE_XML", createdById="e1")
+    link = SimpleNamespace(remoteArtisanId="fr-1", remoteAcknowledgedAt=datetime(2026, 11, 1, tzinfo=UTC), matchedBy="AADHAAR")
+    seen: dict[str, Any] = {}
+
+    class _Stop(Exception):
+        pass
+
+    async def find_link(**_k):
+        return link
+
+    async def write(where, data, **_k):
+        seen["data"] = dict(data)
+        raise _Stop
+
+    async def revision(data):
+        seen.setdefault("revisions", []).append(data)
+
+    tx = SimpleNamespace(artisan=SimpleNamespace(update=write), recordrevision=SimpleNamespace(create=revision))
+
+    class _TxContext:
+        async def __aenter__(self):
+            return tx
+
+        async def __aexit__(self, *_a):
+            return False
+
+    async def required(*_a, **_k):
+        return artisan
+
+    async def nothing(*_a, **_k):
+        return None
+
+    async def peer(*_a, **_k):
+        return 200, {"match": {"artisanId": "fr-1", "fields": {"name": "Somebody Else"}}}
+
+    monkeypatch.setattr(routes, "_settings_or_404", lambda: SimpleNamespace())
+    monkeypatch.setattr(routes, "require_record", required)
+    monkeypatch.setattr(routes, "_assert_may_edit", nothing)
+    monkeypatch.setattr(routes, "peer_call", peer)
+    monkeypatch.setattr(routes, "guard_record_edit", nothing)
+    monkeypatch.setattr(routes, "merge_field_provenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(routes, "resubmit_status", lambda *_a, **_k: None)
+    monkeypatch.setattr(routes, "assert_pehchan_pair", lambda *_a, **_k: None)
+    monkeypatch.setattr(routes, "_guard_identity_conflicts", nothing)
+    monkeypatch.setattr(routes, "db", SimpleNamespace(
+        crossportalartisanlink=SimpleNamespace(find_unique=find_link), tx=lambda **_k: _TxContext(),
+    ))
+    with pytest.raises(_Stop):
+        _run(routes.refresh_artisan("a1", SimpleNamespace(id="e1", role="DESIGNER")))
+    assert seen["data"]["name"] == "Somebody Else"
+    assert seen["data"].get("aadhaarVerifyStatus", "kept") is None
+    assert seen["data"].get("aadhaarVerifyName", "kept") is None
+    assert len(seen.get("revisions", [])) == 1

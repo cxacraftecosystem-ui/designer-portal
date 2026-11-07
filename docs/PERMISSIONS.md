@@ -2602,7 +2602,7 @@ Identity numbers: below PROFESSOR, the Aadhaar lookup and the duplicate check st
 Aadhaar or Pehchan numbers after 100 misses in a day (`backend/app/services/identity_probe.py`).
 Report sheets mask Pehchan numbers by the live-read rule (`datareport.exclusions.identity_view`), and
 the Everything sheet drops every column the export exclusions list. Editing an artisan's name or
-Aadhaar number withdraws its Aadhaar verification.
+Aadhaar number, by hand or through a Field Repository refresh, withdraws its Aadhaar verification.
 
 ## 5. Route guards on the web client
 
