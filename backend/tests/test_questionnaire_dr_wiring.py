@@ -258,8 +258,10 @@ def test_coverage_for_a_design_workshop_sends_every_artisan_and_an_empty_one_get
     monkeypatch: pytest.MonkeyPatch, rows: list[dict[str, Any]], expected: list[str]
 ) -> None:
     from app.core import db as db_module
+    from app.core.config import get_settings
     from app.questionnaire import coverage
 
+    monkeypatch.setattr(get_settings(), "questionnaire_v2", True)
     fake = CoverageScopeDB(rows)
     seen: dict[str, Any] = {}
 
