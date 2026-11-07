@@ -525,7 +525,7 @@ def test_a_cross_portal_rename_withdraws_the_aadhaar_verification(monkeypatch):
     async def peer(*_a, **_k):
         return 200, {"match": {"artisanId": "fr-1", "fields": {"name": "Somebody Else"}}}
 
-    monkeypatch.setattr(routes, "_settings_or_404", lambda: SimpleNamespace())
+    monkeypatch.setattr(routes, "_settings_or_404", SimpleNamespace)
     monkeypatch.setattr(routes, "require_record", required)
     monkeypatch.setattr(routes, "_assert_may_edit", nothing)
     monkeypatch.setattr(routes, "peer_call", peer)
