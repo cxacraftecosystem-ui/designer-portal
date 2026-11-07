@@ -113,7 +113,7 @@ async def test_two_bearer_tokens_get_two_allowances() -> None:
 
 
 async def test_the_hop_counted_forwarded_address_is_the_identity() -> None:
-    async with _client(_stub(), requests=1, window_seconds=60.0) as client:
+    async with _client(_stub(), requests=1, window_seconds=60.0, address="127.0.0.1") as client:
         chain = {"X-Forwarded-For": "198.51.100.4, 70.132.0.1"}
         other = {"X-Forwarded-For": "198.51.100.9, 70.132.0.1"}
         assert (await client.get("/api/anything", headers=chain)).status_code == 200
@@ -244,7 +244,7 @@ def test_an_exhausted_bucket_reports_how_long_to_wait() -> None:
 
 
 async def test_rotating_the_left_most_forwarded_address_does_not_buy_a_fresh_allowance() -> None:
-    async with _client(_stub(), requests=2, window_seconds=60.0) as client:
+    async with _client(_stub(), requests=2, window_seconds=60.0, address="127.0.0.1") as client:
         verdicts = [
             (
                 await client.get(
@@ -259,7 +259,7 @@ async def test_rotating_the_left_most_forwarded_address_does_not_buy_a_fresh_all
 
 
 async def test_rotating_the_left_most_forwarded_address_does_not_buy_fresh_sign_in_guesses() -> None:
-    async with _client(_stub(401), credential_failures=3) as client:
+    async with _client(_stub(401), credential_failures=3, address="127.0.0.1") as client:
         verdicts = [
             (
                 await client.post(

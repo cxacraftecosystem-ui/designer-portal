@@ -201,19 +201,73 @@ def _note_hop_mismatch(scope: Scope, hops: int, entries: list[str]) -> None:
     )
 
 
+ORIGIN_VERIFY_HEADER = b"x-origin-verify"
+
+
+def _networks(raw: str) -> tuple[Any, ...]:
+    found = []
+    for part in (raw or "").split(","):
+        text = part.strip()
+        if not text:
+            continue
+        try:
+            found.append(ipaddress.ip_network(text, strict=False))
+        except ValueError:
+            logger.warning("rate limits: TRUSTED_PROXY_CIDRS entry %r is not a network; ignored", text)
+    return tuple(found)
+
+
+def _address(text: str | None) -> Any:
+    try:
+        return ipaddress.ip_address((text or "").strip())
+    except ValueError:
+        return None
+
+
+def _trusted_proxy(address: Any, networks: tuple[Any, ...]) -> bool:
+    return address is not None and any(address.version == net.version and address in net for net in networks)
+
+
+def _origin_verified(scope: Scope, secret: str | None) -> bool:
+    wanted = (secret or "").strip()
+    if not wanted:
+        return True
+    for name, value in scope.get("headers", []):
+        if name == ORIGIN_VERIFY_HEADER:
+            return hmac.compare_digest(value.strip(), wanted.encode("utf-8"))
+    return False
+
+
 def client_address(scope: Scope) -> str:
     from app.core.config import get_settings
 
     viewer = trusted_viewer_address(scope)
     if viewer:
         return "ip:" + viewer
-    hops = max(1, int(get_settings().forwarded_client_hops or 1))
+    client = scope.get("client")
+    peer = _address(client[0]) if client else None
+    if peer is None:
+        return f"ip:{client[0]}" if client else "ip:unknown"
+    current = get_settings()
+    networks = _networks(current.trusted_proxy_cidrs)
+    if not _trusted_proxy(peer, networks):
+        return f"ip:{peer}"
+    hops = max(1, int(current.forwarded_client_hops or 1))
     entries = _forwarded_entries(scope)
     _note_hop_mismatch(scope, hops, entries)
-    if len(entries) >= hops:
-        return "ip:" + entries[-hops]
-    client = scope.get("client")
-    return f"ip:{client[0]}" if client else "ip:unknown"
+    found = peer
+    for step in range(1, hops + 1):
+        if len(entries) < step:
+            break
+        reported = _address(entries[-step])
+        if reported is None:
+            break
+        found = reported
+        if step == hops:
+            break
+        if not (_trusted_proxy(reported, networks) or _origin_verified(scope, current.origin_verify_secret)):
+            break
+    return f"ip:{found}"
 
 
 def forgot_password_attempt(scope: Scope) -> tuple[bool, float]:

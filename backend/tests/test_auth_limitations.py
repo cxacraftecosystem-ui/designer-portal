@@ -495,7 +495,7 @@ def test_a_hop_count_without_cloudfront_is_warned_once(monkeypatch, caplog):
     monkeypatch.setattr(rate_limit, "_hop_mismatch_logged", False)
     monkeypatch.setattr(get_settings(), "forwarded_client_hops", 2)
     direct = {"headers": [(b"x-forwarded-for", b"1.2.3.4, 5.6.7.8")], "client": ("127.0.0.1", 1)}
-    via_edge = {"headers": [(b"x-forwarded-for", b"1.2.3.4, 5.6.7.8"), (b"x-amz-cf-id", b"abc")]}
+    via_edge = {"headers": [(b"x-forwarded-for", b"1.2.3.4, 5.6.7.8"), (b"x-amz-cf-id", b"abc")], "client": ("127.0.0.1", 1)}
     with caplog.at_level(logging.WARNING, logger="app.scale.rate_limit"):
         assert rate_limit.client_address(via_edge) == "ip:1.2.3.4"
         assert not caplog.records

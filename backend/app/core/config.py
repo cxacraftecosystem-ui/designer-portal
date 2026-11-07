@@ -120,6 +120,8 @@ class Settings(BaseSettings):
     )
     backend_cors_origins: str = Field(default="http://localhost:3000", alias="BACKEND_CORS_ORIGINS")
     forwarded_client_hops: int = Field(default=2, ge=1, le=5, alias="FORWARDED_CLIENT_HOPS")
+    trusted_proxy_cidrs: str = Field(default="127.0.0.1/32,::1/128", alias="TRUSTED_PROXY_CIDRS")
+    origin_verify_secret: str | None = Field(default=None, alias="ORIGIN_VERIFY_SECRET")
     web_proxy_secret: str | None = Field(default=None, alias="WEB_PROXY_SECRET")
 
     google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")

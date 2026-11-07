@@ -282,6 +282,9 @@ Emitted by `app.main.SecurityHeadersMiddleware`. Defaults are correct for local 
 | `SECURITY_HSTS_ENABLED` | No | `true` | No | Emit `Strict-Transport-Security`. `false` removes the header entirely. |
 | `SECURITY_HSTS_MAX_AGE` | No | `63072000` (2 years) | No | HSTS `max-age`, in seconds. |
 | `SECURITY_FORCE_HSTS` | No | `false` | No | **Set `true` on the EC2 box.** Production is browser →HTTPS→ CloudFront →HTTP→ nginx →HTTP→ uvicorn, and nginx overwrites `X-Forwarded-Proto` with its own scheme, so the app cannot otherwise tell the viewer used TLS and never emits HSTS. |
+| `FORWARDED_CLIENT_HOPS` | No | `2` | No | How many proxies of ours append to `X-Forwarded-For` (CloudFront, then nginx). The client address is counted that many entries from the right, and only while each hop is verified: the immediate peer must be in `TRUSTED_PROXY_CIDRS`, and the CloudFront hop must carry `ORIGIN_VERIFY_SECRET`. `1` on a box with only nginx in front. |
+| `TRUSTED_PROXY_CIDRS` | No | `127.0.0.1/32,::1/128` | No | Comma-separated networks whose connections may report a client address in `X-Forwarded-For`. The API reads that header only when the socket peer is inside one of them (production: nginx on the same box, so loopback); any other peer is keyed on its own socket address and every forwarded header it sends is ignored. uvicorn runs with `--no-proxy-headers` everywhere, so the socket peer the API sees is the real one. Behind a cluster ingress, list the ingress pod networks (the k8s base config uses the private ranges). |
+| `ORIGIN_VERIFY_SECRET` | No | unset | **Yes** | The `X-Origin-Verify` value CloudFront sends to this origin (`deploy-backend.yml` writes it to nginx and to `.env`). When set, the rate limits walk past the CloudFront hop in `X-Forwarded-For` only on a request that carries the matching header; without it they stop at the address nginx saw. Unset: the hop count alone decides. |
 
 ### Object storage
 
