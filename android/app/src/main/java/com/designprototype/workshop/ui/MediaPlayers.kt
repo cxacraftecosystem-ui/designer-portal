@@ -45,6 +45,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -65,6 +66,8 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.video.VideoFrameDecoder
 import kotlinx.coroutines.delay
+import com.designprototype.workshop.explorer.ui.ExplorerAudioExpandButton
+import com.designprototype.workshop.explorer.ui.ExplorerAudioExpanded
 
 @Composable
 fun rememberMediaImageLoader(): ImageLoader {
@@ -78,7 +81,7 @@ fun rememberMediaImageLoader(): ImageLoader {
 }
 
 @Composable
-fun MediaViewerDialog(uri: Uri, mediaType: String, onSave: (() -> Unit)? = null, onDismiss: () -> Unit) {
+fun MediaViewerDialog(uri: Uri, mediaType: String, onSave: (() -> Unit)? = null, onDismiss: () -> Unit, expand: AudioExpand? = null) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(
             modifier = Modifier
@@ -93,7 +96,7 @@ fun MediaViewerDialog(uri: Uri, mediaType: String, onSave: (() -> Unit)? = null,
                     modifier = Modifier.fillMaxSize()
                 )
                 "VIDEO" -> VideoPlayer(uri = uri, modifier = Modifier.align(Alignment.Center).fillMaxWidth())
-                "AUDIO" -> Box(modifier = Modifier.align(Alignment.Center).fillMaxWidth()) { AudioPlayer(uri = uri) }
+                "AUDIO" -> Box(modifier = Modifier.align(Alignment.Center).fillMaxWidth()) { AudioPlayer(uri = uri, expand = expand) }
                 else -> Text(
                     "This file type opens in an external app.",
                     color = Color.White,
@@ -148,7 +151,9 @@ fun VideoPlayer(uri: Uri, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun AudioPlayer(uri: Uri, modifier: Modifier = Modifier) {
+fun AudioPlayer(uri: Uri, modifier: Modifier = Modifier, expand: AudioExpand? = null) {
+    var handoff by remember { mutableStateOf<Pair<Long, Boolean>?>(null) }
+    val canExpand = expand != null && LocalAudioExpand.current
     val context = LocalContext.current
     var playing by remember { mutableStateOf(false) }
     var durationMs by remember { mutableStateOf(0) }
@@ -224,8 +229,37 @@ fun AudioPlayer(uri: Uri, modifier: Modifier = Modifier) {
             )
             Text("${formatMs(positionMs)} / ${formatMs(durationMs)}", color = Body, style = MaterialTheme.typography.bodySmall)
         }
+        if (canExpand) {
+            ExplorerAudioExpandButton(onClick = {
+                val at = runCatching { player.currentPosition }.getOrDefault(positionMs)
+                val was = playing
+                if (playing) {
+                    runCatching { player.pause() }
+                    playing = false
+                }
+                positionMs = at
+                handoff = at.toLong() to was
+            })
+        }
+    }
+    val opened = handoff
+    if (expand != null && opened != null) {
+        ExplorerAudioExpanded(expand.mediaId, expand.name, opened.first, opened.second) { back ->
+            handoff = null
+            val target = back.positionMs.coerceIn(0L, if (durationMs > 0) durationMs.toLong() else Long.MAX_VALUE).toInt()
+            positionMs = target
+            runCatching { player.seekTo(target) }
+            if (back.playing && ready) {
+                runCatching { player.start() }
+                playing = true
+            }
+        }
     }
 }
+
+data class AudioExpand(val mediaId: String, val name: String)
+
+val LocalAudioExpand = staticCompositionLocalOf { false }
 
 private fun formatMs(ms: Int): String {
     val totalSec = ms / 1000

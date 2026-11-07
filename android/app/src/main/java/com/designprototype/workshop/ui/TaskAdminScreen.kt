@@ -44,7 +44,6 @@ import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -1337,7 +1336,6 @@ private fun MultiSelectField(
         placeholder = placeholder,
         emptyMessage = emptyLabel,
         searchable = searchable,
-        bulk = onSelectAll != null,
         onSelectedChange = { next ->
             if (next.isEmpty() && onClear != null && options.any { it.first in selected }) {
                 onClear()

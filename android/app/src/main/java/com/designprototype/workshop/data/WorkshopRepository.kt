@@ -3015,6 +3015,9 @@ class WorkshopRepository(
         return readAllListPages { page -> api.crafts(page = page, pageSize = 500, createdBy = createdBy?.blankToNull()) }
     }
 
+    suspend fun searchCrafts(query: String, page: Int = 1, pageSize: Int = 10): PageResponse<CraftDto> =
+        api.crafts(page = page, pageSize = pageSize, search = query.trim())
+
     suspend fun craftCatalogue(context: Context): CraftCatalogue? =
         CraftCatalogueCache.refresh(context) { etag ->
             val response = api.craftCatalogue(ifNoneMatch = etag)
