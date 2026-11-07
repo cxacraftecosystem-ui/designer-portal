@@ -20,7 +20,7 @@ const THEMES: Theme[] = ["light", "dark"];
 
 const WORKSHOP = "/workshops/w-kiln";
 const ARTISAN = "/artisans/a-meera";
-const START = "/terms";
+const START = "/guide";
 const REFERENCE = "e2e-4f2a9c1d";
 
 const ME = {
