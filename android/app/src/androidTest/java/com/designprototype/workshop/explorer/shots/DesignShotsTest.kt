@@ -26,6 +26,7 @@ import com.designprototype.workshop.explorer.data.ExplorerAudioState
 import com.designprototype.workshop.explorer.data.ExplorerEntry
 import com.designprototype.workshop.explorer.data.ExplorerMoreApi
 import com.designprototype.workshop.explorer.portal.DesignTheme
+import com.designprototype.workshop.explorer.ui.ExplorerAudioExpand
 import com.designprototype.workshop.explorer.ui.ExplorerMediaContent
 import com.designprototype.workshop.explorer.ui.ExplorerMediaLoader
 import com.designprototype.workshop.explorer.ui.MiniPlayer
@@ -126,7 +127,26 @@ class DesignShotsTest {
         ExplorerMediaContent(entries, entries.indexOf(DesignBoards.videoEntry), 0.0, 48, onSave = {}, onDismiss = {}, loader = loader, find = "indigo")
     }
 
+    @Composable
+    private fun expandedFromRecord() {
+        val source = DesignBoards.audioEntry
+        val entry = ExplorerAudioExpand.entry(source.mediaId!!, source.name, source.sizeBytes)
+        ExplorerMediaContent(listOf(entry), 0, 0.0, 1, onSave = {}, onDismiss = {}, loader = loader, find = "lime", knownDurationMs = DesignBoards.AUDIO_MS, positioned = false)
+    }
+
+    @Test fun androidAudioExpand() {
+        stageAudio()
+        shoot("AndroidAudio", "expand") { expandedFromRecord() }
+    }
+
+    @Test fun androidAudioExpandTablet() {
+        stageAudio()
+        shoot("AndroidAudio", "expand-tablet", widthDp = 1280, heightDp = 800, density = 1f) { expandedFromRecord() }
+    }
+
     @Test fun androidPreview() = shoot("AndroidPreview") { videoPreview() }
+
+    @Test fun androidPreviewTablet() = shoot("AndroidPreview", "tablet", widthDp = 1280, heightDp = 800, density = 1f) { videoPreview() }
 
     @Test fun androidPreviewDark() = shoot("AndroidPreview", "dark", dark = true) { videoPreview() }
 

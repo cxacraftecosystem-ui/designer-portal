@@ -13237,7 +13237,7 @@ private fun AndroidSavedMediaPreview(
                 mediaType = media.mediaType,
                 onSave = { saveMediaToDevice(context, readableUrl, media.originalFilename, media.mimeType) },
                 onDismiss = { showViewer = false },
-                expand = com.designprototype.workshop.ui.AudioExpand(media.id, media.originalFilename).takeIf { media.mediaType.equals("AUDIO", ignoreCase = true) }
+                expand = com.designprototype.workshop.ui.AudioExpand(media.id, media.originalFilename, sizeBytes = media.byteSize, onSave = { saveMediaToDevice(context, readableUrl, media.originalFilename, media.mimeType) }).takeIf { media.mediaType.equals("AUDIO", ignoreCase = true) }
             )
         }
     }
