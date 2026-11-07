@@ -13,7 +13,14 @@ from app.core.deps import (
     require_record_creator,
 )
 from app.schemas.records import ArtisanCreate, ArtisanUpdate, drop_masked_identity_numbers
-from app.services import aadhaar_fingerprint, artisan_card, artisan_duplicates, artisan_merge
+from app.services import (
+    aadhaar_fingerprint,
+    artisan_card,
+    artisan_duplicates,
+    artisan_merge,
+    identity_probe,
+)
+from app.services.aadhaar import records as aadhaar_records
 from app.services.access import guard_record_edit
 from app.services.artisan_form_contract import assert_form_contract, take_form_contract
 from app.services.artisan_identity import aadhaar_error, mask_aadhaar, normalize_aadhaar
@@ -501,6 +508,7 @@ async def update_artisan(
         resubmit_status(artisan, current_user, data)
         assert_pehchan_pair(artisan, data)
         await _guard_identity_conflicts(data, exclude_id=artisan_id, aadhaar=aadhaar)
+        await aadhaar_records.withdraw_for_identity_edit(artisan, current_user, data, client=tx)
         try:
             updated = await tx.artisan.update(where={"id": artisan_id}, data=data, include=INCLUDE)
         except Exception as exc:
@@ -522,20 +530,21 @@ class AadhaarLookup(BaseModel):
 async def lookup_artisan_by_aadhaar_body(
     payload: AadhaarLookup, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    return await _lookup_aadhaar(payload.number)
+    return await _lookup_aadhaar(payload.number, current_user)
 
 
 @router.get("/lookup/aadhaar")
 async def lookup_artisan_by_aadhaar(
-    number: str, _: Any = Depends(get_current_user)
+    number: str, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    return await _lookup_aadhaar(number)
+    return await _lookup_aadhaar(number, current_user)
 
 
-async def _lookup_aadhaar(number: str) -> dict[str, Any]:
+async def _lookup_aadhaar(number: str, current_user: Any) -> dict[str, Any]:
     normalized = normalize_aadhaar(number)
     if not normalized or aadhaar_error(normalized):
         return {"found": False, "artisan": None}
+    await identity_probe.assert_may_probe(current_user)
     try:
         where = aadhaar_fingerprint.match_where(
             normalized, legacy=await aadhaar_fingerprint.legacy_pending(db)
@@ -545,6 +554,7 @@ async def _lookup_aadhaar(number: str) -> dict[str, Any]:
         raise _fingerprint_unavailable() from exc
     existing = await db.artisan.find_first(where=where, include={"craft": True, "workshop": True})
     if existing is None:
+        await identity_probe.record_miss(current_user)
         return {"found": False, "artisan": None}
     return {
         "found": True,

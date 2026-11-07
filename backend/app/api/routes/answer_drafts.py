@@ -16,7 +16,12 @@ from app.core.deps import (
 from app.services import answer_drafts as ad, dictation_consent
 from app.services.access import effective_tier_for_record
 from app.services.record_design_workshop import assert_may_write_a_record_filed_under
-from app.services.records import public_encode, require_live_record, viewable_where
+from app.services.records import (
+    public_encode,
+    require_live_record,
+    transcript_readable_ids,
+    viewable_where,
+)
 
 router = APIRouter(prefix="/questionnaire", tags=["questionnaire"])
 
@@ -115,13 +120,22 @@ async def list_drafts(
     transcripts = await db.mediafile.find_many(
         where={"questionnaireInterviewId": interview_id, "transcriptText": {"not": None}}
     )
+    sources = sorted({str(r.sourceMediaId) for r in rows if getattr(r, "sourceMediaId", None)})
+    source_rows = await db.mediafile.find_many(where={"id": {"in": sources}}) if sources else []
+    readable = await transcript_readable_ids([*transcripts, *source_rows], current_user)
     return {
         "mayDraft": True,
-        "items": public_encode(rows),
+        "items": public_encode(
+            [
+                r
+                for r in rows
+                if not getattr(r, "sourceMediaId", None) or str(r.sourceMediaId) in readable
+            ]
+        ),
         "transcripts": [
             {"id": m.id, "name": m.originalFilename or m.id}
             for m in transcripts
-            if (m.transcriptText or "").strip()
+            if (m.transcriptText or "").strip() and str(m.id) in readable
         ],
     }
 
@@ -139,7 +153,11 @@ async def draft_section(
     media = None
     if payload.mediaId:
         media = await db.mediafile.find_unique(where={"id": payload.mediaId})
-        if media is None or media.questionnaireInterviewId != interview_id:
+        if (
+            media is None
+            or media.questionnaireInterviewId != interview_id
+            or str(media.id) not in await transcript_readable_ids([media], current_user)
+        ):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recording not found")
         transcript = (media.transcriptText or "").strip()
         source_media_id = media.id

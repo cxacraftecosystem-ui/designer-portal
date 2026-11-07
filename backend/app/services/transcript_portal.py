@@ -6,7 +6,7 @@ from typing import Any
 from app.core.db import db
 from app.core.deps import is_admin as _is_admin, is_content_admin
 from app.services import design_workshop_posts, dictation_consent
-from app.services.records import media_url_scope, public_encode
+from app.services.records import transcript_readable_ids
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +28,7 @@ def may_edit(user: Any, media: Any) -> bool:
 
 
 async def readable_ids(rows: list[Any], viewer: Any) -> set[str]:
-    if not rows:
-        return set()
-    media_urls, media_workshops = await media_url_scope(viewer)
-    encoded = public_encode(
-        list(rows), viewer, media_urls=media_urls, media_workshops=media_workshops
-    )
-    return {
-        str(out.get("id")) for out in encoded if isinstance(out, dict) and "transcriptText" in out
-    }
+    return await transcript_readable_ids(rows, viewer)
 
 
 READ_ONLY_MESSAGES: dict[str, str] = {

@@ -4,10 +4,12 @@
         <exclude domain="sharedpref" path="field_repository_auth.xml" />
         <exclude domain="file" path="read-cache/" />
         <exclude domain="file" path="staged-objects.json" />
+        <exclude domain="file" path="questionnaire-outbox/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="field_repository_auth.xml" />
         <exclude domain="file" path="read-cache/" />
         <exclude domain="file" path="staged-objects.json" />
+        <exclude domain="file" path="questionnaire-outbox/" />
     </device-transfer>
 </data-extraction-rules>

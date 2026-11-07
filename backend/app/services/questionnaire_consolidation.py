@@ -10,6 +10,8 @@ from app.services.records import (
     media_url_owners,
     presigned_read_ttl,
     public_encode,
+    transcript_scope,
+    transcript_withheld,
     viewable_where,
 )
 from app.services.rich_text import plain_from_stored
@@ -99,6 +101,7 @@ async def consolidate_for_artisan(
     vis = await viewable_where(current_user)
     media_vis = await viewable_where(current_user, owner_field="uploadedById")
     media_owners = await media_url_owners(current_user)
+    readable = await transcript_scope(current_user)
 
     interview_where: dict[str, Any] = {
         "artisans": {"some": {"artisanId": artisan_id}},
@@ -219,7 +222,7 @@ async def consolidate_for_artisan(
             "filename": media.originalFilename,
             "mediaType": media.mediaType,
             "url": _readable_url(media) if _may_take(media, media_owners) else None,
-            "transcriptText": media.transcriptText,
+            "transcriptText": None if transcript_withheld(media, readable) else media.transcriptText,
             "transcriptStatus": media.transcriptStatus,
             "transcriptEdited": True if getattr(media, "transcriptEditedAt", None) else None,
             "recordedByName": None,

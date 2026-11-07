@@ -1072,6 +1072,11 @@ async def undo(merge_id: str, *, user: Any, settings: Any) -> dict[str, Any]:
     survivor_now = (await _rows(db, [keep_id])).get(keep_id)
     if survivor_now is None:
         raise _http(409, {"code": "merge_undo_conflict", "message": "The kept record no longer exists."})
+    holds = await db.aadhaarlegalhold.find_many(
+        where={"recordId": {"in": [keep_id, gone_id]}, "releasedAt": None}
+    )
+    if any(str(h.recordType).lower() == "artisan" for h in holds):
+        raise _http(409, {"code": "aadhaar_legal_hold", "message": "One of these records is under an Aadhaar legal hold."})
 
     if cross and cross.get("mode") == "moved":
         await _peer_move_link(settings, cross["remoteArtisanId"], keep_id, gone_id, cross.get("matchedBy") or "AADHAAR", user)
@@ -1094,6 +1099,8 @@ async def undo(merge_id: str, *, user: Any, settings: Any) -> dict[str, Any]:
                 col: before.get(col) for col in after if group_of.get(col, col) not in edited
             }
             await _write_survivor(tx, keep_id, revert)
+            if after.get("aadhaarVerifyStatus") and not current.get("aadhaarVerifyStatus"):
+                merged_row = {**merged_row, **dict.fromkeys(AADHAAR_VERIFY_COLUMNS)}
             fp, pc = merged_row.get("aadhaarFingerprint"), merged_row.get("pehchanCardNumber")
             clauses = []
             if fp:

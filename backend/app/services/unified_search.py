@@ -63,16 +63,19 @@ async def visible_design_workshops(user: Any) -> list[str]:
 
 async def account_scope(user: Any | None, types: list[str] | None) -> tuple[Scope, list[str]]:
     wanted = [t for t in (types or list(LOCAL_TYPES)) if t in LOCAL_TYPES]
+    from app.services.records import transcript_scope
+
+    transcripts = await transcript_scope(user)
     if user is None:
         refused = [t for t in wanted if t in DW_TYPES] if types else []
-        return Scope(types=[t for t in wanted if t not in DW_TYPES]), refused
+        return Scope(types=[t for t in wanted if t not in DW_TYPES], transcripts=transcripts), refused
     may_read = can_view_design_workshop_data(user)
     visible = [] if may_read else await visible_design_workshops(user)
     refused: list[str] = []
     if not may_read and not visible:
         refused = [t for t in wanted if t in DW_TYPES]
         wanted = [t for t in wanted if t not in DW_TYPES]
-    return Scope(types=wanted, may_read_dw=may_read, visible_dw_ids=visible), refused
+    return Scope(types=wanted, may_read_dw=may_read, visible_dw_ids=visible, transcripts=transcripts), refused
 
 
 def may_search_across(user: Any) -> bool:

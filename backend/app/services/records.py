@@ -35,7 +35,58 @@ _TRANSCRIPT_KEYS = ("transcriptText", "transcriptSummary")
 
 _MEDIA_TAKEABLE_KEYS = (*_MEDIA_URL_KEYS, *_TRANSCRIPT_KEYS)
 
+_MEDIA_COPY_KEYS = (
+    "cleanedObjectKey", "cleanedMimeType", "transcriptSegments", "insights", "aiLayers",
+    "transcriptVersions", "transcriptSpeakers", "transcriptGlossary", "transcriptDraftCitations",
+)
+
 _MEDIA_MARKER = "objectKey"
+
+
+class TranscriptScope(NamedTuple):
+    owners: frozenset[str]
+    workshops: frozenset[str]
+
+    def sql(self, alias: str, bind: Any) -> str:
+        owners = bind(sorted(self.owners))
+        workshops = bind(sorted(self.workshops))
+        tag = bind(MEDIA_TAG)
+        return (
+            f'({alias}."uploadedById" = ANY({owners}::text[]) OR ({alias}."linkedRecordType" = {tag} '
+            f'AND {alias}."linkedRecordId" = ANY({workshops}::text[])))'
+        )
+
+
+def _field(node: Any, name: str) -> Any:
+    if isinstance(node, dict):
+        return node.get(name)
+    return getattr(node, name, None)
+
+
+def media_withheld(node: Any, media_urls: Any, media_workshops: frozenset[str] = frozenset()) -> bool:
+    if media_urls is None:
+        return False
+    if _field(node, "uploadedById") in media_urls:
+        return False
+    return not (
+        _field(node, "linkedRecordType") == MEDIA_TAG and _field(node, "linkedRecordId") in media_workshops
+    )
+
+
+def transcript_withheld(node: Any, scope: TranscriptScope | None) -> bool:
+    if scope is None:
+        return False
+    return media_withheld(node, scope.owners, scope.workshops)
+
+
+def _strip_withheld_media(node: dict[str, Any]) -> None:
+    for key in (*_MEDIA_TAKEABLE_KEYS, *_MEDIA_COPY_KEYS):
+        node.pop(key, None)
+    jobs = node.get("processingJobs")
+    if isinstance(jobs, list):
+        for job in jobs:
+            if isinstance(job, dict):
+                job.pop("result", None)
 
 
 def _sign_media_url(node: dict[str, Any], ttl_seconds: int) -> bool:
@@ -198,16 +249,8 @@ def _redact_sensitive(
                         else mask_identity_number(column)
                     )
         if _MEDIA_MARKER in value:
-            if (
-                media_urls is not None
-                and value.get("uploadedById") not in media_urls
-                and not (
-                    value.get("linkedRecordType") == MEDIA_TAG
-                    and value.get("linkedRecordId") in media_workshops
-                )
-            ):
-                for key in _MEDIA_TAKEABLE_KEYS:
-                    value.pop(key, None)
+            if media_withheld(value, media_urls, media_workshops):
+                _strip_withheld_media(value)
             elif presign_ttl is not None:
                 signed = _sign_media_url(value, presign_ttl)
                 if signed_only:
@@ -287,6 +330,21 @@ async def media_url_scope(viewer: Any) -> tuple[set[str] | None, frozenset[str]]
     if not viewer_id:
         return uploaders, frozenset()
     return uploaders, frozenset(await _design_workshop_media_ids(viewer_id))
+
+
+async def transcript_scope(viewer: Any) -> TranscriptScope | None:
+    media_urls, media_workshops = await media_url_scope(viewer)
+    if media_urls is ALL_MEDIA_URLS:
+        return None
+    return TranscriptScope(frozenset(media_urls), frozenset(media_workshops))
+
+
+async def transcript_readable_ids(rows: Sequence[Any], viewer: Any) -> set[str]:
+    rows = [row for row in rows if _field(row, "id")]
+    if not rows:
+        return set()
+    scope = await transcript_scope(viewer)
+    return {str(_field(row, "id")) for row in rows if not transcript_withheld(row, scope)}
 
 
 async def media_url_owners(viewer: Any) -> set[str] | None:

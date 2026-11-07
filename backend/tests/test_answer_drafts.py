@@ -158,11 +158,18 @@ def world(monkeypatch):
         ),
         questionnaireanswerdraft=Table(),
         mediafile=Table(
-            [{"id": "m1", "questionnaireInterviewId": "i1", "transcriptText": "We learned from my mother.", "originalFilename": "a.webm"}]
+            [{"id": "m1", "questionnaireInterviewId": "i1", "transcriptText": "We learned from my mother.", "originalFilename": "a.webm",
+              "uploadedById": "u1"}]
         ),
     )
     monkeypatch.setattr(routes, "db", fake)
     monkeypatch.setattr(routes, "get_settings", lambda: SimpleNamespace(ai_answer_drafts_enabled=True))
+    from app.services import records
+
+    async def own_uploads(viewer):
+        return {viewer.id}, frozenset()
+
+    monkeypatch.setattr(records, "media_url_scope", own_uploads)
 
     async def may_edit(*_a, **_k):
         return True
@@ -383,3 +390,16 @@ def test_the_consolidated_csv_carries_the_origin_in_its_last_column():
 def test_a_merge_fill_keeps_the_answers_origin():
     source = (BACKEND / "app/api/routes/questionnaire.py").read_text(encoding="utf-8")
     assert 'fill["answerOrigin"] = get_value(row, "answerOrigin")' in source
+
+
+async def test_drafting_refuses_a_recording_whose_transcript_the_editor_may_not_read(world):
+    world.db.mediafile.rows.append(
+        {"id": "m2", "questionnaireInterviewId": "i1", "transcriptText": "A co-researcher's private words.",
+         "originalFilename": "b.webm", "uploadedById": "u2"}
+    )
+    with pytest.raises(HTTPException) as exc:
+        await routes.draft_section("i1", routes.DraftIn(sectionId="s1", mediaId="m2"), USER)
+    assert exc.value.status_code == 404
+    assert world.asked == []
+    listed = await routes.list_drafts("i1", USER)
+    assert {"id": "m2", "name": "b.webm"} not in listed["transcripts"]
