@@ -19,6 +19,7 @@ from app.core.deps import (
     can_view_design_workshop_data,
     get_current_user,
 )
+from app.questionnaire.live import live_session_where
 from app.services import answer_drafts, design_workshop_data as dw, naming
 from app.services.access import owner_download_scope
 from app.services.concurrency import gather_reads
@@ -171,7 +172,7 @@ async def dataset_manifest(
             where=rec_where, take=EXPORT_TAKE, include=_TOOL_INCLUDE, order=_EXPORT_ORDER
         ),
         db.questionnaireinterview.find_many(
-            where={"AND": [rec_where, {"deletedAt": None}]}, take=EXPORT_TAKE, include=_INTERVIEW_INCLUDE, order=_EXPORT_ORDER
+            where=live_session_where(rec_where), take=EXPORT_TAKE, include=_INTERVIEW_INCLUDE, order=_EXPORT_ORDER
         ),
         db.process.find_many(
             where=rec_where, take=EXPORT_TAKE, include=_PROCESS_INCLUDE, order=_EXPORT_ORDER
@@ -188,6 +189,8 @@ async def dataset_manifest(
         products = [p for p in products if _in_scope("product", p.id)]
         tools = [t for t in tools if _in_scope("tool", t.id)]
         interviews = [i for i in interviews if _in_scope("questionnaire", i.id)]
+        kept_products = {p.id for p in products}
+        processes = [p for p in processes if p.productId in kept_products]
     tool_viewer = rec_where if ownerId is None else await owned_or_granted_where(current_user)
     await hide_unseen(tools, tool_viewer)
     from app.services import questionnaire_readers
@@ -225,7 +228,7 @@ async def dataset_manifest(
         )
 
     media_or: list[dict[str, Any]] = []
-    if ownerId:
+    if ownerId and scope is None:
         media_or.append({"uploadedById": ownerId})
     for fk, tags, rows in (
         ("artisanId", ["artisan"], artisans),

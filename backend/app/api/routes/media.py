@@ -51,7 +51,7 @@ from app.services.ai import (
 )
 from app.services.artisan_merge import redirect_payload
 from app.services.concurrency import gather_reads
-from app.services.dictation_consent import SendRefused
+from app.services.dictation_consent import MEDIA_TAG, SendRefused
 from app.services.identity_ocr import SUPPORTED_MIME_TYPES
 from app.services.media_naming import display_filename, interview_record
 from app.services.media_queue import (
@@ -667,13 +667,15 @@ async def complete_media_upload(
     if parent is None:
         parent = await _tagged_parent(data.get("linkedRecordType"), data.get("linkedRecordId"))
 
+    inherit_parent_workshop(data, parent)
+
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     await assert_may_file_under(data.get("designWorkshopId"), current_user)
+    if str(data.get("linkedRecordType") or "").strip().lower() == MEDIA_TAG.lower():
+        await assert_may_file_under(data.get("linkedRecordId"), current_user)
     stamp_workshop_submission(data, check=check)
     data.setdefault("status", "PENDING")
     pin_pending_if_late(data, current_user, check=check)
-
-    inherit_parent_workshop(data, parent)
 
     jsonify_metadata(data)
     try:

@@ -28,11 +28,12 @@ def may_edit(user: Any, media: Any) -> bool:
 
 
 async def readable_ids(rows: list[Any], viewer: Any) -> set[str]:
+    rows = [row for row in rows if getattr(row, "removedAt", None) is None]
     if not rows:
         return set()
     media_urls, media_workshops = await media_url_scope(viewer)
     encoded = public_encode(
-        list(rows), viewer, media_urls=media_urls, media_workshops=media_workshops
+        rows, viewer, media_urls=media_urls, media_workshops=media_workshops
     )
     return {
         str(out.get("id")) for out in encoded if isinstance(out, dict) and "transcriptText" in out
