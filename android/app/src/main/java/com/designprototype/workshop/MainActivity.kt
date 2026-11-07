@@ -154,6 +154,8 @@ import com.designprototype.workshop.ui.bannerClearance
 import com.designprototype.workshop.ui.pageBottomReserve
 import com.designprototype.workshop.ui.AppSearchItem
 import com.designprototype.workshop.ui.AppSearchPanel
+import com.designprototype.workshop.ui.AppSearchSession
+import com.designprototype.workshop.ui.AppSearchReturn
 import com.designprototype.workshop.ui.AppSearchSettingTarget
 import com.designprototype.workshop.ui.appMenuBleed
 import com.designprototype.workshop.ui.appMenuHidesPage
@@ -907,9 +909,113 @@ private enum class EntryMode(
 private fun Screen.memoryKey(): Screen = if (this is Screen.DesignWorkshops) Screen.DesignWorkshops() else this
 
 private val ScreenSaver = Saver<Screen, String>(
-    save = { s -> if (s is Screen.DataBrowser || (s is Screen.View && s.from is Screen.DataBrowser)) "data" else "home" },
-    restore = { if (it == "data") Screen.DataBrowser else Screen.Dashboard },
+    save = { s -> encodeScreen(s) },
+    restore = { decodeScreen(it) },
 )
+
+private val restorableObjects: Map<String, Screen> = listOf(
+    Screen.MyActivity, Screen.ToolAssign, Screen.Feedback, Screen.Notifications, Screen.Appearance,
+    Screen.MyAiKeys, Screen.SpeechAndAi, Screen.UsageRecording, Screen.TwoStepVerification,
+    Screen.AccountPassword, Screen.Aadhaar, Screen.DataBrowser, Screen.SketchesAndPrototypes,
+    Screen.DesignReview, Screen.ScanCode, Screen.ReviewQueue, Screen.DesignWorkshopInspections,
+    Screen.DesignerRoster, Screen.AccessRoster, Screen.Questionnaires
+).associateBy { it.toString() }
+
+private fun encodeScreen(screen: Screen): String = when (screen) {
+    Screen.Dashboard -> "home"
+    is Screen.View -> if (screen.from is Screen.DataBrowser) {
+        "data"
+    } else {
+        screenTokens("view", screen.mode.name, screen.recordId, screen.section, screen.from?.let(::encodeScreen))
+    }
+    is Screen.Edit -> screenTokens("view", screen.mode.name, screen.recordId, null, screen.from?.let(::encodeScreen))
+    is Screen.Create -> screenTokens("create", screen.mode.name, screen.from?.let(::encodeScreen))
+    is Screen.Browse -> screenTokens("browse", screen.mode.name)
+    is Screen.AdminHub -> screenTokens("admin", screen.section?.name)
+    is Screen.DesignWorkshops -> screenTokens("dws", screen.cluster)
+    is Screen.DesignWorkshopStages -> screenTokens("stages", screen.workshopId, screen.from?.let(::encodeScreen))
+    is Screen.DesignWorkshopStage -> screenTokens("stage", screen.workshopId, screen.stageKey)
+    is Screen.DesignWorkshopReport -> screenTokens("report", screen.workshopId)
+    is Screen.DesignWorkshopReportHistory -> screenTokens("reportHistory", screen.workshopId)
+    is Screen.DesignWorkshopCodes -> screenTokens("codes", screen.workshopId)
+    is Screen.DesignWorkshopPhotos -> screenTokens("photos", screen.workshopId)
+    is Screen.DesignWorkshopViewers -> screenTokens("viewers", screen.workshopId)
+    is Screen.DesignWorkshopInspectors -> screenTokens("inspectors", screen.workshopId)
+    is Screen.DesignWorkshopInspection -> screenTokens("inspection", screen.workshopId)
+    is Screen.DesignWorkshopProvenance -> screenTokens("provenance", screen.workshopId)
+    is Screen.DesignWorkshopAiLayers -> screenTokens("aiLayers", screen.workshopId)
+    is Screen.DesignerProfile -> screenTokens("profile", screen.userId, screen.label)
+    is Screen.QuestionnaireDetail -> screenTokens("questionnaire", screen.questionnaireId, screen.from?.let(::encodeScreen))
+    is Screen.QuestionnaireAnswers -> screenTokens("answers", screen.questionnaireId, screen.entryId)
+    is Screen.RemoteRecord -> screenTokens("remote", screen.type, screen.id, screen.from?.let(::encodeScreen))
+    else -> restorableObjects.entries.firstOrNull { it.value == screen }?.let { screenTokens("object", it.key) } ?: "home"
+}
+
+private fun screenTokens(vararg tokens: String?): String = packScreenTokens(tokens.toList())
+
+private fun decodeScreen(raw: String): Screen = when (raw) {
+    "home" -> Screen.Dashboard
+    "data" -> Screen.DataBrowser
+    else -> runCatching { decodeScreenTokens(unpackScreenTokens(raw)) }.getOrNull() ?: Screen.Dashboard
+}
+
+private fun decodeScreenTokens(t: List<String?>): Screen? {
+    fun arg(i: Int): String? = t.getOrNull(i)
+    fun id(i: Int): String = requireNotNull(arg(i))
+    fun from(i: Int): Screen? = arg(i)?.let(::decodeScreen)
+    fun mode(i: Int): EntryMode = EntryMode.valueOf(id(i))
+    return when (arg(0)) {
+        "view" -> Screen.View(mode(1), id(2), from = from(4), section = arg(3))
+        "create" -> Screen.Create(mode(1), from = from(2))
+        "browse" -> Screen.Browse(mode(1))
+        "admin" -> Screen.AdminHub(arg(1)?.let { AdminHubEntry.valueOf(it) })
+        "dws" -> Screen.DesignWorkshops(cluster = arg(1))
+        "stages" -> Screen.DesignWorkshopStages(id(1), from = from(2))
+        "stage" -> Screen.DesignWorkshopStage(id(1), id(2))
+        "report" -> Screen.DesignWorkshopReport(id(1))
+        "reportHistory" -> Screen.DesignWorkshopReportHistory(id(1))
+        "codes" -> Screen.DesignWorkshopCodes(id(1))
+        "photos" -> Screen.DesignWorkshopPhotos(id(1))
+        "viewers" -> Screen.DesignWorkshopViewers(id(1))
+        "inspectors" -> Screen.DesignWorkshopInspectors(id(1))
+        "inspection" -> Screen.DesignWorkshopInspection(id(1))
+        "provenance" -> Screen.DesignWorkshopProvenance(id(1))
+        "aiLayers" -> Screen.DesignWorkshopAiLayers(id(1))
+        "profile" -> Screen.DesignerProfile(arg(1), arg(2))
+        "questionnaire" -> Screen.QuestionnaireDetail(id(1), from = from(2))
+        "answers" -> Screen.QuestionnaireAnswers(id(1), id(2))
+        "remote" -> Screen.RemoteRecord(id(1), id(2), from = from(3))
+        "object" -> restorableObjects[id(1)]
+        else -> null
+    }
+}
+
+internal fun restoredScreenToken(raw: String): String = encodeScreen(decodeScreen(raw))
+
+internal fun restorableScreenSamples(): List<String> = listOf(
+    Screen.Dashboard,
+    Screen.Browse(EntryMode.ARTISAN),
+    Screen.View(EntryMode.PRODUCT, "p1", from = Screen.Browse(EntryMode.PRODUCT), section = "media"),
+    Screen.Create(EntryMode.TOOL, from = Screen.Dashboard),
+    Screen.AdminHub(),
+    Screen.AdminHub(AdminHubEntry.entries.first()),
+    Screen.DesignWorkshops(cluster = "Bagru"),
+    Screen.DesignWorkshopStages("w1", from = Screen.DesignWorkshops()),
+    Screen.DesignWorkshopStage("w1", "ideation"),
+    Screen.DesignWorkshopReport("w1"),
+    Screen.DesignWorkshopReportHistory("w1"),
+    Screen.DesignWorkshopCodes("w1"),
+    Screen.DesignWorkshopPhotos("w1"),
+    Screen.DesignWorkshopViewers("w1"),
+    Screen.DesignWorkshopInspectors("w1"),
+    Screen.DesignWorkshopInspection("w1"),
+    Screen.DesignWorkshopProvenance("w1"),
+    Screen.DesignWorkshopAiLayers("w1"),
+    Screen.DesignerProfile("u1", "Asha: Weaver"),
+    Screen.QuestionnaireDetail("q1", from = Screen.Questionnaires),
+    Screen.QuestionnaireAnswers("q1", "e1"),
+    Screen.RemoteRecord("artisan", "a1", from = Screen.Dashboard),
+).plus(restorableObjects.values).map(::encodeScreen)
 
 private sealed interface Screen {
     data object Dashboard : Screen
@@ -1279,6 +1385,7 @@ private fun RepositoryApp(
             }
 
             override fun onAvailable(network: android.net.Network) {
+                com.designprototype.workshop.data.RequestGate.shared.networkReturned()
                 scope.launch {
                     settle(repository.isOnline(appContext))
                     runCatching { repository.syncOutbox(appContext) }
@@ -1923,6 +2030,9 @@ private fun HomeScreen(
     val bannerReserve = bannerClearanceState?.value ?: 0.dp
     val reducedMotion = preferences.reducedMotion
     var searchOpen by remember { mutableStateOf(false) }
+    val searchSession = remember { AppSearchSession() }
+    val searchReturn = remember { AppSearchReturn<Screen>() }
+    LaunchedEffect(screen, searchSession.openedResult) { searchReturn.observe(screen, searchSession) }
     var scanOpen by remember { mutableStateOf(false) }
     val scanContext = LocalContext.current
     val messageState = remember { AppMessageState() }
@@ -2374,7 +2484,18 @@ private fun HomeScreen(
         scope.launch { drawerState.closeAppMenu(reducedMotion) }
     }
     BackHandler(enabled = !drawerState.appMenuShowing && screen !is Screen.Dashboard) {
-        attemptExit { goBack() }
+        attemptExit {
+            val origin = searchReturn.backTo(screen)
+            if (origin != null) {
+                message = null
+                searchReturn.returned()
+                screen = origin
+                searchSession.restore()
+                searchOpen = true
+            } else {
+                goBack()
+            }
+        }
     }
     AppMenuFocusEffect(drawerState)
 
@@ -3185,7 +3306,7 @@ private fun HomeScreen(
                     AppSearchHeader(
                         appName = APP_SEARCH_NAME,
                         logo = { m -> WorkshopLogo(modifier = m, cornerRadius = 10.dp) },
-                        onOpenSearch = { searchOpen = true },
+                        onOpenSearch = { searchSession.start(); searchReturn.begin(screen); searchOpen = true },
                         onScan = { scanOpen = true },
                         elevated = elevated
                     )
@@ -3212,12 +3333,13 @@ private fun HomeScreen(
                         remoteSearch = { q -> searchRemote(q) },
                         onClose = { searchOpen = false },
                         onError = { showMessage(it) },
+                        session = searchSession,
                         fullSearch = { q, back ->
                             DataUnifiedSearch(
                                 repository = repository,
                                 initial = q,
                             onOpenInData = { kind, id, _ ->
-                                searchOpen = false
+                                searchSession.markOpened(); searchOpen = false
                                 attemptExit {
                                     val mode = recentSubmissionEntryMode(kind)
                                     when {
@@ -3227,9 +3349,9 @@ private fun HomeScreen(
                                     }
                                 }
                             },
-                                onPlay = { mediaId, _, _, _ -> searchOpen = false; attemptExit { openSearchRecord(SearchRecordTypes.MEDIA, mediaId) } },
-                                onOpenRemote = { type, id -> searchOpen = false; attemptExit { message = null; screen = Screen.RemoteRecord(type, id, from = screen) } },
-                                onOpenCluster = { name -> searchOpen = false; attemptExit { message = null; screen = Screen.DesignWorkshops(cluster = name) } },
+                                onPlay = { mediaId, _, _, _ -> searchSession.markOpened(); searchOpen = false; attemptExit { openSearchRecord(SearchRecordTypes.MEDIA, mediaId) } },
+                                onOpenRemote = { type, id -> searchSession.markOpened(); searchOpen = false; attemptExit { message = null; screen = Screen.RemoteRecord(type, id, from = screen) } },
+                                onOpenCluster = { name -> searchSession.markOpened(); searchOpen = false; attemptExit { message = null; screen = Screen.DesignWorkshops(cluster = name) } },
                                 onClose = back,
                             )
                         }
