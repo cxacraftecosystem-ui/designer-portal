@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.explorer.data.ExplorerText
 import com.designprototype.workshop.explorer.ui.ExplorerScreen
+import com.designprototype.workshop.explorer.ui.ExplorerState
 import com.designprototype.workshop.explorer.ui.ExplorerUiText
 import com.designprototype.workshop.explorer.ui.LocalExplorerSearchAll
 
@@ -48,6 +49,7 @@ fun DataBrowserScreen(
     onRecordNow: ((folderPath: String, folderName: String) -> Unit)? = null,
     onOpenSection: ((artisanId: String, sectionKey: String) -> Unit)? = null,
     onOpenRecord: ((kind: String, id: String) -> Unit)? = null,
+    state: ExplorerState? = null,
 ) {
     ExplorerScreen(
         onBack = onBack,
@@ -56,6 +58,8 @@ fun DataBrowserScreen(
         onError = onError,
         onOpenMedia = onOpenMedia,
         startPath = startPath.takeIf { it.isNotBlank() },
+        onPathChange = onPathChange,
+        held = state,
         onRecordNow = onRecordNow,
         onOpenSection = onOpenSection,
         onOpenRecord = onOpenRecord,
