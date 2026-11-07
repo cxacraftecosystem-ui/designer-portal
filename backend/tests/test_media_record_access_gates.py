@@ -67,6 +67,7 @@ async def env():
         })
         granted_photo = await _photo(sharer.id, stamp, f"granted-{stamp}.jpg", productId=in_scope.id)
         private_photo = await _photo(sharer.id, stamp, f"private-{stamp}.jpg", productId=out_of_scope.id)
+        loose_photo = await _photo(sharer.id, stamp, f"loose-{stamp}.jpg")
         grant = await db.dataaccessgrant.create(data={
             "ownerId": sharer.id, "granteeId": grantee.id, "tier": "DOWNLOAD", "status": "GRANTED", "allData": False,
         })
@@ -120,7 +121,7 @@ async def env():
             "ids": {
                 "sharer": sharer.id, "grantee": grantee.id, "stranger": stranger.id,
                 "granted_photo": granted_photo.id, "private_photo": private_photo.id,
-                "private_name": private_photo.originalFilename,
+                "private_name": private_photo.originalFilename, "loose_name": loose_photo.originalFilename,
                 "pending": pending.id, "design_workshop": design_workshop.id,
                 "curated_artisan": curated_artisan.id, "open_workshop": open_workshop.id,
                 "removed": removed.id,
@@ -166,6 +167,7 @@ def test_the_owner_export_under_a_subset_grant_leaves_out_the_owners_other_media
     )
     assert response.status_code == 200, response.text
     assert env["ids"]["private_name"] not in response.text
+    assert env["ids"]["loose_name"] not in response.text, "the owner's unlinked files rode along on a one-product grant"
 
 
 def test_a_decided_record_is_not_re_decided_by_a_lower_reviewer(env):

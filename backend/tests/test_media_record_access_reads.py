@@ -79,12 +79,21 @@ async def world():
             w.sharer.id, stamp, "removed.mp3",
             transcriptText=f"words that were removed {stamp}", removedAt=datetime.now(UTC),
         )
-        yield w
+    finally:
+        await db.disconnect()
+    yield w
+
+
+@pytest.fixture
+async def connected():
+    await db.connect()
+    try:
+        yield db
     finally:
         await db.disconnect()
 
 
-async def test_owned_or_granted_where_follows_the_grant_scope(world):
+async def test_owned_or_granted_where_follows_the_grant_scope(world, connected):
     from app.services.records import owned_or_granted_where
 
     where = await owned_or_granted_where(world.grantee, owner_field="uploadedById")
@@ -94,7 +103,7 @@ async def test_owned_or_granted_where_follows_the_grant_scope(world):
     assert {row.id for row in rows} == {world.granted_file.id}
 
 
-async def test_media_url_owners_names_only_the_scoped_files(world):
+async def test_media_url_owners_names_only_the_scoped_files(world, connected):
     from app.services.records import media_url_allows, media_url_owners
 
     owners = await media_url_owners(world.grantee)
@@ -102,7 +111,7 @@ async def test_media_url_owners_names_only_the_scoped_files(world):
     assert not media_url_allows(owners, world.private_file)
 
 
-async def test_a_denied_or_view_only_member_of_an_open_workshop_cannot_contribute(world):
+async def test_a_denied_or_view_only_member_of_an_open_workshop_cannot_contribute(world, connected):
     from app.services.workshop_access import resolve_workshop_access
 
     denied = await resolve_workshop_access(world.stranger, world.open_workshop.id)
@@ -113,14 +122,14 @@ async def test_a_denied_or_view_only_member_of_an_open_workshop_cannot_contribut
     assert anyone.at_least("CONTRIBUTE")
 
 
-async def test_removed_media_and_its_transcript_leave_the_search_index(world):
+async def test_removed_media_and_its_transcript_leave_the_search_index(world, connected):
     from app.services import search_index
 
     assert await search_index.build("media", world.removed.id) is None
     assert await search_index.build("transcripts", world.removed.id) is None
 
 
-async def test_the_map_filters_leave_out_removed_media(world):
+async def test_the_map_filters_leave_out_removed_media(world, connected):
     from app.services.record_filters import build_record_wheres
 
     wheres = await build_record_wheres(world.admin)
@@ -128,7 +137,7 @@ async def test_the_map_filters_leave_out_removed_media(world):
     assert rows == []
 
 
-async def test_a_removed_recording_has_no_readable_transcript(world):
+async def test_a_removed_recording_has_no_readable_transcript(world, connected):
     from app.services import transcript_portal
 
     assert await transcript_portal.readable_ids([world.removed], world.admin) == set()
