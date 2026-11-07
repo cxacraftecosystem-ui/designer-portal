@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
@@ -145,7 +146,8 @@ async def download_artisan_pro_forma(
     _: Any = Depends(require_workshop_assigner),
 ) -> Response:
     workshop = await _workshop_for_assignment_or_404(workshopId) if workshopId else None
-    return xlsx_response(build_artisan_pro_forma(workshop=workshop), pro_forma_filename(workshop))
+    payload = await asyncio.to_thread(build_artisan_pro_forma, workshop=workshop)
+    return xlsx_response(payload, pro_forma_filename(workshop))
 
 
 @router.post("/workshops", status_code=status.HTTP_201_CREATED)
@@ -498,8 +500,6 @@ async def upload_artisan_list(
 async def run_artisan_import(
     workshop: Any, file: UploadFile, request: Request | None, current_user: Any
 ) -> dict[str, Any]:
-    import asyncio
-
     workshop_id = str(workshop.id)
     venue_fix = await _venue_fix(workshop_id)
     if venue_fix is None:

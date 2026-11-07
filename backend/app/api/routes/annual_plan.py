@@ -137,7 +137,7 @@ async def _entry_or_404(entry_id: str) -> Any:
 
 @router.get("/pro-forma")
 async def download_pro_forma(_: Any = Depends(require_annual_plan_manager)) -> Response:
-    return xlsx_response(build_annual_plan_pro_forma(), PRO_FORMA_FILENAME)
+    return xlsx_response(await asyncio.to_thread(build_annual_plan_pro_forma), PRO_FORMA_FILENAME)
 
 
 @router.get("/years")

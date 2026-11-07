@@ -19,7 +19,7 @@ PASSWORD = "security-review-original-1"
 SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
 
 
-def _scope(forwarded: str | None, peer: str = "10.0.0.9") -> dict[str, Any]:
+def _scope(forwarded: str | None, peer: str = "127.0.0.1") -> dict[str, Any]:
     headers = [(b"x-forwarded-for", forwarded.encode("latin-1"))] if forwarded is not None else []
     return {"type": "http", "headers": headers, "client": (peer, 1234)}
 

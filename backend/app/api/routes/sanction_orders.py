@@ -254,7 +254,7 @@ async def find_planned_workshops(
 async def download_sanction_pro_forma(
     _: Any = Depends(require_sanction_recorder),
 ) -> Response:
-    return xlsx_response(build_sanction_pro_forma(), PRO_FORMA_FILENAME)
+    return xlsx_response(await asyncio.to_thread(build_sanction_pro_forma), PRO_FORMA_FILENAME)
 
 
 @router.get("/{sanction_id}")

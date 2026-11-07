@@ -49,7 +49,7 @@ WorkingDirectory=/home/ubuntu/app/slot-%i/backend
 EnvironmentFile=/home/ubuntu/app/slot-%i/backend/.env
 Environment=MEDIA_QUEUE_WORKER_ENABLED=false
 Environment=MALLOC_ARENA_MAX=2
-ExecStart=/home/ubuntu/app/slot-%i/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port %i --workers 1
+ExecStart=/home/ubuntu/app/slot-%i/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port %i --workers 1 --no-proxy-headers
 MemoryAccounting=yes
 MemoryHigh=1000M
 Restart=always

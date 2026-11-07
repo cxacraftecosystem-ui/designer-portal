@@ -1865,7 +1865,7 @@ async def analyze_measurement_image_bytes(
             ),
             **_measurement_provenance(None, settings).payload(),
         }
-    paid_ai_allowance.take(paid_ai_allowance.MEASUREMENT, user_id)
+    await paid_ai_allowance.take(paid_ai_allowance.MEASUREMENT, user_id)
     try:
         return await asyncio.to_thread(
             _post_gemini_measurement,

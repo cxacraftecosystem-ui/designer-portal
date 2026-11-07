@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile, status
@@ -21,7 +22,8 @@ async def download_roster_pro_forma(
 ) -> Response:
     _require_designer(current_user)
     workshop = await load_workshop_or_404(workshop_id, current_user, for_edit=True)
-    return xlsx_response(build_artisan_pro_forma(workshop=workshop), pro_forma_filename(workshop))
+    payload = await asyncio.to_thread(build_artisan_pro_forma, workshop=workshop)
+    return xlsx_response(payload, pro_forma_filename(workshop))
 
 
 @router.post("/{workshop_id}/roster/upload", status_code=status.HTTP_201_CREATED)
