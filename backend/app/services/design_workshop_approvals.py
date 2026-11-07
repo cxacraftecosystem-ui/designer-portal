@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -30,6 +31,20 @@ async def load_approvable_workshop_or_404(workshop_id: str) -> Any:
     if record is None or record.deletedAt is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     return record
+
+
+async def open_header(client: Any, workshop_id: str) -> None:
+    opened = await client.designworkshop.update_many(
+        where={"id": workshop_id, "NOT": dict(plans.FROZEN_WHERE)},
+        data={"updatedAt": datetime.now(UTC)},
+    )
+    if opened != 1:
+        frozen = await client.designworkshop.find_unique(where={"id": workshop_id})
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=plans.frozen_refusal(getattr(frozen, "status", None), getattr(frozen, "handedOnAt", None))
+            or plans.FROZEN_APPROVED,
+        )
 
 
 def queue_where(state: str, search: str | None = None) -> dict[str, Any]:

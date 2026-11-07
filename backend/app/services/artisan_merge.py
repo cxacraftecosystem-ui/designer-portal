@@ -1077,6 +1077,12 @@ async def undo(merge_id: str, *, user: Any, settings: Any) -> dict[str, Any]:
     )
     if any(str(h.recordType).lower() == "artisan" for h in holds):
         raise _http(409, {"code": "aadhaar_legal_hold", "message": "One of these records is under an Aadhaar legal hold."})
+    if cross and cross.get("mode") in ("moved", "dropped"):
+        survivor_link = await db.crossportalartisanlink.find_first(
+            where={"artisanId": keep_id, "remoteArtisanId": cross.get("remoteArtisanId")}
+        )
+        if survivor_link is None:
+            cross = None
 
     if cross and cross.get("mode") == "moved":
         await _peer_move_link(settings, cross["remoteArtisanId"], keep_id, gone_id, cross.get("matchedBy") or "AADHAAR", user)

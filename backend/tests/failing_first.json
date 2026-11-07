@@ -8,5 +8,40 @@
       "backend/app/api/routes/cross_portal.py"
     ],
     "to": "8efa129d2ad204daec12e3ad3415b118c921954f"
+  },
+  {
+    "id": "sec-approval-sees-layer-and-section-changes",
+    "tests": [
+      "tests/test_approval_sees_layer_and_section_changes.py::test_accepting_an_ai_layer_after_the_approver_opened_the_report_refuses_the_approval",
+      "tests/test_approval_sees_layer_and_section_changes.py::test_changing_custom_sections_after_the_approver_opened_the_report_refuses_the_approval"
+    ],
+    "revert": [
+      "backend/app/services/ai_layers.py",
+      "backend/app/services/custom_sections.py",
+      "backend/app/services/design_workshop_approvals.py",
+      "backend/app/api/routes/design_workshops.py"
+    ],
+    "to": "8f9e26f8721463c4a700555a1e7626c5f64b2bef"
+  },
+  {
+    "id": "sec-merge-undo-survivor-unlinked",
+    "tests": [
+      "tests/test_merge_undo_after_survivor_unlink.py::test_undo_does_not_relink_the_restored_record_after_the_survivor_was_unlinked",
+      "tests/test_merge_undo_after_survivor_unlink.py::test_undo_does_not_ask_the_peer_to_relink_after_the_survivor_was_unlinked"
+    ],
+    "revert": [
+      "backend/app/services/artisan_merge.py"
+    ],
+    "to": "8f9e26f8721463c4a700555a1e7626c5f64b2bef"
+  },
+  {
+    "id": "sec-report-extras-design-workshop-downloads",
+    "tests": [
+      "tests/test_report_extras_withhold_design_workshops.py::test_the_everything_sheet_leaves_out_design_workshops_the_reader_may_not_download"
+    ],
+    "revert": [
+      "backend/app/services/datareport/sheets/extras_common.py"
+    ],
+    "to": "8f9e26f8721463c4a700555a1e7626c5f64b2bef"
   }
 ]

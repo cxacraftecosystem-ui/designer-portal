@@ -2201,7 +2201,7 @@ async def accept_ai_layer(
     except ai_layers.LayerRuleViolation as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     withheld = False
-    updated = await ai_layers.apply_decision(plans)
+    updated = await ai_layers.apply_decision(plans, workshop_id=workshop_id)
     return {
         "layer": ai_layers.layer_payload(updated, text_withheld=withheld),
         "decisions": [
@@ -2227,7 +2227,7 @@ async def unaccept_ai_layer(
     except ai_layers.LayerRuleViolation as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     withheld = await _layer_text_withheld(workshop_id, row, current_user)
-    updated = await ai_layers.apply_decision(plans)
+    updated = await ai_layers.apply_decision(plans, workshop_id=workshop_id)
     return {
         "layer": ai_layers.layer_payload(updated, text_withheld=withheld),
         "decisions": [
