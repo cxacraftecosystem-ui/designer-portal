@@ -11,6 +11,8 @@ from app.scale.rate_limit import (
 
 _UNLIMITED = 10_000
 
+_SPOOFED = "198.51.100.{n}, 203.0.113.50, 70.132.0.1"
+
 
 @pytest.fixture(autouse=True)
 def _no_shared_window(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -238,3 +240,44 @@ def test_an_exhausted_bucket_reports_how_long_to_wait() -> None:
     allowed, retry_after = buckets.take("ip:a")
     assert allowed is False
     assert 0.0 < retry_after <= 1.0
+
+
+async def test_rotating_the_left_most_forwarded_address_does_not_buy_a_fresh_allowance() -> None:
+    async with _client(_stub(), requests=2, window_seconds=60.0) as client:
+        verdicts = [
+            (
+                await client.get(
+                    "/api/anything", headers={"X-Forwarded-For": _SPOOFED.format(n=n)}
+                )
+            ).status_code
+            for n in range(1, 6)
+        ]
+
+    assert verdicts[:2] == [200, 200]
+    assert 429 in verdicts[2:], verdicts
+
+
+async def test_rotating_the_left_most_forwarded_address_does_not_buy_fresh_sign_in_guesses() -> None:
+    async with _client(_stub(401), credential_failures=3) as client:
+        verdicts = [
+            (
+                await client.post(
+                    "/api/auth/login", headers={"X-Forwarded-For": _SPOOFED.format(n=n)}
+                )
+            ).status_code
+            for n in range(1, 6)
+        ]
+
+    assert verdicts[:3] == [401, 401, 401]
+    assert 429 in verdicts[3:], verdicts
+
+
+async def test_unverified_bearer_strings_do_not_buy_fresh_allowances() -> None:
+    async with _client(_stub(), requests=2, window_seconds=60.0) as client:
+        verdicts = [
+            (await client.get("/api/anything", headers={"Authorization": f"Bearer junk-{n}"})).status_code
+            for n in range(5)
+        ]
+
+    assert verdicts[:2] == [200, 200]
+    assert 429 in verdicts[2:], verdicts

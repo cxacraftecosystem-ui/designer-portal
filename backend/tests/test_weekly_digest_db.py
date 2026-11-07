@@ -491,3 +491,20 @@ def test_summaries_older_than_26_weeks_are_purged() -> None:
 
     answer = _private(story)
     assert answer["old"] is None and answer["kept"] is not None
+
+
+def test_an_official_barred_on_the_access_roster_is_not_sent_a_digest() -> None:
+    async def story() -> dict[str, Any]:
+        tag = uuid.uuid4().hex[:8]
+        designer = await _person("DESIGNER", tag)
+        barred = await _person("MINISTRY_ADMIN", tag)
+        await db.accessroster.create(
+            data={"email": barred.email, "status": "SUSPENDED", "decidedAt": datetime.now(UTC)}
+        )
+        await _handed_in(designer, tag)
+        status = await weekly_digest.deliver_one(barred, WEEK, now=NOW, settings=_mail(True))
+        return {"status": status, "rows": await _rows(barred.id)}
+
+    answer = _private(story)
+    assert answer["rows"]["notices"] == [], answer["status"]
+    assert answer["rows"]["emails"] == [], answer["status"]

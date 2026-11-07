@@ -1213,6 +1213,50 @@ def test_a_promotion_waits_for_a_temporary_password_to_be_replaced(world, client
     assert promoted.json()["mustChangePassword"] is True
 
 
+def test_a_promotion_waits_even_when_the_typed_password_was_not_flagged(world, client):
+    made = _create(
+        client,
+        world,
+        "ministry",
+        _fresh(world, "typed-flag-cleared"),
+        password="typed-by-ministry-1",
+        mustChangePassword=False,
+    )
+    assert made.status_code == 201, made.text
+    assert made.json()["mustChangePassword"] is False
+    refused = _patch(client, world, "admin", made.json()["id"], role="ADMIN")
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"] == account_provisioning.PROMOTION_WITH_A_TEMPORARY_PASSWORD_DETAIL
+
+    settled = _settled_account(client, world, "typed-by-patch")
+    retyped = _patch(
+        client,
+        world,
+        "ministry",
+        settled["id"],
+        password="typed-by-ministry-2",
+        mustChangePassword=False,
+    )
+    assert retyped.status_code == 200, retyped.text
+    assert retyped.json()["mustChangePassword"] is False
+    refused_again = _patch(client, world, "admin", settled["id"], role="ADMIN")
+    assert refused_again.status_code == 409, refused_again.text
+
+
+def test_a_promotion_goes_ahead_once_the_owner_chose_the_password(world, client):
+    account = _settled_account(client, world, "owner-chose")
+    signed_in = _login(client, account["email"])
+    assert signed_in.status_code == 200, signed_in.text
+    changed = client.post(
+        "/api/auth/change-password",
+        json={"currentPassword": NEW_PASSWORD, "newPassword": "owner-chosen-password-1"},
+        headers=_bearer(signed_in.json()["accessToken"]),
+    )
+    assert changed.status_code == 200, changed.text
+    promoted = _patch(client, world, "admin", account["id"], role="ADMIN")
+    assert promoted.status_code == 200, promoted.text
+
+
 def _approve(client: Any, world: dict[str, Any], actor: str, email: str, role: str) -> Any:
     row = _access_rows(client, world, email)[email]
     return client.post(
