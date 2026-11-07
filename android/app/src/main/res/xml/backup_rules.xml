@@ -3,4 +3,5 @@
     <exclude domain="sharedpref" path="field_repository_auth.xml" />
     <exclude domain="file" path="read-cache/" />
     <exclude domain="file" path="staged-objects.json" />
+    <exclude domain="file" path="questionnaire-outbox/" />
 </full-backup-content>

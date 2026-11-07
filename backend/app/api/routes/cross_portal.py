@@ -25,6 +25,7 @@ from app.services import (
     artisan_card_store as card_store,
     cross_portal,
 )
+from app.services.aadhaar import records as aadhaar_records
 from app.services.access import effective_tier_for_record, guard_record_edit
 from app.services.artisan_identity import normalize_pehchan, validate_aadhaar
 from app.services.coverage import coverage_peer_active
@@ -553,6 +554,7 @@ async def refresh_artisan(
             merge_field_provenance(data, current_user, previous=artisan)
             resubmit_status(artisan, current_user, data)
             await _guard_identity_conflicts(data, exclude_id=artisan_id)
+            await aadhaar_records.withdraw_for_identity_edit(artisan, current_user, data, client=tx)
             try:
                 await tx.artisan.update(where={"id": artisan_id}, data=data)
             except Exception as exc:

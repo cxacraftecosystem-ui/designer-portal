@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.designprototype.workshop.BuildConfig
+import com.designprototype.workshop.data.AadhaarAtRest
 import com.designprototype.workshop.data.ApiClient
 import com.designprototype.workshop.data.ArtisanCreateRequest
 import com.designprototype.workshop.data.BackgroundSync
@@ -34,7 +35,7 @@ object QuestionnairePortal {
 
     fun requestSync(context: Context) = BackgroundSync.requestSoon(context)
 
-    fun artisanCreateJson(artisan: NewArtisan, workshopId: String?): String = json.encodeToString(
+    fun artisanCreateJson(artisan: NewArtisan, workshopId: String?): String = AadhaarAtRest.sealPayload(json.encodeToString(
         ArtisanCreateRequest.serializer(),
         ArtisanCreateRequest(
             name = artisan.name.trim(),
@@ -44,11 +45,17 @@ object QuestionnairePortal {
             donts = artisan.donts.trim().ifBlank { null },
             designWorkshopId = workshopId?.ifBlank { null },
         )
-    )
+    ))
+
+    internal fun openedArtisanBody(bodyJson: String): String {
+        val opened = AadhaarAtRest.openPayload(bodyJson)
+        check(!AadhaarAtRest.numberWithheld(opened)) { AadhaarAtRest.RETYPE_REASON }
+        return opened
+    }
 
     suspend fun createArtisan(context: Context, idempotencyKey: String, bodyJson: String): String {
         val api = ApiClient.create(TokenStore(context.applicationContext))
-        return api.createArtisan(json.decodeFromString(ArtisanCreateRequest.serializer(), bodyJson), idempotencyKey).id
+        return api.createArtisan(json.decodeFromString(ArtisanCreateRequest.serializer(), openedArtisanBody(bodyJson)), idempotencyKey).id
     }
 
     suspend fun workshops(context: Context): List<QWorkshopOption> {

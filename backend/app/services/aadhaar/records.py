@@ -215,6 +215,31 @@ async def decide(record_type: str, row: Any, admin: Any, accept: bool) -> Any:
     return updated
 
 
+IDENTITY_SOURCES = ("name", "aadhaarFingerprint", "aadhaarLast4")
+
+
+def identity_changed(row: Any, data: dict[str, Any]) -> bool:
+    if not _status_word(row):
+        return False
+    return any(key in data and data[key] != getattr(row, key, None) for key in IDENTITY_SOURCES)
+
+
+async def withdraw_for_identity_edit(row: Any, actor: Any, data: dict[str, Any], *, client: Any) -> None:
+    if not identity_changed(row, data):
+        return
+    data.update(dict.fromkeys(ARTISAN_COLUMNS))
+    await audit_attempt(
+        RECORD_ARTISAN,
+        row.id,
+        actor,
+        method=str(_enum(getattr(row, "aadhaarVerifyMethod", None)) or "UNKNOWN"),
+        outcome="WITHDRAWN",
+        previous=_status_word(row),
+        code="IDENTITY_EDITED",
+        client=client,
+    )
+
+
 async def withdraw(record_type: str, row: Any, actor: Any) -> Any:
     columns = USER_COLUMNS if record_type == RECORD_USER else ARTISAN_COLUMNS
     data = dict.fromkeys(columns)

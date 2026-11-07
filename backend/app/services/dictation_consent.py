@@ -523,7 +523,11 @@ async def transcription_verdict(
             refusal=subject_refusal(DictationConsent.REFUSED, send),
         )
     candidates: list[str] = []
-    for candidate in (str(design_workshop_id or "").strip(), tagged_workshop_id(media)):
+    for candidate in (
+        str(design_workshop_id or "").strip(),
+        tagged_workshop_id(media),
+        str(_attr(media, "designWorkshopId") or "").strip(),
+    ):
         if candidate and candidate not in candidates:
             candidates.append(candidate)
     interview_workshop = await interview_workshop_id(media)
@@ -734,7 +738,12 @@ async def workshop_audio_media_ids(workshop_id: str) -> list[str]:
         )
     try:
         tagged = await db.mediafile.find_many(
-            where={"linkedRecordType": MEDIA_TAG, "linkedRecordId": workshop_id}
+            where={
+                "OR": [
+                    {"linkedRecordType": MEDIA_TAG, "linkedRecordId": workshop_id},
+                    {"designWorkshopId": workshop_id},
+                ]
+            }
         )
         found |= {str(row.id) for row in tagged}
     except Exception as exc:  # noqa: BLE001 — same rule.

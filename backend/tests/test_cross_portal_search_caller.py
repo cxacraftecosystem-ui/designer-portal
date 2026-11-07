@@ -130,6 +130,12 @@ def world(monkeypatch):
     monkeypatch.setattr(us, "peer_call", fake_peer)
     monkeypatch.setattr(search_query, "run", fake_run)
     monkeypatch.setattr(us, "visible_design_workshops", no_workshops)
+    from app.services import records
+
+    async def own_uploads(user):
+        return {user.id}, frozenset()
+
+    monkeypatch.setattr(records, "media_url_scope", own_uploads)
     return world
 
 
