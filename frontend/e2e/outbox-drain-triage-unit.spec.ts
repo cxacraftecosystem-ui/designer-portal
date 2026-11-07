@@ -525,7 +525,7 @@ test("the cloud-off icon is gated on the same count, or the picture gives the in
   expect(icons, "and the branch is the cloud").toContain("<CloudOff");
   expect(icons, "with a different glyph on the other arm rather than nothing at all").toContain("<CircleAlert");
   expect(icons, "the amber panel does not borrow the red panel's glyph").not.toContain("<TriangleAlert");
-  expect(BANNER_SOURCE).toContain("const waiting = entries.length - rejected.length - otherAccount;");
+  expect(BANNER_SOURCE).toContain("const waiting = entries.length - rejected.length;");
 });
 
 test("a pass that moved nothing because everything belongs to somebody else says which", () => {
