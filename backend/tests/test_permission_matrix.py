@@ -344,7 +344,7 @@ def test_a_researcher_or_designer_opens_the_fifth_record_type_an_interview(api: 
 def test_a_volunteer_still_attaches_media_to_an_existing_record(
     api: _Api, monkeypatch: pytest.MonkeyPatch, role: str
 ) -> None:
-    monkeypatch.setattr(media, "presign_put_url", lambda key, mime: f"https://upload.test/{key}")
+    monkeypatch.setattr(media, "presign_put_url", lambda key, mime, *size: f"https://upload.test/{key}")
     monkeypatch.setattr(media, "public_url_for_key", lambda key: f"https://cdn.test/{key}")
     caller = api.as_(_user(role))
 

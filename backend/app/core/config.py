@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     aws_s3_public_base_url: str | None = Field(default=None, alias="AWS_S3_PUBLIC_BASE_URL")
     aws_s3_sse_algorithm: str = Field(default="AES256", alias="AWS_S3_SSE_ALGORITHM")
 
-    media_presigned_reads: bool = Field(default=False, alias="MEDIA_PRESIGNED_READS")
+    media_presigned_reads: bool = Field(default=True, alias="MEDIA_PRESIGNED_READS")
     media_presigned_read_ttl_seconds: int = Field(
         default=900, alias="MEDIA_PRESIGNED_READ_TTL_SECONDS"
     )

@@ -298,14 +298,6 @@ async def dataset_manifest(
         placed_media_slots.add((rtype, rid))
         for m in media_by.get((rtype, rid), []):
             leaf = _seg(m.originalFilename, m.id)
-            if m.url:
-                files.append(
-                    {
-                        "path": _uniq(f"{prefix}/{leaf}", used_files),
-                        "url": m.url,
-                    }
-                )
-                continue
             if m.objectKey:
                 try:
                     signed = presign_get_url(
