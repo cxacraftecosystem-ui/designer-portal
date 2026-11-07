@@ -1,4 +1,4 @@
-const VERSION = "v1";
+const VERSION = "v2";
 const STATIC_CACHE = `dw-static-${VERSION}`;
 const ASSET_CACHE = `dw-assets-${VERSION}`;
 const PAGE_CACHE = `dw-pages-${VERSION}`;
@@ -46,9 +46,33 @@ async function cacheFirst(request, cacheName, limit) {
   return response;
 }
 
+const ROUTER_HEADERS = ["RSC", "Next-Router-State-Tree", "Next-Router-Prefetch", "Next-Router-Segment-Prefetch", "Next-Url"];
+
+function isRsc(request, url) {
+  return request.headers.get("RSC") === "1" || url.searchParams.has("_rsc");
+}
+
+function isPrefetch(request) {
+  return request.headers.get("Next-Router-Prefetch") === "1" || request.headers.has("Next-Router-Segment-Prefetch");
+}
+
+function fingerprint(text) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36);
+}
+
 function pageKey(request, url) {
-  const rsc = request.headers.get("RSC") === "1" || url.searchParams.has("_rsc");
-  return new Request(`${url.origin}${url.pathname}${rsc ? "?__dw_rsc=1" : ""}`);
+  if (!isRsc(request, url)) return new Request(`${url.origin}${url.pathname}`);
+  const params = new URLSearchParams(url.search);
+  params.delete("_rsc");
+  params.sort();
+  const router = ROUTER_HEADERS.map((name) => `${name.toLowerCase()}:${request.headers.get(name) ?? ""}`).join("|");
+  params.set("__dw_rsc", fingerprint(router));
+  return new Request(`${url.origin}${url.pathname}?${params.toString()}`);
 }
 
 async function networkFirst(request, url) {
@@ -83,6 +107,7 @@ globalThis.addEventListener("fetch", (event) => {
     return;
   }
   const isPage = request.mode === "navigate" || request.headers.get("RSC") === "1";
+  if (isPage && isPrefetch(request)) return;
   if (isPage && !url.pathname.startsWith("/api/") && !url.pathname.startsWith("/_next/")) {
     event.respondWith(networkFirst(request, url));
   }
