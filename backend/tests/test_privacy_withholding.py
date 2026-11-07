@@ -535,7 +535,8 @@ def test_a_cross_portal_rename_withdraws_the_aadhaar_verification(monkeypatch):
     monkeypatch.setattr(routes, "assert_pehchan_pair", lambda *_a, **_k: None)
     monkeypatch.setattr(routes, "_guard_identity_conflicts", nothing)
     monkeypatch.setattr(routes, "db", SimpleNamespace(
-        crossportalartisanlink=SimpleNamespace(find_unique=find_link), tx=lambda **_k: _TxContext(),
+        artisan=SimpleNamespace(), crossportalartisanlink=SimpleNamespace(find_unique=find_link),
+        tx=lambda **_k: _TxContext(),
     ))
     with pytest.raises(_Stop):
         _run(routes.refresh_artisan("a1", SimpleNamespace(id="e1", role="DESIGNER")))
