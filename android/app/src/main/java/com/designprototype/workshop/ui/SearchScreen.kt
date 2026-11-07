@@ -29,7 +29,6 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
@@ -67,6 +66,7 @@ import com.designprototype.workshop.data.ArtisanDto
 import com.designprototype.workshop.loadArtisanRegister
 import com.designprototype.workshop.loadCraftRegister
 import com.designprototype.workshop.data.CraftDto
+import com.designprototype.workshop.data.PageResponse
 import com.designprototype.workshop.data.WorkshopRepository
 import com.designprototype.workshop.data.SearchResultsDto
 import com.designprototype.workshop.data.apiErrorMessage
@@ -91,6 +91,8 @@ object SearchRecordTypes {
 
     const val DESIGN_WORKSHOP = "designWorkshop"
 
+    const val CRAFT = "craft"
+
     val ALL: List<String> = listOf(ARTISAN, WORKSHOP, PRODUCT, TOOL, MEDIA, DESIGN_WORKSHOP)
 
     fun label(recordType: String): String = when (recordType) {
@@ -100,6 +102,7 @@ object SearchRecordTypes {
         TOOL -> "Tools"
         MEDIA -> "Media"
         DESIGN_WORKSHOP -> "Design workshops"
+        CRAFT -> "Crafts"
         else -> recordType.replaceFirstChar { it.uppercase() }
     }
 
@@ -110,6 +113,7 @@ object SearchRecordTypes {
         TOOL -> "tools"
         MEDIA -> "media"
         DESIGN_WORKSHOP -> "designWorkshops"
+        CRAFT -> "crafts"
         else -> recordType
     }
 }
@@ -555,7 +559,7 @@ internal data class SearchBucket(
 
 private fun SearchResultsDto.totalsReported(): Boolean =
     total > 0 || totals.artisans > 0 || totals.workshops > 0 || totals.products > 0 ||
-        totals.tools > 0 || totals.media > 0 || totals.designWorkshops > 0
+        totals.tools > 0 || totals.media > 0 || totals.designWorkshops > 0 || totals.crafts > 0
 
 internal fun SearchResultsDto.toSearchBuckets(
     designWorkshopRoute: Boolean = false,
@@ -646,8 +650,24 @@ internal fun SearchResultsDto.toSearchBuckets(
         )
     }
 
+    val craftRows = crafts.map { item ->
+        SearchRow(
+            recordType = SearchRecordTypes.CRAFT,
+            id = item.id,
+            title = item.name.ifBlank { "Unnamed craft" },
+            subtitle = listOfNotNull(
+                item.localName?.takeIf { it.isNotBlank() && it != item.name },
+                item.category?.takeIf { it.isNotBlank() },
+                item.place?.takeIf { it.isNotBlank() }
+            ).joinToString(" · "),
+            status = "",
+            date = item.createdAt
+        )
+    }
+
     return listOf(
         SearchBucket(SearchRecordTypes.ARTISAN, "Artisans", total(totals.artisans, artisanRows.size), artisanRows),
+        SearchBucket(SearchRecordTypes.CRAFT, "Crafts", total(totals.crafts, craftRows.size), craftRows),
         SearchBucket(SearchRecordTypes.WORKSHOP, "Workshops", total(totals.workshops, workshopRows.size), workshopRows),
         SearchBucket(SearchRecordTypes.PRODUCT, "Products", total(totals.products, productRows.size), productRows),
         SearchBucket(SearchRecordTypes.TOOL, "Tools", total(totals.tools, toolRows.size), toolRows),
@@ -665,6 +685,41 @@ internal fun SearchResultsDto.toSearchBuckets(
 }
 
 internal const val QUICK_SEARCH_LIMIT = 8
+
+internal fun SearchFilters.searchesCrafts(): Boolean =
+    query.isNotBlank() && includes(SearchRecordTypes.CRAFT) && place.isBlank() && range == SearchRange.ANY &&
+        craftId.isBlank() && artisanId.isBlank() && mediaType.isBlank()
+
+internal suspend fun searchWithCrafts(
+    filters: SearchFilters,
+    types: List<String>?,
+    page: Int,
+    pageSize: Int,
+    crafts: suspend (page: Int, pageSize: Int) -> PageResponse<CraftDto>,
+    records: suspend (List<String>?) -> SearchResultsDto
+): SearchResultsDto {
+    val craftBucket = SearchRecordTypes.bucket(SearchRecordTypes.CRAFT)
+    val wantsCrafts = filters.searchesCrafts() && (types == null || craftBucket in types)
+    val recordTypes = types?.filter { it != craftBucket }
+    val base = if (recordTypes != null && recordTypes.isEmpty()) {
+        SearchResultsDto(query = filters.query, page = page, pageSize = pageSize)
+    } else {
+        records(recordTypes)
+    }
+    if (!wantsCrafts) return base
+    val found = try {
+        crafts(page, pageSize)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Throwable) {
+        null
+    } ?: return base
+    return base.copy(
+        crafts = found.items,
+        totals = base.totals.copy(crafts = found.total),
+        total = base.total + found.total
+    )
+}
 
 internal const val QUICK_SEARCH_MIN_CHARS = 2
 
@@ -709,18 +764,20 @@ internal class QuickSearchState(private val repository: WorkshopRepository) {
         loading = true
         try {
             val (dateFrom, dateTo) = filters.resolveDateRange()
-            val results = repository.search(
-                q = filters.query.trim().ifBlank { null },
-                craftId = filters.craftId.ifBlank { null },
-                place = filters.place.trim().ifBlank { null },
-                artisanId = filters.artisanId.ifBlank { null },
-                mediaType = filters.mediaType.ifBlank { null },
-                types = filters.bucketTypes(),
-                dateFrom = dateFrom,
-                dateTo = dateTo,
-                page = 1,
-                pageSize = limit
-            )
+            val results = searchWithCrafts(filters, filters.bucketTypes(), 1, limit, { p, s -> repository.searchCrafts(filters.query, p, s) }) { types ->
+                repository.search(
+                    q = filters.query.trim().ifBlank { null },
+                    craftId = filters.craftId.ifBlank { null },
+                    place = filters.place.trim().ifBlank { null },
+                    artisanId = filters.artisanId.ifBlank { null },
+                    mediaType = filters.mediaType.ifBlank { null },
+                    types = types,
+                    dateFrom = dateFrom,
+                    dateTo = dateTo,
+                    page = 1,
+                    pageSize = limit
+                )
+            }
             hits = results.toQuickHits(filters, limit)
             total = results.selectedTotal(filters)
             error = null
@@ -1034,7 +1091,6 @@ internal fun SearchFilterBar(
                     options = offeredTypes.map { SelectOption(it, SearchRecordTypes.label(it)) },
                     selected = value.types,
                     placeholder = "Every record type",
-                    bulk = false,
                     onSelectedChange = { next ->
                         onChange(value.copy(types = SearchRecordTypes.ALL.filter { it in next }.toSet()))
                     }

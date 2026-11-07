@@ -77,18 +77,20 @@ fun dataFolderArtisan(path: String): String? =
 internal fun quickSearchFetch(repository: WorkshopRepository, filters: SearchFilters): SearchPageFetch {
     val (dateFrom, dateTo) = filters.resolveDateRange()
     return { types, page, pageSize ->
-        repository.search(
-            q = filters.query.trim().ifBlank { null },
-            craftId = filters.craftId.ifBlank { null },
-            place = filters.place.trim().ifBlank { null },
-            artisanId = filters.artisanId.ifBlank { null },
-            mediaType = filters.mediaType.ifBlank { null },
-            types = types,
-            dateFrom = dateFrom,
-            dateTo = dateTo,
-            page = page,
-            pageSize = pageSize,
-        )
+        searchWithCrafts(filters, types, page, pageSize, { p, s -> repository.searchCrafts(filters.query, p, s) }) { recordTypes ->
+            repository.search(
+                q = filters.query.trim().ifBlank { null },
+                craftId = filters.craftId.ifBlank { null },
+                place = filters.place.trim().ifBlank { null },
+                artisanId = filters.artisanId.ifBlank { null },
+                mediaType = filters.mediaType.ifBlank { null },
+                types = recordTypes,
+                dateFrom = dateFrom,
+                dateTo = dateTo,
+                page = page,
+                pageSize = pageSize,
+            )
+        }
     }
 }
 

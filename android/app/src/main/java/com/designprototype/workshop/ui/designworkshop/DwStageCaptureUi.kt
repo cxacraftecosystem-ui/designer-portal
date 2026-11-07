@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Checkbox
+import com.designprototype.workshop.ui.FieldCheckbox
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -178,7 +178,7 @@ internal fun DwAttendanceCard(
                         },
                     ),
             ) {
-                Checkbox(checked = isPresent, onCheckedChange = null, enabled = enabled)
+                FieldCheckbox(checked = isPresent, onCheckedChange = null, enabled = enabled)
                 Text(dwDisplayText(values["name"]).ifBlank { "Unnamed" }, style = MaterialTheme.typography.bodyMedium)
             }
         }

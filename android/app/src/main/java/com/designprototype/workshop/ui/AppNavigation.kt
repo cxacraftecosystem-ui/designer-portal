@@ -60,6 +60,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 
@@ -298,6 +301,7 @@ fun AppNavigationDrawerContent(
         .map { group -> group to items.filter { it.group == group } }
         .filter { (_, entries) -> entries.isNotEmpty() }
     val isAdmin = FieldPermissions.isAdmin(user)
+    val largeText = LocalDensity.current.fontScale >= LARGE_TEXT_DRAWER_SCALE
 
     ModalDrawerSheet(
         modifier = Modifier
@@ -325,17 +329,24 @@ fun AppNavigationDrawerContent(
                     color = MaterialTheme.field.muted
                 )
             }
-            OutlinedButton(
-                onClick = onLogout,
-                colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-                    contentColor = MaterialTheme.colorScheme.error
-                ),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Logout", style = MaterialTheme.typography.labelLarge)
+            if (largeText) {
+                IconButton(onClick = onLogout, modifier = Modifier.testTag("nav.logout")) {
+                    Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Logout", tint = MaterialTheme.colorScheme.error)
+                }
+            } else {
+                OutlinedButton(
+                    onClick = onLogout,
+                    colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.testTag("nav.logout")
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Logout", style = MaterialTheme.typography.labelLarge)
+                }
             }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
@@ -344,6 +355,7 @@ fun AppNavigationDrawerContent(
             modifier = Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
+                .testTag("nav.list")
         ) {
             rootItems.forEach { entry ->
                 NavRow(entry, entry.destination == currentDestination, onNavigate, navBadge(entry, pendingAccessCount, awaitingInspectionCount, unreadNotifications))
@@ -421,9 +433,11 @@ private fun NavRow(
         icon = { Icon(entry.icon, contentDescription = null) },
         badge = badge?.let { count -> { Text(count, style = MaterialTheme.typography.labelLarge) } },
         onClick = { onNavigate(entry.destination) },
-        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding).testTag("nav.${entry.destination.name.lowercase()}")
     )
 }
+
+const val LARGE_TEXT_DRAWER_SCALE = 1.5f
 
 val LocalContentAdminChrome = staticCompositionLocalOf { false }
 

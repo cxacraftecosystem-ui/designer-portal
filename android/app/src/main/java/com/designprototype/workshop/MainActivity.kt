@@ -587,7 +587,7 @@ import kotlinx.coroutines.launch
 import coil3.compose.AsyncImage
 import retrofit2.HttpException
 import androidx.activity.compose.BackHandler
-import androidx.compose.material3.Checkbox
+import com.designprototype.workshop.ui.FieldCheckbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DrawerValue
@@ -1552,6 +1552,7 @@ private fun LoginScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .imePadding()
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.Center
     ) {
@@ -2575,6 +2576,7 @@ private fun HomeScreen(
             LocalAppNotice provides { showMessage(it) },
             LocalContentAdminChrome provides contentAdminChrome(user, adminView),
             LocalMayDelete provides canDelete,
+            com.designprototype.workshop.ui.LocalAudioExpand provides canDownloadDataset,
             LocalScreenMemory provides screenMemory,
         ) {
         ProvideCompletenessFocus((screen as? Screen.Edit)?.focus, key = screen) {
@@ -5581,7 +5583,7 @@ private fun ArtisanMultiSelectField(
                             .fillMaxWidth()
                             .clickable { onToggle(artisan.id) }
                     ) {
-                        Checkbox(checked = selectedIds.contains(artisan.id), onCheckedChange = { onToggle(artisan.id) })
+                        FieldCheckbox(checked = selectedIds.contains(artisan.id), onCheckedChange = { onToggle(artisan.id) })
                         Text("${artisan.name} · ${artisan.place}", color = Body, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
@@ -7018,7 +7020,6 @@ private fun CraftForm(
             selected = stateOfOrigin,
             placeholder = "Choose states",
             searchable = true,
-            bulk = false,
             onSelectedChange = { stateOfOrigin = it }
         )
         SearchableMultiSelectField(
@@ -7027,7 +7028,6 @@ private fun CraftForm(
             selected = stateOfPractice,
             placeholder = "Choose states",
             searchable = true,
-            bulk = false,
             onSelectedChange = { stateOfPractice = it }
         )
         DropdownField(
@@ -11208,13 +11208,16 @@ private fun ViewDataScreen(
         when {
             loadingList -> Text("Loading ${mode.label.lowercase()}…", color = Muted)
             mode == EntryMode.QUESTIONNAIRE -> {
-                ArtisanMultiSelectField(
-                    label = "Involved artisans",
-                    artisans = artisanFilterList,
-                    selectedIds = selectedArtisanIds
-                ) { id ->
-                    selectedArtisanIds = if (selectedArtisanIds.contains(id)) selectedArtisanIds - id else selectedArtisanIds + id
+                val artisanFilterOptions = remember(artisanFilterList) {
+                    artisanFilterList.map { artisan -> SelectOption(artisan.id, listOf(artisan.name, artisan.place).filter { it.isNotBlank() }.joinToString(" · ")) }
                 }
+                SearchableMultiSelectField(
+                    label = "Involved artisans",
+                    options = artisanFilterOptions,
+                    selected = selectedArtisanIds,
+                    placeholder = "Narrow the list to one or more artisans",
+                    emptyMessage = "No artisans yet. Create one first."
+                ) { next -> selectedArtisanIds = next }
                 val hasArtisan = selectedArtisanIds.isNotEmpty()
                 val secondaryOptions = listOf(COMPLETION_OPTION_ID to "▦ Check completion (all artisans)") +
                     (if (hasArtisan) questionnaireOptions else emptyList())
@@ -13215,7 +13218,8 @@ private fun AndroidSavedMediaPreview(
                 uri = uri,
                 mediaType = media.mediaType,
                 onSave = { saveMediaToDevice(context, readableUrl, media.originalFilename, media.mimeType) },
-                onDismiss = { showViewer = false }
+                onDismiss = { showViewer = false },
+                expand = com.designprototype.workshop.ui.AudioExpand(media.id, media.originalFilename).takeIf { media.mediaType.equals("AUDIO", ignoreCase = true) }
             )
         }
     }
