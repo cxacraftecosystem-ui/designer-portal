@@ -73,11 +73,17 @@ def test_the_download_predicate_still_narrows_below_professor(monkeypatch):
 
     monkeypatch.setattr(records, "_design_workshop_media_branches", _fake_branches)
 
+    async def _no_scoped_grants(user_id: str) -> tuple[set[str], dict[str, frozenset[str]]]:
+        return set(), {}
+
+    monkeypatch.setattr(records, "granted_scopes", _no_scoped_grants)
+
     record_where = asyncio.run(records.owned_or_granted_where(VOLUNTEER))
     assert record_where["OR"][0] == {"createdById": "u1"}
     assert record_where["OR"][1]["createdBy"]["is"]["dataAccessAsOwner"]["some"] == {
         "granteeId": "u1",
         "status": "GRANTED",
+        "allData": True,
     }
     assert len(record_where["OR"]) == 2
     assert calls == [], "the record variant paid for a workshop lookup it has no use for"

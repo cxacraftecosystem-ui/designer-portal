@@ -12,7 +12,9 @@ from app.core.deps import (
     enum_or_raw,
     get_value,
     is_admin,
+    is_master_admin,
     require_reviewer,
+    role_rank,
     values_match,
 )
 from app.schemas.common import APIModel, ReviewAction
@@ -258,6 +260,17 @@ async def list_pending_reviews(
     }
 
 
+ALREADY_DECIDED = "Someone has already reviewed this record. Reload it to see where it stands."
+
+
+async def _decided_above(reviewer: Any, record: Any) -> bool:
+    previous = get_value(record, "reviewedById")
+    if not previous or previous == get_value(reviewer, "id") or is_master_admin(reviewer):
+        return False
+    decider = await db.user.find_unique(where={"id": previous})
+    return decider is not None and role_rank(reviewer) < role_rank(decider)
+
+
 async def set_review_status(
     record_type: str,
     record_id: str,
@@ -275,6 +288,13 @@ async def set_review_status(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You can only review records created by people with a role below your own",
         )
+    from app.questionnaire import review as v2_review, shims_dr
+
+    v2_session = record_type.lower() == "questionnaire" and shims_dr.enabled() and bool(get_value(record, "clientKey"))
+    current_status = str(enum_or_raw(get_value(record, "status")))
+    reopened = v2_session and get_value(record, "pendingChangesAt") is not None
+    if current_status != "PENDING" and not reopened and await _decided_above(reviewer, record):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ALREADY_DECIDED)
     late = record_needs_admin_approval(record)
     if late and new_status == "APPROVED" and not is_admin(reviewer):
         raise HTTPException(
@@ -294,14 +314,14 @@ async def set_review_status(
         )
         notes = (payload.notes or "").strip()
         log_notes = f"{notes}\n\n{LATE_SUBMISSION_LOG_NOTE}" if notes else LATE_SUBMISSION_LOG_NOTE
-    from app.questionnaire import review as v2_review, shims_dr
-
-    v2_session = record_type.lower() == "questionnaire" and shims_dr.enabled() and bool(get_value(record, "clientKey"))
     if v2_session and new_status == "APPROVED":
         await v2_review.assert_may_approve(db, record_id)
         data["pendingChangesAt"] = None
     async with db.tx() as tx:
-        updated = await delegate_on(tx, record_type).update(where={"id": record_id}, data=data)
+        target = delegate_on(tx, record_type)
+        if not await target.update_many(where={"id": record_id, "status": current_status}, data=data):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ALREADY_DECIDED)
+        updated = await target.find_unique(where={"id": record_id})
         await tx.reviewlog.create(
             data={
                 "recordType": log_type,

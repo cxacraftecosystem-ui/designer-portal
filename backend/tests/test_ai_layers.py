@@ -809,6 +809,11 @@ def test_the_list_route_withholds_the_text_of_a_recording_this_caller_may_not_re
 
     monkeypatch.setattr(records_service, "_design_workshop_media_branches", _no_workshop_arm)
 
+    async def _no_scoped_grants(_user_id: str) -> tuple[set, dict]:
+        return set(), {}
+
+    monkeypatch.setattr(records_service, "granted_scopes", _no_scoped_grants)
+
     payload = asyncio.run(
         routes.list_ai_layers(
             "wsp_1",

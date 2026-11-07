@@ -256,7 +256,7 @@ async def test_merge_moves_responses_and_media_then_removes_the_source(env):
 
     media = {row["id"]: row for row in body["media"]}
     assert env["clip"].id in media, "the recording did not move onto the surviving interview"
-    assert media[env["clip"].id]["url"] == env["clip"].url
+    assert "X-Amz-Signature=" in media[env["clip"].id]["url"]
     assert media[env["clip"].id]["objectKey"] == env["clip"].objectKey
 
     assert "D Black Pottery" in body["title"]
@@ -279,7 +279,7 @@ async def test_detail_read_carries_media_urls_and_still_withholds_them_from_othe
     )
     assert mine.status_code == 200, mine.text
     uploader_view = {row["id"]: row for row in mine.json()["media"]}[env["clip"].id]
-    assert uploader_view["url"] == env["clip"].url
+    assert "X-Amz-Signature=" in uploader_view["url"]
 
     theirs = env["client"].get(
         f"/api/questionnaire/interviews/{target_id}", headers=_auth(env, "stranger")

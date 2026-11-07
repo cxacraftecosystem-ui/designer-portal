@@ -29,7 +29,7 @@ _AADHAAR_RESULT_KEYS = (
 
 _IDENTITY_KEYS = ("aadhaarNumber", "pehchanCardNumber")
 
-_MEDIA_URL_KEYS = ("url", "publicUrl", "objectKey")
+_MEDIA_URL_KEYS = ("url", "publicUrl", "objectKey", "cleanedObjectKey")
 
 _TRANSCRIPT_KEYS = ("transcriptText", "transcriptSummary")
 
@@ -46,15 +46,27 @@ _MEDIA_MARKER = "objectKey"
 class TranscriptScope(NamedTuple):
     owners: frozenset[str]
     workshops: frozenset[str]
+    scoped: tuple[tuple[str, frozenset[str]], ...] = ()
 
     def sql(self, alias: str, bind: Any) -> str:
         owners = bind(sorted(self.owners))
         workshops = bind(sorted(self.workshops))
         tag = bind(MEDIA_TAG)
-        return (
-            f'({alias}."uploadedById" = ANY({owners}::text[]) OR ({alias}."linkedRecordType" = {tag} '
-            f'AND {alias}."linkedRecordId" = ANY({workshops}::text[])))'
-        )
+        parts = [
+            f'{alias}."uploadedById" = ANY({owners}::text[])',
+            f'({alias}."linkedRecordType" = {tag} AND {alias}."linkedRecordId" = ANY({workshops}::text[]))',
+        ]
+        for owner, ids in self.scoped:
+            if not ids:
+                continue
+            who = bind(owner)
+            covered = bind(sorted(ids))
+            columns = [f'{alias}."{key}" = ANY({covered}::text[])' for key in _MEDIA_SCOPE_FKS]
+            columns.append(
+                f'({alias}."linkedRecordType" IS NOT NULL AND {alias}."linkedRecordId" = ANY({covered}::text[]))'
+            )
+            parts.append(f'({alias}."uploadedById" = {who} AND ({" OR ".join(columns)}))')
+        return "(" + " OR ".join(parts) + ")"
 
 
 def _field(node: Any, name: str) -> Any:
@@ -64,19 +76,13 @@ def _field(node: Any, name: str) -> Any:
 
 
 def media_withheld(node: Any, media_urls: Any, media_workshops: frozenset[str] = frozenset()) -> bool:
-    if media_urls is None:
-        return False
-    if _field(node, "uploadedById") in media_urls:
-        return False
-    return not (
-        _field(node, "linkedRecordType") == MEDIA_TAG and _field(node, "linkedRecordId") in media_workshops
-    )
+    return not media_url_allows(media_urls, node, media_workshops)
 
 
 def transcript_withheld(node: Any, scope: TranscriptScope | None) -> bool:
     if scope is None:
         return False
-    return media_withheld(node, scope.owners, scope.workshops)
+    return media_withheld(node, MediaUrlOwners(scope.owners, dict(scope.scoped)), scope.workshops)
 
 
 def _strip_withheld_media(node: dict[str, Any]) -> None:
@@ -239,6 +245,10 @@ def _redact_sensitive(
             (dict, list),
         ):
             aadhaar_fingerprint.public_view(value)
+        if "joinCode" in value and not unmasked and not (viewer_id and value.get("createdById") == viewer_id):
+            value["joinCode"] = None
+            if "clientKey" in value:
+                value["clientKey"] = None
         if not unmasked and not (viewer_id and value.get("createdById") == viewer_id):
             for key in _IDENTITY_KEYS:
                 if key in value:
@@ -336,11 +346,12 @@ async def transcript_scope(viewer: Any) -> TranscriptScope | None:
     media_urls, media_workshops = await media_url_scope(viewer)
     if media_urls is ALL_MEDIA_URLS:
         return None
-    return TranscriptScope(frozenset(media_urls), frozenset(media_workshops))
+    scoped = tuple(sorted((owner, frozenset(ids)) for owner, ids in getattr(media_urls, "scoped", {}).items()))
+    return TranscriptScope(frozenset(media_urls), frozenset(media_workshops), scoped)
 
 
 async def transcript_readable_ids(rows: Sequence[Any], viewer: Any) -> set[str]:
-    rows = [row for row in rows if _field(row, "id")]
+    rows = [row for row in rows if _field(row, "id") and _field(row, "removedAt") is None]
     if not rows:
         return set()
     scope = await transcript_scope(viewer)
@@ -348,7 +359,6 @@ async def transcript_readable_ids(rows: Sequence[Any], viewer: Any) -> set[str]:
 
 
 async def media_url_owners(viewer: Any) -> set[str] | None:
-    from app.core.db import db
     from app.core.deps import get_value, has_rank
 
     if has_rank(viewer, "PROFESSOR"):
@@ -356,8 +366,69 @@ async def media_url_owners(viewer: Any) -> set[str] | None:
     viewer_id = get_value(viewer, "id")
     if not viewer_id:
         return set()
-    grants = await db.dataaccessgrant.find_many(where={"granteeId": viewer_id, "status": "GRANTED"})
-    return {viewer_id, *(grant.ownerId for grant in grants)}
+    full, scoped = await granted_scopes(viewer_id)
+    return MediaUrlOwners({viewer_id, *full}, scoped)
+
+
+class MediaUrlOwners(set):
+    def __init__(self, owners: Any = (), scoped: dict[str, frozenset[str]] | None = None) -> None:
+        super().__init__(owners)
+        self.scoped: dict[str, frozenset[str]] = dict(scoped or {})
+
+
+_MEDIA_SCOPE_FKS = ("artisanId", "productId", "toolId", "workshopId", "questionnaireInterviewId")
+
+
+def media_scope_ids(node: Any) -> set[str]:
+    read = node.get if isinstance(node, dict) else lambda key: getattr(node, key, None)
+    ids = {str(read(key)) for key in _MEDIA_SCOPE_FKS if read(key)}
+    if read("linkedRecordType") and read("linkedRecordId"):
+        ids.add(str(read("linkedRecordId")))
+    return ids
+
+
+def media_url_allows(
+    media_urls: set[str] | None, node: Any, media_workshops: frozenset[str] = frozenset()
+) -> bool:
+    if media_urls is None:
+        return True
+    read = node.get if isinstance(node, dict) else lambda key: getattr(node, key, None)
+    uploader = read("uploadedById")
+    if uploader in media_urls:
+        return True
+    if read("linkedRecordType") == MEDIA_TAG and read("linkedRecordId") in media_workshops:
+        return True
+    covered = getattr(media_urls, "scoped", {}).get(uploader)
+    return bool(covered) and not media_scope_ids(node).isdisjoint(covered)
+
+
+async def granted_scopes(grantee_id: str) -> tuple[set[str], dict[str, frozenset[str]]]:
+    from app.core.db import db
+
+    grants = await db.dataaccessgrant.find_many(
+        where={"granteeId": grantee_id, "status": "GRANTED"}, include={"scopeItems": True}
+    )
+    full: set[str] = set()
+    scoped: dict[str, set[str]] = {}
+    products: dict[str, set[str]] = {}
+    for grant in grants:
+        if grant.allData:
+            full.add(grant.ownerId)
+            continue
+        ids = scoped.setdefault(grant.ownerId, set())
+        for item in grant.scopeItems or []:
+            ids.add(item.recordId)
+            if str(item.recordType).lower() == "product":
+                products.setdefault(item.recordId, set()).add(grant.ownerId)
+    if products:
+        processes = await db.process.find_many(
+            where={"productId": {"in": sorted(products)}}, include={"steps": True}
+        )
+        for process in processes:
+            for owner in products.get(process.productId, ()):
+                scoped[owner].add(process.id)
+                scoped[owner].update(step.id for step in process.steps or [])
+    return full, {owner: frozenset(ids) for owner, ids in scoped.items() if owner not in full and ids}
 
 
 def to_json(value: Any) -> Any:
@@ -527,10 +598,24 @@ async def owned_or_granted_where(user: Any, owner_field: str = "createdById") ->
         {owner_field: uid},
         {
             owner_relation: {
-                "is": {"dataAccessAsOwner": {"some": {"granteeId": uid, "status": "GRANTED"}}}
+                "is": {
+                    "dataAccessAsOwner": {
+                        "some": {"granteeId": uid, "status": "GRANTED", "allData": True}
+                    }
+                }
             }
         },
     ]
+    _full, scoped = await granted_scopes(uid) if uid else (set(), {})
+    for owner, ids in scoped.items():
+        covered = sorted(ids)
+        if owner_field == "uploadedById":
+            branches.append({"AND": [{owner_field: owner}, {"OR": [
+                *({key: {"in": covered}} for key in _MEDIA_SCOPE_FKS),
+                {"linkedRecordId": {"in": covered}},
+            ]}]})
+        else:
+            branches.append({"AND": [{owner_field: owner}, {"id": {"in": covered}}]})
     if owner_field == "uploadedById":
         branches.extend(await _design_workshop_media_branches(uid))
     return {"OR": branches}

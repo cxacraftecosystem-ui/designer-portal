@@ -25,6 +25,16 @@ function decodeMaybe(value: string): string {
   }
 }
 
+const SAFE_DOWNLOAD_PROTOCOLS = new Set(["http:", "https:", "blob:"]);
+
+export function isSafeDownloadUrl(url: string): boolean {
+  try {
+    return SAFE_DOWNLOAD_PROTOCOLS.has(new URL(url.trim(), "https://portal.invalid").protocol);
+  } catch {
+    return false;
+  }
+}
+
 export function saveBlobToDisk(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");

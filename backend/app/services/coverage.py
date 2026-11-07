@@ -11,6 +11,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from app.questionnaire.live import live_media_where
 from app.scale.replica import read_via_replica
 from app.services import cross_portal_codes, lgd
 from app.services.concurrency import gather_reads
@@ -941,6 +942,8 @@ async def read_corpus(client: Any, user: Any) -> Corpus:
     from app.services import annual_plan, ministry_dashboard
 
     wheres = await build_record_wheres(user)
+    if "media" in wheres:
+        wheres["media"] = live_media_where(wheres["media"])
     dw_where = design_workshop_where({})
     scope = ministry_dashboard.scope_clause(user)
     if scope is not None:

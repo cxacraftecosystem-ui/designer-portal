@@ -127,11 +127,6 @@ terraform {
   # it must never be readable by anything but an operator. Two things could reach
   # this prefix, and the answer is different for each:
   #
-  #   1. THE ANONYMOUS GRANT. `aws_s3_bucket_policy.media_public_read` below
-  #      allows `s3:GetObject` to `Principal = "*"` on `${bucket}/media/*` AND
-  #      NOTHING ELSE, so `tfstate/` and `backups/` fall outside it. IF THAT
-  #      POLICY IS EVER WIDENED TO `/*`, THIS STATE FILE AND EVERY DATABASE
-  #      BACKUP BECOME WORLD-READABLE. Do not widen it.
   #   2. THE API'S OWN CREDENTIAL — the one that lives on an internet-facing box.
   #      This paragraph used to stop at (1), and that was the gap: until
   #      2026-09-03 `aws_iam_user_policy.media` allowed Put/Get/DeleteObject on
@@ -255,24 +250,21 @@ resource "aws_s3_bucket_public_access_block" "media" {
   bucket                  = aws_s3_bucket.media.id
   block_public_acls       = true
   ignore_public_acls      = true
-  block_public_policy     = false
-  restrict_public_buckets = false
+  block_public_policy     = true
+  restrict_public_buckets = true
 }
 
-# Public read for objects under media/ only; uploads stay private (presigned PUT).
-resource "aws_s3_bucket_policy" "media_public_read" {
+moved {
+  from = aws_s3_bucket_policy.media_public_read
+  to   = aws_s3_bucket_policy.media
+}
+
+resource "aws_s3_bucket_policy" "media" {
   bucket     = aws_s3_bucket.media.id
   depends_on = [aws_s3_bucket_public_access_block.media]
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      {
-        Sid       = "PublicReadMedia"
-        Effect    = "Allow"
-        Principal = "*"
-        Action    = "s3:GetObject"
-        Resource  = "${aws_s3_bucket.media.arn}/media/*"
-      },
       # Added 2026-10-17. The API's key holds no grant on backups/ or tfstate/ (see
       # aws_iam_user_policy.media); this deny keeps it that way even if somebody
       # widens that policy later. The backup job runs as aws_iam_user.backup_writer.
@@ -418,6 +410,19 @@ resource "aws_s3_bucket_lifecycle_configuration" "media" {
   }
 
   rule {
+    id     = "abort-abandoned-media-uploads"
+    status = "Enabled"
+
+    filter {
+      prefix = "media/"
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 2
+    }
+  }
+
+  rule {
     id     = "noncurrent-versions"
     status = "Enabled"
     filter {}
@@ -530,9 +535,6 @@ resource "aws_iam_user" "media" {
 # `report-deliveries/<workshop>/<stamp>-<random>/<file>` (`backend/app/services/report_delivery.py`,
 # `storage_key_for`); the office opens it through a five-minute presigned GET. So `PutObject` and
 # `GetObject` and nothing else: no delete (the file is the record of what was sent) and no list.
-# It is deliberately NOT under `media/`, because `PublicReadMedia` makes everything there
-# world-readable, and an approved report names the artisans in it. Without this statement every
-# hand-on answered 503 ("storage refused") in production, where this key may write `media/*` only.
 #
 # NOTHING HERE NAMES `tfstate/`, AND NOTHING MAY. Terraform runs under a human operator's own
 # credentials, never under this user. The state holds `aws_iam_access_key.media`'s secret in
@@ -560,7 +562,7 @@ resource "aws_iam_user_policy" "media" {
       },
       # The Ministry's monthly export packs: the queue worker writes them, and the API HEADs and
       # presigns them for a five-minute download. Put and Get only — expiry is the lifecycle rule
-      # `expire-ministry-exports`, so the key needs no delete. NOT under media/ (public-read below)
+      # `expire-ministry-exports`, so the key needs no delete.
       # and NOT under backups/ (put-only), which is why the prefix is its own.
       {
         Sid    = "AppMinistryExports"

@@ -26,5 +26,4 @@ def test_terraform_grants_put_and_get_on_that_prefix_only() -> None:
     assert '"${aws_s3_bucket.media.arn}/report-deliveries/*"' in body
     assert '"s3:PutObject"' in body and '"s3:GetObject"' in body
     assert "DeleteObject" not in body and "ListBucket" not in body
-    public = _statement(text, "PublicReadMedia")
-    assert "report-deliveries" not in public
+    assert "PublicReadMedia" not in text
