@@ -297,9 +297,17 @@ async def unified_search(
     dateTo: datetime | None = None,
     workshopIds: list[str] | None = Query(None),
     artisanIds: list[str] | None = Query(None),
+    sort: str | None = Query(None, max_length=40),
 ) -> dict[str, Any]:
     settings = _unified_settings_or_404()
     text = _clean_query(q)
+    try:
+        chosen = search_query.parse_sort(sort if isinstance(sort, str) else None)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Sort by relevance:desc, name:asc, name:desc, recorded:asc or recorded:desc.",
+        ) from None
     try:
         asked = us.parse_types([type] if type else types)
     except ValueError as exc:
@@ -339,7 +347,9 @@ async def unified_search(
         qvec = None
         if await search_embeddings.available(settings):
             qvec = await search_embeddings.embed_query(text, settings=settings)
-        return await search_query.run(text, local_scope, limit=limit, offset=offset, qvec=qvec)
+        return await search_query.run(
+            text, local_scope, limit=limit, offset=offset, qvec=qvec, sort=chosen
+        )
 
     async def _remote() -> tuple[str, dict[str, Any]]:
         if remote_status != us.STATUS_OK:
@@ -358,6 +368,7 @@ async def unified_search(
                 "dateFrom": dateFrom.isoformat() if dateFrom else None,
                 "dateTo": dateTo.isoformat() if dateTo else None,
             },
+            sort=None if chosen == search_query.DEFAULT_SORT else search_query.sort_text(chosen),
         )
 
     local, (remote_status, peer) = await asyncio.gather(_local(), _remote())
@@ -369,6 +380,7 @@ async def unified_search(
         peer.get("groups") or [],
         limit=limit * 2,
         links=links,
+        sort=chosen,
     )
     await mark_locatable(current_user, groups)
     suggestion = None if any(g["items"] for g in groups) else await search_query.did_you_mean(text)
@@ -391,6 +403,8 @@ async def unified_search(
         "typesRefused": refused,
         "page": page,
         "limit": limit,
+        "sort": {"key": chosen[0], "dir": chosen[1]},
+        "sorts": list(search_query.SORT_KEYS),
         **({"type": type} if type else {}),
     }
 
