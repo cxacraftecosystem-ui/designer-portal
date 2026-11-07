@@ -671,8 +671,13 @@ async def complete_media_upload(
 
     check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     await assert_may_file_under(data.get("designWorkshopId"), current_user)
-    if str(data.get("linkedRecordType") or "").strip().lower() == MEDIA_TAG.lower():
-        await assert_may_file_under(data.get("linkedRecordId"), current_user)
+    tagged_workshop = (
+        data.get("linkedRecordId")
+        if str(data.get("linkedRecordType") or "").strip().lower() == MEDIA_TAG.lower()
+        else None
+    )
+    if tagged_workshop and await db.designworkshop.find_unique(where={"id": tagged_workshop}):
+        await assert_may_file_under(tagged_workshop, current_user)
     stamp_workshop_submission(data, check=check)
     data.setdefault("status", "PENDING")
     pin_pending_if_late(data, current_user, check=check)

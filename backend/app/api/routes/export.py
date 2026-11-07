@@ -19,7 +19,6 @@ from app.core.deps import (
     can_view_design_workshop_data,
     get_current_user,
 )
-from app.questionnaire.live import live_session_where
 from app.services import answer_drafts, design_workshop_data as dw, naming
 from app.services.access import owner_download_scope
 from app.services.concurrency import gather_reads
@@ -172,7 +171,7 @@ async def dataset_manifest(
             where=rec_where, take=EXPORT_TAKE, include=_TOOL_INCLUDE, order=_EXPORT_ORDER
         ),
         db.questionnaireinterview.find_many(
-            where=live_session_where(rec_where), take=EXPORT_TAKE, include=_INTERVIEW_INCLUDE, order=_EXPORT_ORDER
+            where={"AND": [rec_where, {"deletedAt": None}]}, take=EXPORT_TAKE, include=_INTERVIEW_INCLUDE, order=_EXPORT_ORDER
         ),
         db.process.find_many(
             where=rec_where, take=EXPORT_TAKE, include=_PROCESS_INCLUDE, order=_EXPORT_ORDER

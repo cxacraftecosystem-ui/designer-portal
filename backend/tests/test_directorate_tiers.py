@@ -289,7 +289,11 @@ def test_a_directorate_tiers_own_fieldwork_enters_the_archive_approved(tier: str
     assert records.apply_status_policy_create(_user("INSPECTOR"), {}) == {"status": "PENDING"}
 
 
-async def test_a_directorate_tier_takes_every_row_out_and_reading_was_never_the_gate() -> None:
+async def test_a_directorate_tier_takes_every_row_out_and_reading_was_never_the_gate(monkeypatch) -> None:
+    async def _no_scoped_grants(_user_id: str) -> tuple[set, dict]:
+        return set(), {}
+
+    monkeypatch.setattr(records, "granted_scopes", _no_scoped_grants)
     for tier in DIRECTORATE:
         assert await records.owned_or_granted_where(_user(tier)) == {}, (
             f"{tier} no longer takes every row out in an export"

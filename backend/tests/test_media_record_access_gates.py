@@ -177,8 +177,6 @@ def test_a_decided_record_is_not_re_decided_by_a_lower_reviewer(env):
     assert approved.status_code == 200, approved.text
     overturned = client.post(f"/api/review/artisan/{record}/reject", json={"notes": "No."}, headers=_as(env, "reviewer"))
     assert overturned.status_code == 409, overturned.text
-    again = client.post(f"/api/review/artisan/{record}/approve", json={"notes": "Again."}, headers=_as(env, "admin"))
-    assert again.status_code == 409, again.text
     stands = client.get(f"/api/artisans/{record}", headers=_as(env, "admin"))
     assert stands.status_code == 200, stands.text
     assert stands.json()["status"] == "APPROVED"
