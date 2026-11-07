@@ -1273,7 +1273,7 @@ def _post_gemini_caption(
     model: str | None = None,
 ) -> dict[str, Any]:
     keys = [api_key] if api_key else managed_secrets.gemini_key_pool()
-    caption_model = model or settings.gemini_measurement_model
+    caption_model = model or settings.gemini_caption_model
     if not keys:
         raise RuntimeError("No Gemini API key configured")
     body = {

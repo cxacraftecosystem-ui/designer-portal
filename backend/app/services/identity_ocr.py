@@ -373,7 +373,7 @@ def _gemini_ocr(content: bytes, mime_type: str, timeout: float) -> dict[str, Any
         ],
         "generationConfig": {"responseMimeType": "application/json", "temperature": 0.0},
     }
-    model = get_settings().gemini_measurement_model
+    model = get_settings().gemini_caption_model
     model, response = post_gemini(
         requests.post,
         model,
