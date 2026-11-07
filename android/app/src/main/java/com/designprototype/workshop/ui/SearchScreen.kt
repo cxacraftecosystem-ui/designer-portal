@@ -91,6 +91,8 @@ object SearchRecordTypes {
 
     const val DESIGN_WORKSHOP = "designWorkshop"
 
+    const val CLUSTER = "cluster"
+
     val ALL: List<String> = listOf(ARTISAN, WORKSHOP, PRODUCT, TOOL, MEDIA, DESIGN_WORKSHOP)
 
     fun label(recordType: String): String = when (recordType) {

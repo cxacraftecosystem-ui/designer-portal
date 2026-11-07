@@ -140,8 +140,19 @@ private val LOCATE_TYPES = mapOf(
     "tools" to "tool", "processes" to "process", "reports" to "designWorkshop",
 )
 
+internal enum class DataSearchOpen { LOCATE, CLUSTER, REMOTE }
+
 internal object DataSearchRules {
+    const val CLUSTERS = "clusters"
+
     fun locateType(type: String): String? = LOCATE_TYPES[type]
+
+    fun openOf(type: String, local: Boolean): DataSearchOpen? = when {
+        !local -> DataSearchOpen.REMOTE
+        type == CLUSTERS -> DataSearchOpen.CLUSTER
+        type in LOCATE_TYPES -> DataSearchOpen.LOCATE
+        else -> null
+    }
 
     fun label(type: String, server: String?): String = TYPE_LABELS[type] ?: server?.ifBlank { null } ?: type
 
@@ -224,6 +235,7 @@ internal fun DataUnifiedSearch(
     onPlay: (mediaId: String, title: String, mediaType: String?, startSeconds: Double) -> Unit,
     onOpenRemote: ((type: String, id: String) -> Unit)?,
     onClose: () -> Unit,
+    onOpenCluster: ((name: String) -> Unit)? = null,
 ) {
     var query by rememberSaveable { mutableStateOf(initial) }
     var scope by rememberSaveable { mutableStateOf("local") }
@@ -383,7 +395,7 @@ internal fun DataUnifiedSearch(
                                     }
                                 }
                                 items(shown, key = DataSearchRules::key) { item ->
-                                    ResultCard(item, scope == "all", onOpenInData, onPlay, onOpenRemote)
+                                    ResultCard(item, scope == "all", onOpenInData, onPlay, onOpenRemote, onOpenCluster)
                                 }
                                 if (shown.size < g.total) {
                                     item("all.${g.type}") {
@@ -395,7 +407,7 @@ internal fun DataUnifiedSearch(
                             }
                         } else {
                             items(now.items, key = DataSearchRules::key) { item ->
-                                ResultCard(item, scope == "all", onOpenInData, onPlay, onOpenRemote)
+                                ResultCard(item, scope == "all", onOpenInData, onPlay, onOpenRemote, onOpenCluster)
                             }
                         }
                         if (now.more) {
@@ -504,12 +516,17 @@ private fun ResultCard(
     onOpenInData: (type: String, id: String, title: String) -> Unit,
     onPlay: (mediaId: String, title: String, mediaType: String?, startSeconds: Double) -> Unit,
     onOpenRemote: ((type: String, id: String) -> Unit)?,
+    onOpenCluster: ((name: String) -> Unit)?,
 ) {
     val also = DataSearchRules.alsoIn(item)
     val (markBg, markFg) = explorerMark()
     val start = if (item.type == "transcripts") DataSearchRules.startSeconds(item) else null
     val locate = DataSearchRules.locateType(item.type)
-    val openLocal: (() -> Unit)? = if (item.local && locate != null) ({ onOpenInData(locate, DataSearchRules.openId(item), item.title) }) else null
+    val openLocal: (() -> Unit)? = when (DataSearchRules.openOf(item.type, item.local)) {
+        DataSearchOpen.LOCATE -> locate?.let { kind -> { onOpenInData(kind, DataSearchRules.openId(item), item.title) } }
+        DataSearchOpen.CLUSTER -> onOpenCluster?.let { open -> { open(item.title.ifBlank { item.id }) } }
+        else -> null
+    }
     val openRemote: (() -> Unit)? = if (!item.local && onOpenRemote != null) ({ onOpenRemote(item.type, item.id) }) else null
     val tap = if (item.type == "transcripts") null else openLocal ?: openRemote
     Column(

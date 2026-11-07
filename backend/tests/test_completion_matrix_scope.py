@@ -208,3 +208,25 @@ def test_a_clip_whose_filename_leads_with_the_section_code_still_counts(env):
 
 def test_the_scoped_and_unscoped_matrices_agree_cell_for_cell(env):
     assert _derived_sections(env) == _derived_sections(env, artisan_id=env["artisan_id"])
+
+
+def test_an_artisan_outside_the_selected_workshops_gets_a_matrix_without_rows(env):
+    response = env["client"].get(
+        "/api/questionnaire/completion",
+        params={"artisanId": env["artisan_id"], "workshopIds": f"absent-{uuid.uuid4().hex}"},
+        headers=env["auth"],
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["artisans"] == []
+    assert body["cells"] == []
+    assert body["sections"]
+
+
+def test_an_artisan_that_does_not_exist_is_still_not_found(env):
+    response = env["client"].get(
+        "/api/questionnaire/completion",
+        params={"artisanId": f"absent-{uuid.uuid4().hex}"},
+        headers=env["auth"],
+    )
+    assert response.status_code == 404, response.text
