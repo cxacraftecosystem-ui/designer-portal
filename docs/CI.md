@@ -115,9 +115,9 @@ Three properties of that wait are worth knowing before you rely on it:
 
 * **It waits on three named jobs, not on the whole run** — `Backend tests`, `Web typecheck, lint and
   unit specs` and `Docs check`, spelled as a JSON list in each workflow's `GATING_JOBS`. That is
-  deliberate: `Backend integration tests` (§1's table below) is advisory, is the slowest job in the
-  file, and has no measured wall clock yet, so waiting on the whole run would let it gate a deploy by
-  timing out. Adding a job to `checks.yml` does **not** add it to the gate; adding its name to
+  deliberate: `Backend integration tests` (§1's table below) is advisory and was the slowest job in
+  the file (about 13 minutes until 0.0.15 split it into three shards, §1.7), so waiting on the whole
+  run would let it gate a deploy by timing out. Adding a job to `checks.yml` does **not** add it to the gate; adding its name to
   `GATING_JOBS` in both deploy workflows does.
 * **`workflow_dispatch` skips the wait, and that is the documented emergency override.** Running
   either deploy from the Actions tab ships without polling. The timeout message says so out loud, so
@@ -132,7 +132,7 @@ Three properties of that wait are worth knowing before you rely on it:
 | 1 | Deploy backend to EC2 | `.github/workflows/deploy-backend.yml` | `push` to `main` | `wait-for-checks` (§1.1) → rsync into `releases/<sha>-<run_id>.<attempt>` (per deploy ATTEMPT, so a re-run never writes into the tree that is serving) → write that release's `.env` → ship the venv the runner built from `requirements.lock`, Prisma client inside, at the box's own paths (the box runs no `pip`) → `backend/deploy/blue_green.sh release`: `prisma migrate deploy` with the live API still serving → start the release on the idle loopback port → poll its `/health` (ten minutes) → **switch nginx** → stop the old port, **flip the `current` symlink**, restart `fieldrepo-queue`. See §1.2 for the release layout and the rollback command. |
 | 2 | Deploy frontend to Vercel | `.github/workflows/deploy-frontend.yml` | `workflow_run` on **1** completing | gate → `wait-for-checks` (§1.1, and it runs exactly where **1**'s copy could not) → `vercel pull` → **assert the pulled env carries what the app needs** (and, since 2026-10-09, *warn* when the project's Node.js Version differs from the build's major or the pulled env holds a database credential) → `vercel build --prod` → **assert those values actually reached the bundle** → `vercel deploy --prebuilt --prod` → `vercel alias set` onto the production alias → smoke-check the alias → **assert the bundle the CDN serves is the one that was verified** |
 | 3 | Android build | `.github/workflows/android-build.yml` | `workflow_run` on **2** completing, plus `pull_request` | JDK 25 → `compileDebugKotlin` → `testDebugUnitTest` plus the four `:core-*` engine suites → `lintDebug` (advisory) → `assembleDebug` → upload APK |
-| — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately** | Independent jobs. The three that gate: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). **`Backend integration tests` is deliberately advisory** — a `pgvector/pgvector:pg17` service container (production's major), `prisma migrate deploy`, then the *whole* suite with a loopback DSN so the database-backed modules that skip in job 1 actually run. Its last step asserts that `conftest` reported a local database, because a job that silently ran the same DB-less suite would prove nothing while looking green. It is not in `GATING_JOBS` and must not be added to branch protection until somebody has watched a few runs and knows what it costs. The other ten are just as red when they fail and just as outside `GATING_JOBS`: `Map coverage view in a browser`, `Questionnaire screens in a browser`, `Transcript viewer in a browser` and `Back to the list in a browser` (Playwright specs for that screen in Chromium), `Questionnaire client against a real stack` (the web questionnaire client against a migrated database and the API on the runner), `Container and manifest packaging` (the manifest tree and compose profiles [DOCKER.md](DOCKER.md) describes), `Questionnaire parity (both portals)` (the shared manifests and `shared/questionnaire-features.json` against a checkout of documentation-portal), `Questionnaire unify migration` (the unify backfill on an empty Postgres), `Deploy scripts` (shellcheck, `backend/deploy/test_blue_green.sh` against stubs, `scripts/ci/test_backup_freshness.sh` against fixed clocks, `scripts/ci/test_peer_checkout.sh` against a local peer that pushes late, moves on or differs, and `scripts/ci/test_await_backend_release.sh` against stubbed deploy runs and `/health`), `Shared-file manifests` (`scripts/sync_data_report.py --check` and `scripts/sync_questionnaire.py --check`, the same verdict a local run gives) and `Comment stripper` (`scripts/tools/strip_comments.py`: its self-test, a stripped copy that still parses, then `--check`, which fails when any comment is left in code; 0.0.10. Since 0.0.12 a quoted heredoc that feeds a shell, such as `ssh host 'bash -s' <<'REMOTE'` or a `cat <<'REMOTE'` group piped into one, is read as shell code, so its comments are stripped and checked too, while shebangs, `shellcheck` directives, unquoted heredocs and data heredocs stay; `scripts/tools/verify_strip_workflows.py` then runs `bash -n` over every POSIX `run:` script and every such heredoc body, committed and stripped). |
+| — | Checks | `.github/workflows/checks.yml` | **every** `pull_request`, `push` to `main`, `workflow_dispatch` — **no `paths:` filter, deliberately**; since 0.0.15 a first `Changed areas` job lets a pull request that touches only `android/` skip the database suites and the browser jobs, never the three that gate (§1.7) | Independent jobs. The three that gate: `Backend tests` (whole pytest suite, DSN `ci.invalid` so the database-backed modules skip — and, despite the job's name, a last step that runs `ruff check .` over `backend/` and can fail the build on its own; the dated baseline in `backend/pyproject.toml` is what keeps it green), `Web typecheck, lint and unit specs` (`tsc --noEmit`, `eslint . --max-warnings=0`, `npm run test:unit`), `Docs check` (`node docs/tools/check-docs.mjs`). **`Backend integration tests` is deliberately advisory** — a `pgvector/pgvector:pg17` service container (production's major), `prisma migrate deploy`, then the *whole* suite with a loopback DSN so the database-backed modules that skip in job 1 actually run, split since 0.0.15 into three shards by test file (`Backend integration tests (1 of 3)` to `(3 of 3)`, §1.7). Each shard's last step asserts that `conftest` reported a local database, because a job that silently ran the same DB-less suite would prove nothing while looking green. It is not in `GATING_JOBS` and must not be added to branch protection until somebody has watched a few runs and knows what it costs. `Failing-first proofs` (0.0.15, §1.7) is advisory in the same way. The other ten are just as red when they fail and just as outside `GATING_JOBS`: `Map coverage view in a browser`, `Questionnaire screens in a browser`, `Transcript viewer in a browser` and `Back to the list in a browser` (Playwright specs for that screen in Chromium), `Questionnaire client against a real stack` (the web questionnaire client against a migrated database and the API on the runner), `Container and manifest packaging` (the manifest tree and compose profiles [DOCKER.md](DOCKER.md) describes), `Questionnaire parity (both portals)` (the shared manifests and `shared/questionnaire-features.json` against a checkout of documentation-portal), `Questionnaire unify migration` (the unify backfill on an empty Postgres), `Deploy scripts` (shellcheck, `backend/deploy/test_blue_green.sh` against stubs, `scripts/ci/test_backup_freshness.sh` against fixed clocks, `scripts/ci/test_peer_checkout.sh` against a local peer that pushes late, moves on or differs, and `scripts/ci/test_await_backend_release.sh` against stubbed deploy runs and `/health`), `Shared-file manifests` (`scripts/sync_data_report.py --check` and `scripts/sync_questionnaire.py --check`, the same verdict a local run gives) and `Comment stripper` (`scripts/tools/strip_comments.py`: its self-test, a stripped copy that still parses, then `--check`, which fails when any comment is left in code; 0.0.10. Since 0.0.12 a quoted heredoc that feeds a shell, such as `ssh host 'bash -s' <<'REMOTE'` or a `cat <<'REMOTE'` group piped into one, is read as shell code, so its comments are stripped and checked too, while shebangs, `shellcheck` directives, unquoted heredocs and data heredocs stay; `scripts/tools/verify_strip_workflows.py` then runs `bash -n` over every POSIX `run:` script and every such heredoc body, committed and stripped). |
 
 **The other ten workflows in this repository.** Naming them rather than counting them is the rule
 this document learned the hard way (§5); at 0.0.11 (2026-11-04) there are **fourteen files** under
@@ -254,7 +254,9 @@ the diagram above is still *any outcome*, so a red stage 2 does not stop the And
 | **Checks red** | **refuses to deploy** *if `backend/` was touched* — its wait is scoped to that, so a push that changed no backend file skips the wait and deploys | **refuses to deploy**, whatever changed | still runs — `android-build.yml` chains on `workflow_run` with **no conclusion filter**, deliberately | ❌ red |
 
 The Checks column has no "skipped" cell and that is the design: it has no `paths:` filter, because a
-filter is exactly how `android-build.yml` ended up unreachable from a backend pull request. It also
+filter is exactly how `android-build.yml` ended up unreachable from a backend pull request. (On a
+**pull request** that touches only `android/`, some advisory Checks jobs skip since 0.0.15; the
+workflow still starts and the three gating jobs still run. Pushes to `main` run everything. §1.7.) It also
 runs on **pull requests with no path filter at all**, which is the gap it was written for. Stages 1
 and 2 have no `pull_request` trigger whatever; stage 3 does, but filtered to `android/**` and its own
 workflow file — **so before `checks.yml` a pull request touching only `backend/` and `frontend/` ran
@@ -652,6 +654,14 @@ that only exists on a real Android runtime and that no JVM unit test can replace
 gh workflow run "Android instrumented tests" --ref <branch>
 ```
 
+**Two shards since 0.0.15.** The job is a matrix, `connectedDebugAndroidTest on an emulator (shard 1 of 2)`
+and `(shard 2 of 2)`, each on its own emulator. Each passes
+`-Pandroid.testInstrumentationRunnerArguments.numShards=2` and `shardIndex` (0 and 1), and
+`AndroidJUnitRunner` assigns each test method to exactly one shard by a stable hash of its name, so
+every test runs once across the two. Each shard stages the speech model, because the probe that needs
+it can land in either, and each runs the "tests ran, none failed" check below on its own report. The
+results artifact is `android-instrumented-results-shard-1` and `-shard-2`.
+
 It takes one input, `api-level`, defaulting to **`37.0`** — a string with the minor level, because
 the SDK publishes Android 17's platform and system images only as `android-37.0` and the runner
 builds both package names from the value verbatim. The emulator is `google_apis` / `x86_64` on a
@@ -667,7 +677,7 @@ went green with nothing executed: the debug APK did not fit the emulator's defau
 and AGP 9.4's `connectedDebugAndroidTest` logged the failed install, ended `BUILD SUCCESSFUL` and
 wrote a report counting 0 tests. The job now reads that report after the emulator step and fails
 when no test executed or one failed, writes the counts to the job summary, and keeps what the probes
-printed as `probes-logcat.txt` in the `android-instrumented-results` artifact.
+printed as `probes-logcat.txt` in the `android-instrumented-results-shard-<n>` artifacts.
 
 The second run (37935344589) failed that check, correctly, and its logcat showed why: SurfaceFlinger
 aborting in a loop (`!rcEnc->featureInfo()->hasReadColorBufferDma`), so the install found no package
@@ -760,6 +770,69 @@ CLI still fetches its `debian-openssl-3.0.x` engine there, which libssl.so.3 run
 preinstalled. Moving to the next image is the same one-word change in every job, made deliberately.
 
 ---
+
+### 1.7 CI speed: concurrency, path filters, shards and failing-first proofs (0.0.15)
+
+The account is a free GitHub user with about twenty concurrent jobs across both portals, so 0.0.15
+cut the runner time a pull request costs without changing what any job tests.
+
+**Concurrency.** Checks, Android build, Design fidelity and CodeQL each have
+`concurrency: { group: <workflow>-<ref>, cancel-in-progress: true }`, so a new push to a pull request
+cancels the run for the old head. The key is the pull request number, or the ref outside a pull
+request (`android-build.yml` uses `github.event.workflow_run.head_branch` for its `workflow_run`
+trigger). `android-build.yml` used to key on the head SHA, which never cancelled anything because
+every push has a new SHA. The deploy workflows still never cancel (§5).
+
+**Path filters, job by job.** The workflows still start on every pull request; a first `Changed areas`
+job diffs the pull request against its base with plain git (`git diff --name-only base...head`, a
+blobless full-history checkout) and the other jobs read its output in their `if:`.
+
+| Change | Skips |
+|---|---|
+| only `android/**` (Checks) | `Backend integration tests` (all shards), `Failing-first proofs`, `Questionnaire unify migration`, `Questionnaire client against a real stack` and the five `… in a browser` jobs |
+| nothing under `android/**` and not `design-fidelity.yml` (Design fidelity) | `Android screens at board size`, the only emulator a pull request starts. `Board and build side by side` already treats the Android shots as optional |
+| nothing in `android-build.yml`'s `paths:` list (unchanged) | the whole Android build. The list is `android/**`, the workflow file and the backend and frontend files the Kotlin parity tests read |
+
+`android-emulator.yml` runs only by hand, so no change starts it. These are never skipped:
+`Backend tests`, `Web typecheck, lint and unit specs` and `Docs check` (the three in `GATING_JOBS`),
+plus `Container and manifest packaging`, `Questionnaire parity (both portals)`, `Deploy scripts`,
+`Shared-file manifests` and `Comment stripper`. `Backend tests` stays on for Android-only changes
+because 39 of its test modules read Kotlin sources under `android/` (contract and parity tests), and
+it finishes before the Android build anyway. Pushes to `main`, `workflow_dispatch`, and pull requests
+from a `release/*` branch always run everything. If the diff cannot be computed, everything runs.
+
+There is no branch protection on `main` (read 2026-11-08:
+`gh api repos/cxacraftecosystem-ui/designer-portal/branches/main/protection` answers 404, and the
+repository has no rulesets), so a skipped job cannot leave a required check pending. If protection is
+added, require only the three gating jobs, which never skip.
+
+**Shards.** `Backend integration tests` is a three-way matrix. `scripts/ci/pytest_shard.py` lists every
+`test_*.py` and `*_test.py` under `backend/tests` as pytest would collect them, sorts the paths, and
+gives shard *k* the files whose position modulo 3 is *k−1*. It refuses to run if the three shards do
+not partition the list exactly, or if a shard is empty, so every test file runs in exactly one shard.
+Each shard keeps the `database: local DSN resolved` assertion. On the run the split was measured on
+(42407873141), the suite took 722 s of a 13-minute job, and no single test took more than 38 s. Each
+shard should take about 4 minutes of pytest plus about 75 s of setup. The emulator's two shards are
+described in §1.5.
+
+**Failing-first proofs.** `backend/tests/failing_first.json` is a JSON array, sorted by `id`, of
+`{"id", "tests", "revert", "to"}` entries. `tests` are pytest node ids relative to `backend/`.
+`revert` are paths relative to the repository root, and must not include the test files.
+`to` is the commit before the fix. The `Failing-first proofs` job checks out the full history, runs
+the runner's self-test (`scripts/ci/test_failing_first.py`, with no database), then migrates the same
+`pgvector/pgvector:pg17` service as the integration job and runs `scripts/ci/failing_first.py`. For
+each entry, the runner:
+
+1. checks out `revert` at `to` (a path that did not exist at `to` is removed);
+2. runs the tests, which must **fail**: exit code 1, at least one failed test, and no errors. A
+   collection or import error is a runner failure, not proof;
+3. restores the paths from `HEAD`;
+4. runs the tests again, which must **pass**, with at least one test executed.
+
+It refuses an entry whose paths are identical at `to` and `HEAD`, or that have local changes. It
+writes a proven or NOT proven table to the job summary. An entry is proof for the release that adds
+it: delete it once that release is on `main`, because an old `to` stops reverting cleanly as the code
+around it moves.
 
 ## 2. Required repository secrets
 

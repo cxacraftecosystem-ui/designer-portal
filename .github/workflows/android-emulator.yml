@@ -17,9 +17,13 @@ concurrency:
 
 jobs:
   instrumented:
-    name: connectedDebugAndroidTest on an emulator
+    name: connectedDebugAndroidTest on an emulator (shard ${{ matrix.shard }} of 2)
     runs-on: ubuntu-26.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     defaults:
       run:
         working-directory: android
@@ -100,6 +104,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         env:
           API_LEVEL: ${{ inputs.api-level || '37.0' }}
+          SHARD: ${{ matrix.shard }}
         with:
           api-level: ${{ inputs.api-level || '37.0' }}
           target: google_apis
@@ -117,7 +122,7 @@ jobs:
             "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb" push "$RUNNER_TEMP/dwasr" /data/local/tmp/
             "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb" shell chmod -R 755 /data/local/tmp/dwasr
             "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb" logcat -G 16M || true
-            ./gradlew :app:connectedDebugAndroidTest --console=plain --stacktrace || echo "$?" > "$RUNNER_TEMP/connected-exit"
+            ./gradlew :app:connectedDebugAndroidTest --console=plain --stacktrace -Pandroid.testInstrumentationRunnerArguments.numShards=2 -Pandroid.testInstrumentationRunnerArguments.shardIndex="$((SHARD - 1))" || echo "$?" > "$RUNNER_TEMP/connected-exit"
             mkdir -p app/build/outputs/androidTest-results && "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/platform-tools/adb" logcat -d -v time -s DWASRPROBE DWICPROBE DWXFERPROBE DWTIERPROBE DWPACKPROBE DWTIER2PROBE TestRunner AndroidRuntime DEBUG libc > app/build/outputs/androidTest-results/probes-logcat.txt || true
             test ! -e "$RUNNER_TEMP/connected-exit"
 
@@ -166,7 +171,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: android-instrumented-results
+          name: android-instrumented-results-shard-${{ matrix.shard }}
           path: |
             android/app/build/reports/androidTests/
             android/app/build/outputs/androidTest-results/
