@@ -216,7 +216,7 @@ def test_data_explorer_transcript_list_hides_consent_withheld_text(monkeypatch):
     monkeypatch.setattr(routes, "_browser", lambda: SimpleNamespace(_norm=lambda p: p))
     monkeypatch.setattr(transcript_export, "withheld_ids", withheld)
     out = _run(routes.transcript_list(path="x", q="secretword", offset=0, current_user=STRANGER))
-    assert "secretword" not in json.dumps(out)
+    assert out["items"] == []
     plain = _run(routes.transcript_list(path="x", q=None, offset=0, current_user=STRANGER))
     assert all(item.get("hasText") is False for item in plain["items"])
 

@@ -152,7 +152,7 @@ def drafting(monkeypatch, ledger_db):
 
     interview = SimpleNamespace(id="i1", createdById="u1", designWorkshopId=None)
     media = SimpleNamespace(id="m1", questionnaireInterviewId="i1", transcriptText="We learned from my mother.",
-                            linkedRecordType="questionnaire", linkedRecordId="i1", artisanId=None)
+                            linkedRecordType="questionnaire", linkedRecordId="i1", artisanId=None, uploadedById="u1")
     ledger_db.interviews["i1"] = interview
     ledger_db.participants["i1"] = ["a1"]
     ledger_db.media_artisans["m1"] = ["a1"]
@@ -195,6 +195,12 @@ def drafting(monkeypatch, ledger_db):
     monkeypatch.setattr(routes, "_section_or_404", section)
     monkeypatch.setattr(routes, "public_encode", lambda rows: [])
     monkeypatch.setattr(routes.ad, "draft_answers", fake_draft)
+    from app.services import records
+
+    async def own_uploads(viewer):
+        return {viewer.id}, frozenset()
+
+    monkeypatch.setattr(records, "media_url_scope", own_uploads)
     return SimpleNamespace(routes=routes, asked=asked, ledger=ledger_db)
 
 
