@@ -410,7 +410,7 @@ A monthly pack per scheme — an Excel workbook (Summary first, then one sheet p
 
 | Variable | Required | Default | Secret | Notes |
 |---|---|---|---|---|
-| `MEDIA_PRESIGNED_READS` | No | **`true`** | No | Serve every media `url` as a short-lived signed URL. The bucket's `media/*` is private since 0.0.17, so `false` breaks every image and recording; see [RELEASE.md](RELEASE.md). |
+| `MEDIA_PRESIGNED_READS` | No | **`true`** | No | Serve every media `url` as a short-lived signed URL. The bucket's `media/*` is private from the 0.0.15 cut-over, so `false` breaks every image and recording; see [RELEASE.md](RELEASE.md). |
 | `MEDIA_PRESIGNED_READ_TTL_SECONDS` | No | `900` (15 min) | No | How long a signed read URL stays good. Sized for *"a page renders, a person looks at it, a person clicks download"* and **not** for a long-running job — the surfaces that outlive a look sign their own with their own expiry (`/export/dataset` at six hours). `0` or negative reads as off. Leave it at `900` through the runbook; step 4's verification asserts `X-Amz-Expires=900` exactly. |
 
 ### Optional scaling layer — `SCALE_*` and the read replica
