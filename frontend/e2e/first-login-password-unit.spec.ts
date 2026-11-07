@@ -302,3 +302,11 @@ test("the handset classifies both hints and nothing else", () => {
   expect(KT_MAIN).toContain("signInHint = failure.signInHint()");
   expect(KT_HINT).toMatch(/SignInHint\.AMBIGUOUS_IDENTIFIER ->[\s\S]{0,120}SignInHint\.PASSWORD_NOT_SET ->[\s\S]{0,120}SignInHint\.NONE -> null/);
 });
+
+test("a configured provider is never shown greyed out: before the terms are ticked it asks for them instead", () => {
+  const button = LOGIN.slice(LOGIN.indexOf("oidcProviders.map((provider) =>"), LOGIN.indexOf("Continue with {provider.label}"));
+  expect(button).toContain("disabled={loading}");
+  expect(button).not.toContain("blocked}");
+  const start = LOGIN.slice(LOGIN.indexOf("async function startOidc"), LOGIN.indexOf("async function startOidc") + 400);
+  expect(start).toMatch(/if \(blocked\) \{[\s\S]*Please agree to the terms and conditions/);
+});

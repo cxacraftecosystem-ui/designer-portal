@@ -1,4 +1,5 @@
 import { apiFetch, buildQuery } from "@/lib/api";
+import type { CoverageScope } from "@/lib/questionnaire/api";
 import type { PageResult } from "@/lib/types";
 import type { TitleWorkshop } from "@/lib/naming";
 
@@ -125,9 +126,8 @@ export async function searchPeople(search: string): Promise<{ id: string; name: 
   return rows.map((r) => ({ id: r.id, name: r.name }));
 }
 
-export async function coverageScope(workshopId: string): Promise<{ workshopId?: string; artisanIds?: string[] }> {
-  const page = await apiFetch<PageResult<{ id: string }>>(`/artisans${buildQuery({ page: 1, pageSize: 100, designWorkshopId: workshopId })}`);
-  return { artisanIds: (page.items ?? []).map((a) => a.id) };
+export async function coverageScope(workshopId: string): Promise<CoverageScope> {
+  return { designWorkshopId: workshopId };
 }
 
 export { AnswerTextEditor, answerEditorValue, answerParts } from "@/components/questionnaires/AnswerTextEditor";

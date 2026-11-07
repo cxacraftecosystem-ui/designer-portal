@@ -1034,19 +1034,19 @@ function UsersScreen() {
             Grant capabilities to selected users. Revoke them in the table above.
           </p>
           {adminMessage ? <div className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{adminMessage}</div> : null}
-          <div className="mt-4 grid gap-4 lg:grid-cols-[1.4fr_1fr]">
-            <div className="rounded-md border border-line-200 bg-field-50 p-3">
+          <div className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+            <div className="min-w-0 rounded-md border border-line-200 bg-field-50 p-3">
               <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-soft">Select users ({adminSelection.size} selected)</div>
-              <div className="grid max-h-72 gap-1 overflow-y-auto">
+              <div className="grid max-h-72 grid-cols-[minmax(0,1fr)] gap-1 overflow-y-auto">
                 {allUsers
                   .filter((user) => user.role !== "MASTER_ADMIN")
                   .map((user) => (
-                    <label key={user.id} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-field-100">
+                    <label key={user.id} className="flex min-w-0 items-center gap-2 rounded px-2 py-1 hover:bg-field-100">
                       <input type="checkbox" checked={adminSelection.has(user.id)} onChange={() => toggleAdminSelection(user.id)} />
                       <span className="min-w-0 flex-1 truncate text-sm text-ink">
                         {user.name} <span className="text-ink-muted">· {user.email}</span>
                       </span>
-                      <span className="rounded-full bg-field-200 px-2 py-0.5 text-xs text-ink-muted">{roleLabel(user.role)}</span>
+                      <span className="shrink-0 rounded-full bg-field-200 px-2 py-0.5 text-xs text-ink-muted">{roleLabel(user.role)}</span>
                     </label>
                   ))}
                 {allUsers.filter((user) => user.role !== "MASTER_ADMIN").length === 0 ? (
@@ -1054,7 +1054,7 @@ function UsersScreen() {
                 ) : null}
               </div>
             </div>
-            <div className="grid content-start gap-2 rounded-md border border-line-200 bg-field-50 p-3">
+            <div className="grid min-w-0 content-start gap-2 rounded-md border border-line-200 bg-field-50 p-3">
               <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-soft">Grant</div>
               <Toggle checked={grantAdmin} onChange={setGrantAdmin} label="Administrator access (Admin role)" />
               <Toggle checked={grantQuestionnaire} onChange={setGrantQuestionnaire} label="Manage questionnaire" />

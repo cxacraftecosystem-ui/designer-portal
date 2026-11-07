@@ -591,7 +591,8 @@ function LoginView() {
                   type="button"
                   variant="provider"
                   size="auth"
-                  disabled={loading || blocked}
+                  disabled={loading}
+                  aria-describedby={blocked ? AGREE_HINT_ID : undefined}
                   onClick={() => void startOidc(provider)}
                   className="w-full min-w-0"
                 >
