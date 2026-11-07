@@ -249,7 +249,7 @@ test("and a capture screen somebody is watching still lands on /login", async ()
     uploadMediaBatch({ files: onePhotograph(), linkedRecordType: "artisan", linkedRecordId: "a1" })
   ).rejects.toBeInstanceOf(MediaBatchError);
 
-  expect(recorded.replace, "the redirect is not gone, only opted out of").toEqual(["/login"]);
+  expect(recorded.replace, "the redirect is not gone, only opted out of").toEqual(["/session-ended?next=%2Fproducts"]);
 });
 
 test("the orphan sweeper cannot eject a researcher either — it is a five-minute timer", async () => {

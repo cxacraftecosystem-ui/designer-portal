@@ -57,7 +57,7 @@ test("a 401 on a signed-in screen still lands on /login, without leaving the dea
   await expect(apiFetch("/products?page=1")).rejects.toBeInstanceOf(ApiError);
 
   expect(tokenNow()).toBeNull();
-  expect(recorded.replace, "the redirect is not gone, only narrowed").toEqual(["/login"]);
+  expect(recorded.replace, "the redirect is not gone, only narrowed").toEqual(["/session-ended?next=%2Fproducts"]);
   expect(recorded.assign, "assign() puts the expired page back in history — use replace()").toEqual([]);
 });
 
