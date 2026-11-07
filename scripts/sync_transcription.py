@@ -54,6 +54,8 @@ SHARED_FILES_EXTRA = (
     "backend/app/services/transcript_backfill.py",
     "backend/prisma/migrations/20261120090000_media_transcribe_choice/migration.sql",
     "backend/tests/test_media_transcribe_choice.py",
+    "backend/app/services/paid_ai_allowance.py",
+    "backend/tests/test_paid_ai_allowance.py",
 )
 FIXTURE_DIR = "backend/tests/fixtures/transcript"
 EXPLORER_DIR = "backend/app/services/data_explorer"

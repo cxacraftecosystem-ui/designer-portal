@@ -1,5 +1,4 @@
 import asyncio
-import csv
 import io
 import json
 from collections.abc import AsyncIterator, Callable
@@ -29,7 +28,7 @@ from app.scale.rate_limit import (
     address_credential_attempt,
 )
 from app.schemas.auth import DatasetTokenRequest
-from app.services import naming, two_factor
+from app.services import csv_safe, naming, two_factor
 from app.services.concurrency import gather_reads
 from app.services.csv_export import record_media
 from app.services.feedback_vocabulary import label_for
@@ -667,7 +666,7 @@ async def stream_dataset_csv(
 
     async def body() -> AsyncIterator[bytes]:
         buffer = io.StringIO()
-        writer = csv.writer(buffer)
+        writer = csv_safe.writer(buffer)
 
         def drain() -> bytes:
             chunk = buffer.getvalue()

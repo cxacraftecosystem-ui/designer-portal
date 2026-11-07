@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from starlette.concurrency import run_in_threadpool
 
 from app.core.db import db
 from app.core.deps import can_create_records, get_current_user, is_admin
@@ -135,10 +136,13 @@ def _secure_qr(body: SecureQrBody) -> Any:
 
 
 def _offline_xml(body: OfflineXmlBody) -> Any:
-    async def verify() -> VerifiedIdentity:
+    def work() -> VerifiedIdentity:
         return verify_offline_zip(
             _decode_zip(body), body.shareCode, mobile=body.mobile, email=body.email, now=_now()
         )
+
+    async def verify() -> VerifiedIdentity:
+        return await run_in_threadpool(work)
 
     return verify
 

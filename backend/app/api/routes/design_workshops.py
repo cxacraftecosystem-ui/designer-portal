@@ -578,20 +578,39 @@ async def _transcribe_one_dictation(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=PAUSED_MESSAGE
         )
-    result = await transcribe_audio_bytes(
-        content,
-        file.filename or "dictation.webm",
-        (file.content_type or "audio/webm").split(";")[0].strip(),
-        get_settings(),
-        user_id=current_user.id,
-    )
+    try:
+        counted = await dictation_cap.reserve(current_user.id, allowance.day, allowance.limit)
+    except dictation_cap.CapSpent:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=dictation_cap.cap_refusal(
+                dictation_cap.Allowance(
+                    day=allowance.day,
+                    limit=allowance.limit,
+                    used=allowance.limit if allowance.limit is not None else allowance.used,
+                )
+            ),
+        ) from None
+    try:
+        result = await transcribe_audio_bytes(
+            content,
+            file.filename or "dictation.webm",
+            (file.content_type or "audio/webm").split(";")[0].strip(),
+            get_settings(),
+            user_id=current_user.id,
+        )
+    except BaseException:
+        if counted is not None:
+            await dictation_cap.refund(current_user.id, allowance.day)
+        raise
     if str(result.get("status") or "").upper() == "UNAVAILABLE":
+        if counted is not None:
+            await dictation_cap.refund(current_user.id, allowance.day)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(result.get("message") or "Transcription is not configured."),
         )
 
-    counted = await dictation_cap.spend(current_user.id, allowance.day)
     media_id = await _keep_dictation(content, file, result, current_user, record) if record is not None else None
     return {
         "status": result.get("status"),

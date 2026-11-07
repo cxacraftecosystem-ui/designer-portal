@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import io
 import logging
 from types import SimpleNamespace
@@ -16,6 +15,7 @@ from app.core.deps import (
     get_current_user,
 )
 from app.services import (
+    csv_safe,
     design_workshop_oversight as officers,
     ministry_dashboard as register,
     naming,
@@ -350,7 +350,7 @@ _DESIGN_EXPORT_COLUMNS: tuple[str, ...] = (
 
 def _csv_response(filename: str, rows: list[list[str]], columns: tuple[str, ...]) -> Response:
     buffer = io.StringIO()
-    writer = csv.writer(buffer)
+    writer = csv_safe.writer(buffer)
     writer.writerow(list(columns))
     for row in rows:
         writer.writerow(row)

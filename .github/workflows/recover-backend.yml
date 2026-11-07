@@ -17,7 +17,9 @@ concurrency:
 
 jobs:
   recover:
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-26.04
+    environment: backend-production
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -25,6 +27,9 @@ jobs:
       SG_ID: ${{ secrets.AWS_SG_ID }}
       HOST: ${{ secrets.EC2_HOST }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Find the instance behind the deploy security group
         id: find
         run: |
@@ -89,11 +94,14 @@ jobs:
 
       - name: Knock — is SSH actually answering?
         id: knock
+        env:
+          HOST_KEYS: ${{ secrets.EC2_SSH_HOST_KEYS }}
         run: |
           set -uo pipefail
-          mkdir -p ~/.ssh
-          ssh-keyscan -T 15 -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
-          if ssh -o BatchMode=yes -o ConnectTimeout=20 -o StrictHostKeyChecking=no \
+          if ! bash scripts/ci/pin_ssh_host.sh; then
+            echo "::warning::The host key could not be pinned, so SSH will refuse the server rather than trust it."
+          fi
+          if ssh -o BatchMode=yes -o ConnectTimeout=20 \
                "ubuntu@${HOST}" 'echo alive; uptime; free -h' 2>&1; then
             echo "reachable=true" >> "$GITHUB_OUTPUT"
             echo "SSH answered — the box is up."
@@ -114,10 +122,10 @@ jobs:
           echo "waiting for sshd"
           for i in $(seq 1 40); do
             sleep 15
-            if ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
+            if ssh -o BatchMode=yes -o ConnectTimeout=10 \
                  "ubuntu@${HOST}" 'echo alive' >/dev/null 2>&1; then
               echo "back after $((i * 15))s"
-              ssh -o BatchMode=yes -o StrictHostKeyChecking=no "ubuntu@${HOST}" \
+              ssh -o BatchMode=yes "ubuntu@${HOST}" \
                 'uptime; free -h; echo "nginx proxies to: $(grep -m1 -oE "127[.]0[.]0[.]1:[0-9]+" /etc/nginx/sites-available/fieldrepo || echo unknown)"; for u in fieldrepo-api@8000 fieldrepo-api@8001 fieldrepo-queue; do echo "$u: $(systemctl is-active "$u")"; done'
               exit 0
             fi

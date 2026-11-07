@@ -536,6 +536,7 @@ test("@qf:B39 the fix tray sends a refused step again, sends without the conflic
       id: "ck-s-1",
       sessionId: "s-1",
       createdAt: "2026-10-22T05:00:00Z",
+      ownerUserId: ME.id,
       steps: [
         { kind: "participant", status: "FAILED", op: "join", artisanId: "a2", at: "2026-10-22T05:00:00Z", idempotencyKey: "p-tray", error: "That artisan was removed." },
         {

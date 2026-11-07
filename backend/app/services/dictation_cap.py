@@ -135,3 +135,50 @@ async def spend(user_id: str, day: str) -> int | None:
             exc,
         )
         return None
+
+
+class CapSpent(Exception):
+    pass
+
+
+async def reserve(user_id: str, day: str, limit: int | None) -> int | None:
+    if limit is not None and limit <= 0:
+        raise CapSpent()
+    try:
+        await db.dwdictationdailyusage.upsert(
+            where={"userId_istDay": {"userId": user_id, "istDay": day}},
+            data={
+                "create": {"userId": user_id, "istDay": day, "count": 0},
+                "update": {"count": {"increment": 0}},
+            },
+        )
+        where: dict[str, Any] = {"userId": user_id, "istDay": day}
+        if limit is not None:
+            where["count"] = {"lt": limit}
+        claimed = await db.dwdictationdailyusage.update_many(
+            where=where, data={"count": {"increment": 1}}
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "dictation_cap: could not reserve a dictation for %s on %s (%s); this one is not "
+            "counted against their allowance",
+            user_id,
+            day,
+            exc,
+        )
+        return None
+    if claimed != 1:
+        raise CapSpent()
+    return await _used_today(user_id, day)
+
+
+async def refund(user_id: str, day: str) -> None:
+    try:
+        await db.dwdictationdailyusage.update_many(
+            where={"userId": user_id, "istDay": day, "count": {"gt": 0}},
+            data={"count": {"decrement": 1}},
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "dictation_cap: could not hand back a dictation to %s on %s (%s)", user_id, day, exc
+        )
