@@ -1,7 +1,7 @@
 "use client";
 
 import { ProgressBar } from "@/components/ui/ProgressBar";
-import { Download, ExternalLink, FileText, Headphones, Image as ImageIcon, Loader2, Maximize2, Video, X } from "lucide-react";
+import { Download, ExternalLink, FileText, Headphones, Image as ImageIcon, ImageOff, Loader2, Maximize2, Video, X } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 
 import { useMediaUrl } from "@/components/hooks/useMediaUrl";
@@ -115,7 +115,7 @@ export function MediaPreviewTile({
   downloadUnavailableReason?: string | null;
 }) {
   const kind = resolvePreviewKind(item);
-  const { src, onError } = useMediaUrl(item);
+  const { src, onError, failed: loadFailed } = useMediaUrl(item);
   const percent = progress === null ? null : Math.round(Math.min(1, Math.max(0, progress)) * 100);
   return (
     <div
@@ -131,7 +131,14 @@ export function MediaPreviewTile({
         }}
         aria-label={`Open preview for ${item.name}`}
       >
-        {kind === "IMAGE" && src ? (
+        {(kind === "IMAGE" || kind === "VIDEO") && src && loadFailed ? (
+          <div className="grid gap-2 text-center" data-testid="media-tile-failed">
+            <div className="mx-auto rounded-full bg-card p-3 text-ink-500 shadow-sm">
+              <ImageOff className="h-5 w-5" aria-hidden />
+            </div>
+            <span className="text-xs font-semibold">Couldn&apos;t load</span>
+          </div>
+        ) : kind === "IMAGE" && src ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={src} onError={onError} alt={item.caption || item.name} className="h-full w-full object-cover" loading="lazy" />
         ) : kind === "VIDEO" && src ? (
@@ -210,7 +217,7 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
   const downOnBackdrop = useRef(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const kind = resolvePreviewKind(item);
-  const { src, onError } = useMediaUrl(item);
+  const { src, onError, failed: loadFailed } = useMediaUrl(item);
 
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
@@ -294,7 +301,12 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
           </ActionGroup>
         </div>
         <div className="grid max-h-[74vh] place-items-center overflow-auto rounded-md bg-card p-3">
-          {kind === "IMAGE" && src ? (
+          {src && loadFailed ? (
+            <div role="status" className="grid gap-3 text-center text-ink-muted" data-testid="media-lightbox-failed">
+              <ImageOff className="mx-auto h-6 w-6" aria-hidden />
+              <p>This file couldn&apos;t be loaded.</p>
+            </div>
+          ) : kind === "IMAGE" && src ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={src} onError={onError} alt={item.caption || item.name} className="max-h-[70vh] max-w-full rounded-md object-contain" />
           ) : kind === "VIDEO" && src ? (

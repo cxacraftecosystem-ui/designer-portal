@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ImageOff } from "lucide-react";
 
+import { RefreshingImage } from "@/components/media/RefreshingImage";
 import { fetchMediaRow } from "@/lib/mediaRows";
 import type { MediaFile } from "@/lib/types";
 
@@ -62,12 +63,17 @@ export function StoredMediaImage({
   }
 
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={file.url}
+    <RefreshingImage
+      media={file}
       alt={alt}
       loading="lazy"
       className={`${className} rounded-md border border-line-200 bg-card object-contain`}
+      fallback={
+        <div className={`grid ${className} place-items-center gap-1 rounded-md border border-line-200 bg-surface-50 p-2 text-center text-xs leading-4 text-ink-500`}>
+          <ImageOff className="h-4 w-4" aria-hidden />
+          {file.originalFilename} couldn&apos;t be loaded.
+        </div>
+      }
     />
   );
 }

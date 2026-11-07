@@ -7,6 +7,7 @@ import { ChevronLeft, ChevronRight, ImageOff, Maximize2 } from "lucide-react";
 import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { useMediaUrl } from "@/components/hooks/useMediaUrl";
 import { MediaLightbox, type PreviewMedia } from "@/components/media/MediaLightbox";
+import { RefreshingImage } from "@/components/media/RefreshingImage";
 
 const EASE_OUT = [0.16, 1, 0.3, 1] as const;
 
@@ -161,12 +162,16 @@ export function MediaCarousel({
                 }`}
               >
                 {item.url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={item.url} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
+                  <RefreshingImage
+                    media={item}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    className="h-full w-full object-cover"
+                    fallback={<ThumbnailNumber value={itemIndex + 1} />}
+                  />
                 ) : (
-                  <span className="grid h-full w-full place-items-center text-[0.625rem] leading-3 text-ink-500">
-                    {itemIndex + 1}
-                  </span>
+                  <ThumbnailNumber value={itemIndex + 1} />
                 )}
               </button>
             );
@@ -177,6 +182,10 @@ export function MediaCarousel({
       {zoomed ? <MediaLightbox item={zoomed} onClose={() => setZoomed(null)} /> : null}
     </section>
   );
+}
+
+function ThumbnailNumber({ value }: { value: number }) {
+  return <span className="grid h-full w-full place-items-center text-[0.625rem] leading-3 text-ink-500">{value}</span>;
 }
 
 function ArrowButton({
@@ -207,13 +216,21 @@ function ArrowButton({
 }
 
 function Slide({ item, onZoom }: { item: CarouselItem | null; onZoom: () => void }) {
-  const { src, onError } = useMediaUrl(item);
+  const { src, onError, failed } = useMediaUrl(item);
   if (!item) return null;
   if (!item.url) {
     return (
       <div className="grid place-items-center gap-1 p-4 text-center text-xs text-ink-500">
         <ImageOff className="h-4 w-4" aria-hidden />
         {item.name} is stored, but this account may not open the file itself.
+      </div>
+    );
+  }
+  if (failed) {
+    return (
+      <div role="status" data-testid="carousel-slide-failed" className="grid place-items-center gap-1 p-4 text-center text-xs text-ink-500">
+        <ImageOff className="h-4 w-4" aria-hidden />
+        {item.name} couldn&apos;t be loaded.
       </div>
     );
   }
