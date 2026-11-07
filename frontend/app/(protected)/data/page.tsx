@@ -174,6 +174,7 @@ const header = (
 );
 
 function recordHref(kind: string, id: string): string | null {
+  if (kind === "designWorkshop") return `/design-workshops/${encodeURIComponent(id)}`;
   const key = kind as keyof typeof RECORD_VIEW_HREF;
   return key in RECORD_VIEW_HREF ? RECORD_VIEW_HREF[key](id) : null;
 }
