@@ -112,7 +112,7 @@ class DesignWorkshopCardTest {
         assertEquals(
             "exactly one route onto the design-workshop list may arrive with the create dialog up",
             listOf("startCreating = true"),
-            constructions.filter { it.isNotEmpty() }
+            constructions.filter { "startCreating" in it }
         )
         assertTrue(
             "the Design workshops drawer row must build the route with startCreating false",

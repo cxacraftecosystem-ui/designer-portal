@@ -746,6 +746,10 @@ import com.designprototype.workshop.ui.TranscriptInsightsCard
 import com.designprototype.workshop.transcript.ui.TranscriptEntry
 import com.designprototype.workshop.ui.FieldProgressDefaults
 
+internal object MainRepositorySeam {
+    @Volatile var factory: ((Context) -> WorkshopRepository)? = null
+}
+
 class MainActivity : ComponentActivity() {
     private val incomingQuestionnaire = mutableStateOf<Uri?>(null)
 
@@ -802,7 +806,8 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) com.designprototype.workshop.explorer.ui.ExplorerViewLinks.take(intent)
         askForLocalNetworkWhenTheApiNeedsIt()
         val tokenStore = TokenStore(applicationContext)
-        val repository = WorkshopRepository(ApiClient.create(tokenStore), tokenStore)
+        val repository = MainRepositorySeam.factory?.invoke(applicationContext)
+            ?: WorkshopRepository(ApiClient.create(tokenStore), tokenStore)
         val googleAuthClient = GoogleAuthClient(this)
         val oidcAuthClient = OidcAuthClient(this)
         val preferencesStore = AppPreferencesStore(applicationContext)
@@ -935,7 +940,7 @@ private sealed interface Screen {
     data object DataBrowser : Screen
     data class AdminHub(val section: AdminHubEntry? = null) : Screen
 
-    data class DesignWorkshops(val startCreating: Boolean = false) : Screen
+    data class DesignWorkshops(val startCreating: Boolean = false, val cluster: String? = null) : Screen
     data class DesignWorkshopStages(
         val workshopId: String,
         val focusConsent: Boolean = false,
@@ -2340,7 +2345,7 @@ private fun HomeScreen(
             includeCustomQuestionnaires = FieldPermissions.canRunDesignWorkshops(user),
             openRecord = { type, id -> attemptExit { openSearchRecord(type, id) } },
             openCustomQuestionnaire = { id -> attemptExit { message = null; screen = Screen.QuestionnaireDetail(id) } },
-            openCluster = { attemptExit { message = null; screen = Screen.DesignWorkshops() } },
+            openCluster = { name -> attemptExit { message = null; screen = Screen.DesignWorkshops(cluster = name) } },
             openRemote = { type, id ->
                 attemptExit { message = null; screen = Screen.RemoteRecord(type, id, from = screen) }
             }
@@ -2416,6 +2421,7 @@ private fun HomeScreen(
                         repository = repository,
                         onBack = { attemptExit { dataBrowserPath = ""; goBack() } },
                         onMessage = { showMessage(it) },
+                        onError = { showError(it) },
                         onOpenMedia = { mediaId ->
                             message = null
                             screen = Screen.View(EntryMode.MEDIA, mediaId, from = Screen.DataBrowser)
@@ -2427,6 +2433,7 @@ private fun HomeScreen(
                             val mode = recentSubmissionEntryMode(kind)
                             when {
                                 kind == "designWorkshop" || kind == "design-workshop" -> { workshopOrigins.opened(id, screen); screen = workshopIndex(id) }
+                                kind == SearchRecordTypes.CLUSTER -> { message = null; screen = Screen.DesignWorkshops(cluster = id) }
                                 mode != null -> screen = Screen.View(mode, id, from = Screen.DataBrowser)
                                 else -> showMessage("This link isn't one the app can open.")
                             }
@@ -2903,6 +2910,7 @@ private fun HomeScreen(
             is Screen.DesignWorkshops -> WorkshopListScreen(
                 repository = repository,
                 startCreating = s.startCreating,
+                initialSearch = s.cluster,
                 onOpen = { id -> message = null; workshopOrigins.openedFromList(id); screen = Screen.DesignWorkshopStages(id) },
                 onMessage = { showMessage(it) },
                 onError = { showError(it) }
@@ -3200,6 +3208,7 @@ private fun HomeScreen(
                             },
                                 onPlay = { mediaId, _, _, _ -> searchOpen = false; attemptExit { openSearchRecord(SearchRecordTypes.MEDIA, mediaId) } },
                                 onOpenRemote = { type, id -> searchOpen = false; attemptExit { message = null; screen = Screen.RemoteRecord(type, id, from = screen) } },
+                                onOpenCluster = { name -> searchOpen = false; attemptExit { message = null; screen = Screen.DesignWorkshops(cluster = name) } },
                                 onClose = back,
                             )
                         }
@@ -3207,6 +3216,11 @@ private fun HomeScreen(
                 }
                 }
                 }
+                }
+                if (ownsViewport) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+                        AppMessageBanner(messageState)
+                    }
                 }
 
                 inlineRecord?.let { request ->

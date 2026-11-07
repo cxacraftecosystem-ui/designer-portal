@@ -108,6 +108,35 @@ object ApiClient {
         redactHeader(SESSION_TOKEN_HEADER)
     }
 
+    internal fun gatewayRetry(pause: (Long) -> Unit = { Thread.sleep(it) }): Interceptor = Interceptor { chain ->
+        val original = chain.request()
+        val retriable = isSafelyRetriable(original.method, original.url.encodedPath)
+        val maxAttempts = if (retriable) MAX_GATEWAY_ATTEMPTS else 1
+        var attempt = 0
+        var lastError: IOException? = null
+        while (attempt < maxAttempts) {
+            attempt++
+            try {
+                val response = chain.proceed(original)
+                ServerReachability.recordAnswer()
+                if (retriable && response.code in RETRIABLE_GATEWAY_CODES && attempt < maxAttempts && !chain.call().isCanceled()) {
+                    response.close()
+                    runCatching { pause(backoffMillis(attempt)) }
+                    continue
+                }
+                return@Interceptor response
+            } catch (e: IOException) {
+                if (chain.call().isCanceled()) throw e
+                lastError = e
+                ServerReachability.recordFailure(e)
+                if (!retriable || attempt >= maxAttempts) throw e
+                runCatching { pause(backoffMillis(attempt)) }
+                if (chain.call().isCanceled()) throw e
+            }
+        }
+        throw lastError ?: IOException(CONNECTION_FAILED_SENTENCE)
+    }
+
     internal fun httpClient(tokenStore: TokenStore): OkHttpClient {
         val logging = httpLogging()
 
@@ -116,32 +145,7 @@ object ApiClient {
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
-            .addInterceptor { chain ->
-                val original = chain.request()
-                val retriable = isSafelyRetriable(original.method, original.url.encodedPath)
-                val maxAttempts = if (retriable) MAX_GATEWAY_ATTEMPTS else 1
-                var attempt = 0
-                var lastError: IOException? = null
-                while (attempt < maxAttempts) {
-                    attempt++
-                    try {
-                        val response = chain.proceed(original)
-                        ServerReachability.recordAnswer()
-                        if (retriable && response.code in RETRIABLE_GATEWAY_CODES && attempt < maxAttempts) {
-                            response.close()
-                            runCatching { Thread.sleep(backoffMillis(attempt)) }
-                            continue
-                        }
-                        return@addInterceptor response
-                    } catch (e: IOException) {
-                        lastError = e
-                        ServerReachability.recordFailure(e)
-                        if (!retriable || attempt >= maxAttempts) throw e
-                        runCatching { Thread.sleep(backoffMillis(attempt)) }
-                    }
-                }
-                throw lastError ?: IOException(CONNECTION_FAILED_SENTENCE)
-            }
+            .addInterceptor(gatewayRetry())
             .addInterceptor { chain ->
                 val request = chain.request()
                 chain.proceed(
