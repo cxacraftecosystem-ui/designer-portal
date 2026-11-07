@@ -343,7 +343,8 @@ uploads still succeed — transcripts and grid measurements simply stay empty.
 | `OPENAI_CHAT_MODEL` | No | `gpt-6-luna` | No | Rewrites raw transcripts into clean interviewer/interviewee dialogue. |
 | `GEMINI_API_KEY` | No | unset | **Yes** | Single legacy key for grid measurement. |
 | `GEMINI_API_KEYS` | No | `""` | **Yes** | Any number of comma- or newline-separated keys; the worker rotates and fails over across them. Combined with `GEMINI_API_KEY` and de-duplicated. |
-| `GEMINI_MEASUREMENT_MODEL` | No | `gemini-3.8-flash` | No | Grid measurement, photo captions and identity OCR. A 404 on the configured id falls back to `gemini-3.7-flash` (0.0.10). |
+| `GEMINI_MEASUREMENT_MODEL` | No | `gemini-3.5-flash-lite` | No | Grid measurement only (0.0.15, owner's choice for now). A 404 on the configured id falls back to `gemini-3.7-flash` (0.0.10). |
+| `GEMINI_CAPTION_MODEL` | No | `gemini-3.8-flash` | No | Photo captions and identity OCR (0.0.15). A 404 on the configured id falls back to `gemini-3.7-flash`. |
 | `NEXT_PUBLIC_MAPTILER_API_KEY` | No | unset | No | Read by the backend only so one `.env` can feed both apps; the browser gets it from the frontend build. |
 
 > **`ELEVENLABS_STT_MODEL` defaults to `scribe_v2`** (since 31 Oct 2026; it used to read `scribe_v1`
