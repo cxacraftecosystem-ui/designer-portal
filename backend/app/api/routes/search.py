@@ -6,7 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.config import get_settings
 from app.core.db import db
-from app.core.deps import can_view_design_workshop_data, get_current_user, get_value, role_value
+from app.core.deps import (
+    can_download_dataset,
+    can_view_design_workshop_data,
+    get_current_user,
+    get_value,
+    role_value,
+)
 from app.services import (
     cross_portal,
     design_workshop_data as dw_data,
@@ -363,6 +369,7 @@ async def unified_search(
         limit=limit * 2,
         links=links,
     )
+    await mark_locatable(current_user, groups)
     suggestion = None if any(g["items"] for g in groups) else await search_query.did_you_mean(text)
     suggestion_total = 0
     if suggestion:
@@ -380,6 +387,29 @@ async def unified_search(
         "limit": limit,
         **({"type": type} if type else {}),
     }
+
+
+LOCATE_KINDS = {"crafts": "craft", "artisans": "artisan"}
+
+
+async def mark_locatable(user: Any, groups: list[dict[str, Any]]) -> None:
+    from app.api.routes import data_browser
+
+    asked = [g for g in groups if g.get("type") in LOCATE_KINDS]
+    if not asked:
+        return
+    scope = await data_browser.scope_for_user(user) if can_download_dataset(user) else None
+    for group in asked:
+        local = [item for item in group.get("items") or [] if item.get("local")]
+        found = (
+            await data_browser.locatable_ids(
+                LOCATE_KINDS[group["type"]], [str(item["id"]) for item in local], scope
+            )
+            if scope is not None
+            else set()
+        )
+        for item in local:
+            item["locatable"] = str(item["id"]) in found
 
 
 @router.get("/remote/{kind}/{record_id}")
