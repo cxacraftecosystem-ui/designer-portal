@@ -965,7 +965,9 @@ async def test_ending_an_empanelment_leaves_an_admin_alone_when_the_account_is_a
         "canonicalised rosters is the whole state under test"
     )
     promoted = client.patch(
-        f"/api/users/{made.json()['id']}", json={"role": "ADMIN"}, headers=_headers(world)
+        f"/api/users/{made.json()['id']}",
+        json={"role": "ADMIN", "password": API_PASSWORD, "mustChangePassword": False},
+        headers=_headers(world),
     )
     assert promoted.status_code == 200, promoted.text
     assert promoted.json()["role"] == "ADMIN"
@@ -1053,7 +1055,9 @@ async def test_ending_an_empanelment_leaves_an_admins_access_to_the_product_alon
     )
     assert made.status_code == 201, made.text
     promoted = client.patch(
-        f"/api/users/{made.json()['id']}", json={"role": "ADMIN"}, headers=_headers(world)
+        f"/api/users/{made.json()['id']}",
+        json={"role": "ADMIN", "password": API_PASSWORD, "mustChangePassword": False},
+        headers=_headers(world),
     )
     assert promoted.status_code == 200, promoted.text
     assert promoted.json()["role"] == "ADMIN"

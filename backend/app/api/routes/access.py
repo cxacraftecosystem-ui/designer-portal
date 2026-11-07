@@ -336,14 +336,15 @@ async def end_live_sessions(email: Any) -> None:
     accounts = await access_roster.accounts_on_the_mailbox(email)
     if accounts is None:
         logger.error(
-            "sessions for %r could NOT be confirmed ended: the sweep that finds every spelling of "
-            "one mailbox was cut, so any token this person is already holding may still be live "
-            "until it expires. The allow-list row was barred and the next sign-in is refused. "
-            "Raise GMAIL_ACCOUNT_SWEEP_LIMIT, then re-run the bar, or repair it from backend/ with "
-            "python -m scripts.backfill_sessions_valid_from --write",
+            "sessions for %r were ended only on the accounts at this exact address: the sweep that "
+            "finds every spelling of one mailbox was cut, so a token held by an account filed "
+            "under another spelling may still be live until it expires. The allow-list row was "
+            "barred and the next sign-in is refused. Raise GMAIL_ACCOUNT_SWEEP_LIMIT, then re-run "
+            "the bar, or repair it from backend/ with python -m scripts.backfill_sessions_valid_from "
+            "--write",
             email,
         )
-        return
+        accounts = await access_roster.accounts_at_the_address(email)
     now = _now()
     for user in accounts:
         await db.user.update(where={"id": user.id}, data={"sessionsValidFrom": now})

@@ -258,6 +258,7 @@ model User {
   /// account with no password is never held. It still rides out on `serialize_user`, and both
   /// clients draw the change-password screen from it.
   mustChangePassword Boolean  @default(false)
+  passwordIssuerKnown Boolean @default(false)
   /// The first time this account actually got IN. `AccessRoster.firstSeenAt` and
   /// `DesignerRoster.firstSeenAt` answer the same question about an ADDRESS an admin invited;
   /// this one is about the ACCOUNT, and the two differ for anybody whose account predates the

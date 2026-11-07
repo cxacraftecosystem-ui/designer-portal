@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 import app.core.db as core_db
 from app.api.routes import auth as auth_routes, usage as usage_routes
@@ -14,6 +14,8 @@ from app.core import deps
 from app.core.security import hash_password
 from app.schemas.auth import LoginRequest
 from app.services import usage
+
+_SIGN_IN_REQUEST = Request({"type": "http", "client": ("203.0.113.9", 443), "headers": []})
 
 USER_ID = "ckv9r2m4x0001qz8h3n7d2f5g"
 
@@ -619,9 +621,11 @@ async def test_the_sign_in_gate_reports_on_both_credential_paths_at_the_point_th
     monkeypatch.setattr(auth_routes, "login_with_google", _google)
 
     by_password = await auth_routes.login(
-        LoginRequest(email=account.email, password="a-password")
+        LoginRequest(email=account.email, password="a-password"), _SIGN_IN_REQUEST
     )
-    by_google = await auth_routes.login(LoginRequest(googleIdToken="a-google-token"))
+    by_google = await auth_routes.login(
+        LoginRequest(googleIdToken="a-google-token"), _SIGN_IN_REQUEST
+    )
 
     for answer in (by_password, by_google):
         gate = answer["user"][auth_routes.USAGE_CONSENT_GATE_KEY]
@@ -642,7 +646,9 @@ async def test_the_sign_in_gate_admits_rather_than_refuses_so_the_answer_can_be_
     store: SimpleNamespace, sign_in: dict[str, Any]
 ) -> None:
     account = store.users.row
-    answer = await auth_routes.login(LoginRequest(email=account.email, password="a-password"))
+    answer = await auth_routes.login(
+        LoginRequest(email=account.email, password="a-password"), _SIGN_IN_REQUEST
+    )
 
     assert answer["accessToken"] == "a-real-looking-token", (
         "an un-consented account MUST come away with a session — it is the only way it can reach "
@@ -665,7 +671,9 @@ async def test_the_sign_in_gate_cannot_lock_out_the_break_glass_master_admin(
     )
     store.users.row = master
 
-    answer = await auth_routes.login(LoginRequest(email=master.email, password="a-password"))
+    answer = await auth_routes.login(
+        LoginRequest(email=master.email, password="a-password"), _SIGN_IN_REQUEST
+    )
 
     assert answer["accessToken"] == "a-real-looking-token"
     assert answer["user"]["role"] == "MASTER_ADMIN"
@@ -684,7 +692,7 @@ async def test_a_consented_account_signs_in_with_the_gate_closed(
     )
 
     answer = await auth_routes.login(
-        LoginRequest(email=store.users.row.email, password="a-password")
+        LoginRequest(email=store.users.row.email, password="a-password"), _SIGN_IN_REQUEST
     )
 
     gate = answer["user"][auth_routes.USAGE_CONSENT_GATE_KEY]
