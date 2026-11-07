@@ -1,0 +1,12 @@
+[
+  {
+    "id": "privacy-cross-portal-rename-withdraws-aadhaar",
+    "tests": [
+      "tests/test_privacy_withholding.py::test_a_cross_portal_rename_withdraws_the_aadhaar_verification"
+    ],
+    "revert": [
+      "backend/app/api/routes/cross_portal.py"
+    ],
+    "to": "8efa129d2ad204daec12e3ad3415b118c921954f"
+  }
+]
