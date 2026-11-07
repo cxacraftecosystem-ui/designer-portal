@@ -1,5 +1,6 @@
 SECRET_USER_FIELDS: tuple[str, ...] = (
     "passwordHash",
+    "passwordIssuerKnown",
     "twoFactorSecret",
     "twoFactorPendingSecret",
     "twoFactorPendingSince",

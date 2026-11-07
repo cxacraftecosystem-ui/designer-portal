@@ -180,6 +180,10 @@ class _Eligibility:
             raise HTTPException(status_code=self.status, detail=self.refuse)
 
 
+async def _the_issuer_still_admits(_token: Any, _workshop: Any) -> bool:
+    return True
+
+
 @pytest.fixture
 def world(monkeypatch: pytest.MonkeyPatch):
     secret = grants.mint_secret()
@@ -212,6 +216,7 @@ def world(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(module, "db", db)
     eligibility = _Eligibility()
     monkeypatch.setattr(grants, "_assert_every_id_may_be_granted", eligibility)
+    monkeypatch.setattr(grants, "_issuer_still_admits", _the_issuer_still_admits)
 
     async def _holds_no_post(workshop_id: str, user_ids: Any) -> dict[str, frozenset[str]]:
         return {}

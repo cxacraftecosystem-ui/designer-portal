@@ -27,6 +27,8 @@ from app.scale.rate_limit import (
     account_credential_attempt,
     account_credential_refund,
     address_credential_attempt,
+    source_credential_attempt,
+    source_credential_refund,
 )
 from app.schemas.auth import DatasetTokenRequest
 from app.services import naming, two_factor
@@ -437,7 +439,7 @@ DATASET_TOKEN_NEEDS_CODE_DETAIL = (
 
 
 @router.post("/token")
-async def mint_dataset_token(payload: DatasetTokenRequest) -> dict[str, Any]:
+async def mint_dataset_token(payload: DatasetTokenRequest, request: Request) -> dict[str, Any]:
     if payload.googleIdToken:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -450,16 +452,22 @@ async def mint_dataset_token(payload: DatasetTokenRequest) -> dict[str, Any]:
         allowed, _retry = account_credential_attempt(user.id)
     else:
         allowed, _retry = address_credential_attempt(identifier_key(payload.email))
+    if allowed:
+        allowed, _retry = source_credential_attempt(request.scope)
     if not allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=_TOKEN_THROTTLED_DETAIL,
         )
-    if not verify_password_or_decoy(payload.password or "", user.passwordHash if user else None) or not user:
+    matched = await asyncio.to_thread(
+        verify_password_or_decoy, payload.password or "", user.passwordHash if user else None
+    )
+    if not matched or not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password"
         )
     account_credential_refund(user.id)
+    source_credential_refund(request.scope)
     if not is_admin(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

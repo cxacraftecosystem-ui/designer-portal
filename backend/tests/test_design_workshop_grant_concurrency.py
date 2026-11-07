@@ -139,6 +139,10 @@ class _ExplodingDelegate(_Delegate):
         raise self.error
 
 
+async def _the_issuer_still_admits(_token: Any, _workshop: Any) -> bool:
+    return True
+
+
 @pytest.fixture
 def world(monkeypatch: pytest.MonkeyPatch):
     secret = grants.mint_secret()
@@ -185,6 +189,7 @@ def world(monkeypatch: pytest.MonkeyPatch):
         return None
 
     monkeypatch.setattr(grants, "_assert_every_id_may_be_granted", _every_id_is_fine)
+    monkeypatch.setattr(grants, "_issuer_still_admits", _the_issuer_still_admits)
     return SimpleNamespace(
         db=db,
         secret=secret,

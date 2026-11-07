@@ -473,6 +473,13 @@ async def get_current_user(
     return user
 
 
+async def roster_barred(user: Any) -> bool:
+    if user is None or is_break_glass_master(user):
+        return False
+    row = await access_roster.access_row(getattr(user, "email", None))
+    return access_roster.status_of(row) in access_roster.BARRED
+
+
 async def require_dataset_admin(
     connection: HTTPConnection,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),

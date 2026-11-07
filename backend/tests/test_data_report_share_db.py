@@ -258,3 +258,30 @@ def test_a_link_shows_only_what_its_creator_could_see_and_stays_theirs():
     assert out["listed"] == [out["own_id"]]
     assert out["refused"] == 403
     assert out["after_loss"] == 404
+
+
+def test_a_link_stops_once_its_owner_is_barred_on_the_access_roster():
+    async def work() -> dict[str, Any]:
+        seed = await _seed()
+        owner = await _user(seed, "ADMIN", "barred-owner")
+        try:
+            async with asgi_client() as client:
+                made = (
+                    await client.post("/api/data/report/shares", json={"path": "by-type"}, headers=_auth(owner))
+                ).json()
+                token = _token(made["url"])
+                before = await client.get(f"/api/report-share/{token}")
+                await db.accessroster.create(
+                    data={"email": owner.email, "status": "SUSPENDED", "decidedAt": datetime.now(UTC)}
+                )
+                after = await client.get(f"/api/report-share/{token}")
+                await db.accessroster.update(where={"email": owner.email}, data={"status": "REJECTED"})
+                rejected = await client.get(f"/api/report-share/{token}")
+            return {"before": before.status_code, "after": after.status_code, "rejected": rejected.status_code}
+        finally:
+            with contextlib.suppress(Exception):
+                await db.accessroster.delete_many(where={"email": owner.email})
+            await _cleanup(seed)
+
+    out = _private(work)
+    assert out == {"before": 200, "after": 404, "rejected": 404}

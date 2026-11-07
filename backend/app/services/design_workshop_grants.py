@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from app.core.db import db
-from app.core.deps import can_run_design_workshops, is_admin
+from app.core.deps import can_run_design_workshops, is_admin, roster_barred
 from app.services import design_workshop_posts as posts
 from app.services.design_workshop_access import ScannedCodeRefused, add_one_viewer, code_check
 from app.services.design_workshop_viewers import (
@@ -504,6 +504,18 @@ async def _file_or_refresh_the_queue_row(
     )
 
 
+async def _issuer_still_admits(token: Any, workshop: Any) -> bool:
+    issuer_id = getattr(token, "issuedById", None)
+    if not issuer_id:
+        return False
+    issuer = await db.user.find_unique(where={"id": issuer_id})
+    if issuer is None or await roster_barred(issuer):
+        return False
+    if is_admin(issuer) or workshop.createdById == issuer_id:
+        return True
+    return can_run_design_workshops(issuer) and await has_viewer_grant(workshop.id, issuer_id)
+
+
 async def redeem(
     user: Any,
     *,
@@ -540,6 +552,8 @@ async def redeem(
 
     workshop = await db.designworkshop.find_unique(where={"id": token.recordId})
     if workshop is None or getattr(workshop, "deletedAt", None) is not None:
+        raise CardRefused()
+    if not await _issuer_still_admits(token, workshop):
         raise CardRefused()
 
     if (

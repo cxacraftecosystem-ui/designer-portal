@@ -355,6 +355,13 @@ async def _accounts_on_the_mailbox(keys: list[str], mailbox: str) -> list[Any] |
     return list(found.values())
 
 
+async def accounts_at_the_address(email: Any) -> list[Any]:
+    keys = [key for key in email_match_keys(email) if len(key) <= MAX_EMAIL_LENGTH]
+    if not keys:
+        return []
+    return await db.user.find_many(where={"email": {"in": keys, "mode": "insensitive"}})
+
+
 async def accounts_on_the_mailbox(email: Any) -> list[Any] | None:
     keys = [key for key in email_match_keys(email) if len(key) <= MAX_EMAIL_LENGTH]
     if not keys:

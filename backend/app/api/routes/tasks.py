@@ -105,6 +105,8 @@ async def assert_all_assignable(assigner: Any, assignee_ids: list[str]) -> None:
 def has_task_authority(user: Any, tasks: Any) -> bool:
     if is_master_admin(user):
         return True
+    if not is_content_admin(user):
+        return False
     uid = get_value(user, "id")
     return all(get_value(task, "createdById") == uid for task in tasks)
 

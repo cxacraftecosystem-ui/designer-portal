@@ -197,7 +197,9 @@ def issuer_still_manages(issuer: Any, target: Any) -> bool:
 
 
 def holds_a_temporary_password(user: Any) -> bool:
-    flagged = bool(get_value(user, "mustChangePassword"))
+    flagged = bool(get_value(user, "mustChangePassword")) or bool(
+        get_value(user, "passwordIssuerKnown")
+    )
     return flagged and get_value(user, "passwordHash") is not None
 
 
@@ -460,6 +462,7 @@ async def _write_in_one_transaction(
                     "name": plan.name,
                     "passwordHash": hash_password(password) if password is not None else None,
                     "mustChangePassword": plan.must_change_password and has_password,
+                    "passwordIssuerKnown": has_password,
                     "passwordSetAt": now if has_password else None,
                     "role": plan.role,
                     "authProvider": "LOCAL",
