@@ -15,6 +15,7 @@ from app.core.deps import (
     can_approve_design_workshops,
     is_admin,
     role_value,
+    roster_barred,
 )
 from app.services import mailer, notifications, review_queue
 from app.services.concurrency import gather_reads
@@ -38,6 +39,7 @@ PENDING = "PENDING"
 DELIVERED = "DELIVERED"
 SKIPPED_EMPTY = "SKIPPED_EMPTY"
 SKIPPED_OPTOUT = "SKIPPED_OPTOUT"
+SKIPPED_BARRED = "SKIPPED_BARRED"
 
 PREFERENCE = "weeklyDigest"
 NOT_ELIGIBLE = "The weekly summary is for reviewers and officials."
@@ -548,6 +550,9 @@ async def _send(
     settings: Settings,
     shared: dict[str, Any] | None = None,
 ) -> str:
+    if await roster_barred(user):
+        await db.weeklydigest.update(where={"id": row.id}, data={"status": SKIPPED_BARRED})
+        return SKIPPED_BARRED
     if not await notifications.wants_email(str(user.id), PREFERENCE):
         await db.weeklydigest.update(where={"id": row.id}, data={"status": SKIPPED_OPTOUT})
         return SKIPPED_OPTOUT
@@ -648,6 +653,7 @@ _TALLY_KEY = {
     DELIVERED: "delivered",
     SKIPPED_EMPTY: "empty",
     SKIPPED_OPTOUT: "optedOut",
+    SKIPPED_BARRED: "barred",
     PENDING: "failed",
 }
 
@@ -673,6 +679,7 @@ async def run_weekly_digests(
         "delivered": 0,
         "empty": 0,
         "optedOut": 0,
+        "barred": 0,
         "existing": 0,
         "failed": 0,
         "repaired": 0,

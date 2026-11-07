@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+from app.core.security import create_access_token
 from app.scale import rate_limit
 from app.scale.rate_limit import (
     _CREDENTIAL_REFUSAL,
@@ -100,8 +101,8 @@ async def test_a_cors_preflight_is_never_limited() -> None:
 
 async def test_two_bearer_tokens_get_two_allowances() -> None:
     async with _client(_stub(), requests=2, window_seconds=60.0) as client:
-        one = {"Authorization": "Bearer token-for-meera"}
-        two = {"Authorization": "Bearer token-for-arjun"}
+        one = {"Authorization": f"Bearer {create_access_token(subject='meera')}"}
+        two = {"Authorization": f"Bearer {create_access_token(subject='arjun')}"}
         spent = [(await client.get("/api/anything", headers=one)).status_code for _ in range(2)]
         meera_refused = await client.get("/api/anything", headers=one)
         arjun = await client.get("/api/anything", headers=two)
@@ -111,7 +112,7 @@ async def test_two_bearer_tokens_get_two_allowances() -> None:
     assert arjun.status_code == 200
 
 
-async def test_the_left_most_forwarded_address_is_the_identity() -> None:
+async def test_the_hop_counted_forwarded_address_is_the_identity() -> None:
     async with _client(_stub(), requests=1, window_seconds=60.0) as client:
         chain = {"X-Forwarded-For": "198.51.100.4, 70.132.0.1"}
         other = {"X-Forwarded-For": "198.51.100.9, 70.132.0.1"}

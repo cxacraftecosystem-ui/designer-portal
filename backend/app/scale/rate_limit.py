@@ -93,24 +93,29 @@ def trusted_viewer_address(scope: Scope) -> str | None:
         return None
 
 
+def _verified_subject(token: bytes) -> str | None:
+    from app.core.security import decode_access_token
+
+    try:
+        claims = decode_access_token(token.decode("latin-1"))
+    except ValueError:
+        return None
+    subject = claims.get("sub")
+    return str(subject) if subject else None
+
+
 def _identity(scope: Scope, *, ignore_bearer: bool = False) -> str:
-    forwarded = b""
-    viewer = trusted_viewer_address(scope)
-    for name, value in scope.get("headers", []):
-        if name == b"authorization" and not ignore_bearer:
+    if not ignore_bearer:
+        for name, value in scope.get("headers", []):
+            if name != b"authorization":
+                continue
             token = value.strip()
             if token[:7].lower() == b"bearer " and len(token) > 7:
-                return "t:" + hashlib.sha256(token[7:]).hexdigest()[:16]
-        elif name == b"x-forwarded-for" and not forwarded:
-            forwarded = value
-    if viewer:
-        return "ip:" + viewer
-    if forwarded:
-        first = forwarded.split(b",")[0].strip()
-        if first:
-            return "ip:" + first.decode("latin-1")
-    client = scope.get("client")
-    return f"ip:{client[0]}" if client else "ip:unknown"
+                subject = _verified_subject(token[7:].strip())
+                if subject:
+                    return "t:" + hashlib.sha256(subject.encode("utf-8")).hexdigest()[:16]
+            break
+    return client_address(scope)
 
 
 _ACCOUNT_FAILURES = 10
@@ -132,6 +137,23 @@ def address_credential_attempt(identifier_key: str) -> tuple[bool, float]:
 
 def account_credential_refund(account_id: str) -> None:
     _account_buckets.refund(f"acct:{account_id}")
+
+
+SOURCE_CREDENTIAL_FAILURES = 30
+SOURCE_CREDENTIAL_WINDOW_SECONDS = 300.0
+
+_source_buckets = _TokenBuckets(
+    capacity=SOURCE_CREDENTIAL_FAILURES,
+    refill_per_second=SOURCE_CREDENTIAL_FAILURES / SOURCE_CREDENTIAL_WINDOW_SECONDS,
+)
+
+
+def source_credential_attempt(scope: Scope) -> tuple[bool, float]:
+    return _source_buckets.take(f"src:{client_address(scope)}")
+
+
+def source_credential_refund(scope: Scope) -> None:
+    _source_buckets.refund(f"src:{client_address(scope)}")
 
 
 FORGOT_PASSWORD_REQUESTS = 5
@@ -223,6 +245,7 @@ def reset_account_credential_budget() -> None:
     _forgot_password_buckets._buckets.clear()  # noqa: SLF001 - and this one
     _forgot_password_global._buckets.clear()  # noqa: SLF001 - and the process-wide one
     _first_password_code_buckets._buckets.clear()  # noqa: SLF001 - and the first-password one
+    _source_buckets._buckets.clear()  # noqa: SLF001 - and the per-network one
 
 
 class RateLimitMiddleware:

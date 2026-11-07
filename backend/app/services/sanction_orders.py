@@ -132,6 +132,11 @@ SANCTION_LINK_NOT_THIS_REGISTERS_ACCOUNT = (
     "register did not create is an administrator's act: ask an admin to send one from the users "
     "screen."
 )
+SANCTION_LINK_ALREADY_SIGNED_IN = (
+    "This designer has already set a password or signed in, so there is no first sign-in link "
+    "left to re-issue. Resetting a password that is in use is an administrator's act: ask an "
+    "admin to send a password link from the users screen."
+)
 SANCTION_LINK_NOT_ON_THIS_ORDER = (
     "That designer is not named on this sanction order, so it cannot issue them a sign-in link."
 )
@@ -803,6 +808,15 @@ def _link_payload(delivered: Any) -> dict[str, Any]:
     }
 
 
+async def _first_sign_in_pending(user: Any) -> bool:
+    if getattr(user, "firstLoginAt", None) is not None:
+        return False
+    used = await db.passwordresettoken.count(
+        where={"userId": user.id, "usedAt": {"not": None}}
+    )
+    return used == 0
+
+
 async def reissue_credential_link(
     row: Any,
     officer: Any,
@@ -855,6 +869,11 @@ async def reissue_credential_link(
                 "there is no sign-in link to issue."
             ),
         )
+    if not await _first_sign_in_pending(user):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=SANCTION_LINK_ALREADY_SIGNED_IN,
+        )
     if deliver_by == credential_links.EMAIL and not (mailer.mail_configured() and user.email):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -863,6 +882,7 @@ async def reissue_credential_link(
     try:
         delivered = await credential_links.issue_link(
             user=user,
+            purpose=credential_links.INVITE,
             issued_by_id=getattr(officer, "id", None),
             deliver_by=deliver_by,
             email_params={

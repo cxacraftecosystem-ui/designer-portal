@@ -208,6 +208,7 @@ async def update_user(
     ends_sessions = False
     if "password" in data:
         data["passwordHash"] = hash_password(data.pop("password"))
+        data["passwordIssuerKnown"] = True
         data.setdefault("mustChangePassword", True)
         ends_sessions = True
     if data.get("mustChangePassword") is True:
@@ -495,6 +496,7 @@ async def delete_user(user_id: str, current_user: Any = Depends(require_admin)) 
             detail="You cannot delete your own account",
         )
     assert_can_manage_target(current_user, user)
+    issued_links = await credential_links.outstanding_issued_by(user_id)
     try:
         await db.user.delete(where={"id": user_id})
     except ForeignKeyViolationError as exc:
@@ -508,4 +510,5 @@ async def delete_user(user_id: str, current_user: Any = Depends(require_admin)) 
                 uncounted=owned.uncounted + named_on.uncounted,
             ),
         ) from exc
+    await credential_links.revoke_ids(issued_links)
     invalidate_cached_user(user_id)

@@ -1174,8 +1174,20 @@ def test_an_admin_may_move_a_barred_account_and_the_bar_goes_with_it(world, clie
 
 
 
+def _owner_chooses_a_password(client: Any, account: dict[str, Any]) -> None:
+    signed_in = _login(client, account["email"])
+    assert signed_in.status_code == 200, signed_in.text
+    changed = client.post(
+        "/api/auth/change-password",
+        json={"currentPassword": NEW_PASSWORD, "newPassword": "owner-chosen-password-1"},
+        headers=_bearer(signed_in.json()["accessToken"]),
+    )
+    assert changed.status_code == 200, changed.text
+
+
 def test_a_promotion_withdraws_the_links_a_lower_provisioner_issued(world, client):
     account = _settled_account(client, world, "promoted-past-its-link")
+    _owner_chooses_a_password(client, account)
     issued = _link(client, world, "ministry", account["id"])
     assert issued.status_code == 201, issued.text
     token = parse_qs(urlsplit(issued.json()["link"]).query)["token"][0]
@@ -1245,14 +1257,7 @@ def test_a_promotion_waits_even_when_the_typed_password_was_not_flagged(world, c
 
 def test_a_promotion_goes_ahead_once_the_owner_chose_the_password(world, client):
     account = _settled_account(client, world, "owner-chose")
-    signed_in = _login(client, account["email"])
-    assert signed_in.status_code == 200, signed_in.text
-    changed = client.post(
-        "/api/auth/change-password",
-        json={"currentPassword": NEW_PASSWORD, "newPassword": "owner-chosen-password-1"},
-        headers=_bearer(signed_in.json()["accessToken"]),
-    )
-    assert changed.status_code == 200, changed.text
+    _owner_chooses_a_password(client, account)
     promoted = _patch(client, world, "admin", account["id"], role="ADMIN")
     assert promoted.status_code == 200, promoted.text
 
@@ -1274,6 +1279,7 @@ def _role_of(client: Any, world: dict[str, Any], account: dict[str, Any]) -> str
 
 def test_an_approval_never_changes_an_existing_account_or_its_links(world, client, caplog):
     account = _settled_account(client, world, "kept-at-its-role")
+    _owner_chooses_a_password(client, account)
     issued = _link(client, world, "master", account["id"])
     assert issued.status_code == 201, issued.text
     token = parse_qs(urlsplit(issued.json()["link"]).query)["token"][0]

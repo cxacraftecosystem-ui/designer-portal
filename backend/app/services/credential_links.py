@@ -382,6 +382,22 @@ async def revoke_outstanding(user_id: str) -> int:
     )
 
 
+async def outstanding_issued_by(issuer_id: str) -> list[str]:
+    rows = await db.passwordresettoken.find_many(
+        where={"issuedById": issuer_id, "usedAt": None, "revokedAt": None}
+    )
+    return [row.id for row in rows]
+
+
+async def revoke_ids(row_ids: list[str]) -> int:
+    if not row_ids:
+        return 0
+    return await db.passwordresettoken.update_many(
+        where={"id": {"in": row_ids}, "usedAt": None, "revokedAt": None},
+        data={"revokedAt": datetime.now(UTC)},
+    )
+
+
 async def mark_used(raw: str) -> None:
     digest = token_digest(raw.strip())
     row = await db.passwordresettoken.find_unique(where={"tokenHash": digest})

@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import logging
 import time
@@ -21,6 +22,7 @@ from app.core.deps import (
     password_credential,
     require_account_provisioner,
     role_value,
+    roster_barred,
 )
 from app.core.security import (
     create_access_token,
@@ -37,6 +39,8 @@ from app.scale.rate_limit import (
     first_password_code_attempt,
     first_password_code_refund,
     forgot_password_attempt,
+    source_credential_attempt,
+    source_credential_refund,
 )
 from app.schemas.auth import (
     ChangePasswordRequest,
@@ -409,7 +413,7 @@ async def _sign_in_verified_mailbox(
 
 
 @router.post("/login", response_model=TokenResponse | TwoFactorChallengeResponse)
-async def login(payload: LoginRequest) -> dict[str, Any]:
+async def login(payload: LoginRequest, request: Request) -> dict[str, Any]:
     if payload.googleIdToken:
         user, access = await login_with_google(payload.googleIdToken)
     elif payload.has_oidc_login:
@@ -433,17 +437,23 @@ async def login(payload: LoginRequest) -> dict[str, Any]:
             allowed, _retry = account_credential_attempt(user.id)
         else:
             allowed, _retry = address_credential_attempt(identity.identifier_key(payload.email))
+        if allowed:
+            allowed, _retry = source_credential_attempt(request.scope)
         if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=ACCOUNT_THROTTLED_DETAIL,
             )
-        if not verify_password_or_decoy(payload.password or "", user.passwordHash if user else None) or not user:
+        matched = await asyncio.to_thread(
+            verify_password_or_decoy, payload.password or "", user.passwordHash if user else None
+        )
+        if not matched or not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password",
             )
         account_credential_refund(user.id)
+        source_credential_refund(request.scope)
         access = await assert_access_admits(user.email, is_master=is_break_glass_master(user))
 
     await admit_signed_in_account(user, access)
@@ -602,6 +612,13 @@ async def _link_verdict(raw: str | None) -> credential_links.TokenVerdict:
         return verdict
     issuer = await db.user.find_unique(where={"id": verdict.issued_by_id})
     target = await db.user.find_unique(where={"id": verdict.user_id})
+    if issuer is not None and await roster_barred(issuer):
+        logger.info(
+            "auth: refused password link for account %s: its issuer %s has been barred",
+            verdict.user_id,
+            verdict.issued_by_id,
+        )
+        return credential_links.TokenVerdict(False, credential_links.REVOKED)
     if target is not None and not issuer_still_manages(issuer, target):
         logger.info(
             "auth: refused password link for account %s: its issuer %s can no longer manage it",
@@ -637,6 +654,7 @@ async def set_password(payload: SetPasswordRequest) -> dict[str, bool]:
             "passwordHash": password_hash,
             "passwordSetAt": now,
             "mustChangePassword": False,
+            "passwordIssuerKnown": False,
             "sessionsValidFrom": now,
         },
     )
@@ -771,6 +789,7 @@ async def change_password(
             "passwordHash": password_hash,
             "passwordSetAt": datetime.now(UTC),
             "mustChangePassword": False,
+            "passwordIssuerKnown": False,
             "sessionsValidFrom": _watermark_now(),
         },
     )
@@ -801,6 +820,7 @@ async def _set_first_password(
             "passwordHash": password_hash,
             "passwordSetAt": datetime.now(UTC),
             "mustChangePassword": False,
+            "passwordIssuerKnown": False,
             "sessionsValidFrom": _watermark_now(),
         },
     )
