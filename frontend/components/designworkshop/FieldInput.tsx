@@ -16,7 +16,7 @@ import {
 import { deferredTool, registerWarm } from "@/components/designworkshop/deferredTool";
 import type { DwFieldStamp } from "@/lib/designWorkshops";
 import { FieldProvenance } from "@/components/designworkshop/FieldProvenance";
-import { Paperclip, X } from "lucide-react";
+import { ImageOff, Paperclip, X } from "lucide-react";
 
 import { DictationButton } from "@/components/designworkshop/Dictation";
 import { InfoPanel, InfoToggle } from "@/components/ui/InfoDisclosure";
@@ -62,6 +62,7 @@ import { TranscriptViewer } from "@/components/transcript/TranscriptViewer";
 import { DownloadMediaButton } from "@/components/media/DownloadMediaButton";
 import { GalleryProgress } from "@/components/media/GalleryProgress";
 import { MediaCarousel, type CarouselItem } from "@/components/media/MediaCarousel";
+import { RefreshingImage } from "@/components/media/RefreshingImage";
 import { capCeilingClause, mediaPickerTypeFilter } from "@/components/media/mediaPicker";
 import { MediaRepositoryPicker } from "@/components/media/MediaRepositoryPicker";
 import {
@@ -2022,23 +2023,42 @@ function MediaField({
           {ids.map((id) => {
             const local = isLocalMediaRef(id) ? staged[id] : undefined;
             const file = local ? undefined : files[id];
-            const thumbnail = local?.url ?? (file?.mediaType === "IMAGE" ? file.url : null);
+            const attachmentIcon = (
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-sm bg-field-200 text-field-600 dark:text-purple-300">
+                <Paperclip className="h-4 w-4" aria-hidden />
+              </span>
+            );
             return (
               <li key={id} className="rounded-md border border-line-200 bg-card px-3 py-2">
                 <div className="flex items-center gap-2">
-                {thumbnail ? (
+                {local?.url ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={thumbnail}
-                    alt={local ? local.name : file?.caption || file?.originalFilename || ""}
+                    src={local.url}
+                    alt={local.name}
                     className="h-10 w-10 shrink-0 rounded-sm object-cover"
                     loading="lazy"
                     decoding="async"
                   />
+                ) : !local && file?.mediaType === "IMAGE" && file.url ? (
+                  <RefreshingImage
+                    media={file}
+                    alt={file.caption || file.originalFilename || ""}
+                    className="h-10 w-10 shrink-0 rounded-sm object-cover"
+                    loading="lazy"
+                    decoding="async"
+                    fallback={
+                      <span
+                        title={`${file.originalFilename} couldn't be loaded.`}
+                        className="grid h-10 w-10 shrink-0 place-items-center rounded-sm bg-field-200 text-ink-500"
+                      >
+                        <ImageOff className="h-4 w-4" aria-hidden />
+                        <span className="sr-only">{`${file.originalFilename} couldn't be loaded.`}</span>
+                      </span>
+                    }
+                  />
                 ) : (
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-sm bg-field-200 text-field-600 dark:text-purple-300">
-                    <Paperclip className="h-4 w-4" aria-hidden />
-                  </span>
+                  attachmentIcon
                 )}
                 <span className="min-w-0 flex-1 truncate text-sm text-ink-900">
                   {local
