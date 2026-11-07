@@ -340,10 +340,10 @@ def test_an_unknown_disposition_is_spelled_attachment(fake_storage):
 
 
 
-def test_the_flag_defaults_to_off_in_the_declared_settings():
+def test_the_flag_defaults_to_on_in_the_declared_settings():
     field = config.Settings.model_fields["media_presigned_reads"]
 
-    assert field.default is False
+    assert field.default is True
     assert field.alias == "MEDIA_PRESIGNED_READS"
 
 
