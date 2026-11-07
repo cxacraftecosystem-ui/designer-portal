@@ -156,6 +156,7 @@ private fun blockedLine(blocked: Int): String = if (blocked <= 0) "" else {
 fun WorkshopListScreen(
     repository: WorkshopRepository,
     startCreating: Boolean = false,
+    initialSearch: String? = null,
     onOpen: (workshopId: String) -> Unit,
     onMessage: (String) -> Unit,
     onError: (String) -> Unit,
@@ -168,6 +169,7 @@ fun WorkshopListScreen(
     var rows by rememberKept("dw.list.rows") { emptyList<WorkshopRow>() }
     var loading by remember { mutableStateOf(true) }
     var search by rememberKept("dw.list.search") { "" }
+    LaunchedEffect(initialSearch) { initialSearch?.takeIf { it.isNotBlank() }?.let { search = it } }
     var kindFilter by rememberKept("dw.list.kind") { "" }
     val cachedSession = repository.cachedUser()
     val mayCreate = remember(cachedSession?.id, cachedSession?.role) {

@@ -67,6 +67,7 @@ fun DataBrowserScreen(
                 onOpenInData = onOpenInData,
                 onPlay = onPlay,
                 onOpenRemote = onOpenRemote?.let { open -> { type: String, id: String -> onClose(); open(type, id) } },
+                onOpenCluster = onOpenRecord?.let { open -> { name: String -> onClose(); open(SearchRecordTypes.CLUSTER, name) } },
                 onClose = onClose,
             )
         },
