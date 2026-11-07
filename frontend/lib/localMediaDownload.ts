@@ -1,4 +1,4 @@
-import { saveBlobToDisk } from "@/lib/fileDownload";
+import { isSafeDownloadUrl, saveBlobToDisk } from "@/lib/fileDownload";
 import { recordingFilename } from "@/lib/naming";
 
 const EXTENSION_BY_MIME: Record<string, string> = {
@@ -122,6 +122,7 @@ export async function downloadMediaUrl(url: string, name?: string | null, mimeTy
     const blob = await response.blob();
     saveBlobToDisk(blob, fileName);
   } catch {
+    if (!isSafeDownloadUrl(url)) return;
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = fileName;

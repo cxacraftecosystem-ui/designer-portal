@@ -7,6 +7,7 @@ import { TranscriptInsights } from "@/components/media/TranscriptInsights";
 import { TranscriptRefine } from "@/components/media/TranscriptRefine";
 import { EditedFlag, MarkdownDocument } from "@/components/richtext/MarkdownDocument";
 import { useAuth } from "@/components/AuthProvider";
+import { useMediaUrl } from "@/components/hooks/useMediaUrl";
 import { TranscriptViewer } from "@/components/transcript/TranscriptViewer";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { transcribeMediaNow } from "@/lib/media";
@@ -82,13 +83,14 @@ function LegacyTranscriptBlock({
   }, [media.id]);
 
   const current = live ?? media;
+  const { src: playable } = useMediaUrl(current);
   const status = (current.transcriptStatus ?? "").toUpperCase();
   const isAudio = current.mediaType === "AUDIO" || (current.mimeType ?? "").toLowerCase().startsWith("audio/");
   const hasText = !!current.transcriptText && current.transcriptText.trim().length > 0;
 
   if (!isAudio && current.mediaType !== "VIDEO" && !status && !hasText) return null;
 
-  const player = isAudio && current.url ? <AudioPlayer src={current.url} className="mt-2" /> : null;
+  const player = isAudio && playable ? <AudioPlayer src={playable} className="mt-2" /> : null;
 
   async function transcribeNow() {
     if (readOnlyReason) return;

@@ -214,24 +214,23 @@ def cluster_of(artisan: Any) -> str | None:
 
 
 async def photo_of(artisan_id: str, viewer_owners: set[str] | None) -> Any | None:
-    where: dict[str, Any] = {"artisanId": artisan_id, "mediaType": "IMAGE"}
-    if viewer_owners is not None:
-        if not viewer_owners:
-            return None
-        where["uploadedById"] = {"in": sorted(viewer_owners)}
-    return await db.mediafile.find_first(where=where, order={"createdAt": "asc"})
+    return (await photos_of([artisan_id], viewer_owners)).get(artisan_id)
 
 
 async def photos_of(artisan_ids: list[str], viewer_owners: set[str] | None) -> dict[str, Any]:
-    if not artisan_ids or (viewer_owners is not None and not viewer_owners):
+    from app.services.records import media_url_allows
+
+    uploaders = None if viewer_owners is None else {*viewer_owners, *getattr(viewer_owners, "scoped", {})}
+    if not artisan_ids or (uploaders is not None and not uploaders):
         return {}
-    where: dict[str, Any] = {"artisanId": {"in": artisan_ids}, "mediaType": "IMAGE"}
-    if viewer_owners is not None:
-        where["uploadedById"] = {"in": sorted(viewer_owners)}
+    where: dict[str, Any] = {"artisanId": {"in": artisan_ids}, "mediaType": "IMAGE", "removedAt": None}
+    if uploaders is not None:
+        where["uploadedById"] = {"in": sorted(uploaders)}
     rows = await db.mediafile.find_many(where=where, order={"createdAt": "asc"})
     out: dict[str, Any] = {}
     for row in rows:
-        out.setdefault(row.artisanId, row)
+        if media_url_allows(viewer_owners, row):
+            out.setdefault(row.artisanId, row)
     return out
 
 
