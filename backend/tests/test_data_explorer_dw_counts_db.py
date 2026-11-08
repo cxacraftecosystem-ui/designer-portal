@@ -232,7 +232,7 @@ def test_every_filter_gives_the_same_count_to_the_tree_header_tabs_and_facets():
         case = seen["cases"][key]
         tree = _folders(case["tree"])
         mine = {k: v for k, v in tree.items() if k in (a, b)}
-        assert all(count > 0 for count in tree.values()), (key, tree)
+        assert sum(mine.values()) == sum(count for count in tree.values() if count > 0), (key, tree)
         assert tree == case["folders"], (key, tree, case["folders"])
         assert sum(tree.values()) == case["header"]["records"], (key, tree, case["header"])
         assert sum(mine.values()) == want, (key, mine, want)
