@@ -3416,7 +3416,6 @@ async def data_report(
     thumbnails: str | None = None,
     locale: str | None = None,
     extras: str | None = None,
-    parts: str | None = None,
     offset: int = Query(0, ge=0, le=REPORT_TAKE),
     current_user: Any = Depends(require_dataset_downloader),
 ) -> Response:
@@ -3437,7 +3436,6 @@ async def data_report(
         return await _build_report(
             path, fmt, current_user, q=q, sheet=sheet, options=options,
             file_name=report_options.file_name(name), offset=offset,
-            parts=(parts or "").strip().lower() == "zip",
         )
     except report_cache.ReportBusy as busy:
         raise HTTPException(
@@ -3574,14 +3572,13 @@ async def _build_report(
     options: report_options.ReportOptions | None = None,
     file_name: str | None = None,
     offset: int = 0,
-    parts: bool = False,
 ) -> Response:
     options = options or report_options.ReportOptions()
     if fmt == "xlsx":
         return await report_jobs.fetch(
             current_user,
             report_jobs.REPORT,
-            report_jobs.report_params(path, options, name=file_name, sheet=sheet, parts=parts),
+            report_jobs.report_params(path, options, name=file_name, sheet=sheet),
         )
     scope = await _scope_for(current_user)
     searching = fmt == "json" and bool(report_tools.words(q))
