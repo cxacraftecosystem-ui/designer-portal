@@ -210,7 +210,7 @@ def test_a_table_whose_rows_all_fell_past_the_cap_still_gets_its_tab(monkeypatch
 
 def test_the_overview_counts_rows_the_workbook_could_not_carry(monkeypatch):
     sheets, _entries_delegate = _report(monkeypatch)
-    sheet = _by_name(sheets, "Design workshops")
+    sheet = _by_name(sheets, "Design workshop progress")
     id_at = sheet["columns"].index("Workshop id")
     stages_at = sheet["columns"].index("Stages answered")
     rows_at = sheet["columns"].index("Rows recorded")
@@ -245,7 +245,7 @@ def test_an_untruncated_report_is_flagged_nowhere_and_counts_what_it_holds(monke
         assert "truncatedNote" not in sheet, sheet["name"]
 
     assert _index_rows(sheets)["participant"] == _true_by_entity()["participant"]
-    overview = _by_name(sheets, "Design workshops")
+    overview = _by_name(sheets, "Design workshop progress")
     stages_at = overview["columns"].index("Stages answered")
     assert not any("+" in row[stages_at] for row in overview["rows"])
 
@@ -261,3 +261,15 @@ def test_sheets_built_from_a_hand_made_bundle_still_count_their_own_rows(monkeyp
     assert rows["sketch"] == SEED["dw_1"]["sketch"]
     assert rows["participant"] == SEED["dw_1"]["participant"]
     assert all(sheet["truncated"] is False for sheet in sheets)
+
+
+def test_no_design_workshop_sheet_shares_a_name_with_a_record_sheet(monkeypatch):
+    from app.services.datareport import tables
+
+    sheets, _entries_delegate = _report(monkeypatch)
+    legacy = [sheet["name"] for sheet in _dw_sheets(sheets)]
+    records = {table.title for table in tables.tables_for("designer")}
+    assert "Design workshop progress" in legacy
+    assert "Design workshops" in records
+    assert len(legacy) == len(set(legacy))
+    assert not set(legacy) & records

@@ -105,7 +105,7 @@ object SearchRecordTypes {
         MEDIA -> "Media"
         DESIGN_WORKSHOP -> "Design workshops"
         CRAFT -> "Crafts"
-        else -> recordType.replaceFirstChar { it.uppercase() }
+        else -> com.designprototype.workshop.explorer.ui.folderKind(recordType) ?: recordType
     }
 
     fun bucket(recordType: String): String = when (recordType) {

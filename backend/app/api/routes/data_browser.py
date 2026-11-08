@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import ctypes
+import dataclasses
 import functools
 import json
 import sys
@@ -1407,6 +1408,63 @@ def _dw_stage_folders(parent: str, entries: list[Any]) -> list[dict[str, Any]]:
     ]
 
 
+async def _dw_owner(record: Any, files: int = 0, *, artisans: bool = False) -> explorer_filters.RecordFiles:
+    linked: tuple[str, ...] = ()
+    if artisans:
+        rows = await explorer_walk.memo(
+            _memo_key("dw-artisans", record.id),
+            lambda: _every(db.artisan.find_many, where={"designWorkshopId": record.id}),
+        )
+        linked = tuple(str(r.id) for r in rows)
+    state = getattr(record, "status", None)
+    return explorer_filters.RecordFiles(
+        record_type="designWorkshops",
+        record_id=str(record.id),
+        files=files,
+        workshop_ids=(str(record.workshopId),) if getattr(record, "workshopId", None) else (),
+        craft_ids=(str(record.craftId),) if getattr(record, "craftId", None) else (),
+        artisan_ids=linked,
+        status=str(getattr(state, "value", state)) if state else None,
+    )
+
+
+async def _dw_text_shown(record: Any, scope: Scope) -> bool:
+    flt = explorer_filters.real(getattr(scope, "explorer_filter", None))
+    if flt is None or not flt.active:
+        return True
+    owner = await _dw_owner(record, artisans=bool(flt.artisans))
+    return explorer_filters.record_files_pass(flt, owner)
+
+
+async def record_files(scope: Scope) -> list[explorer_filters.RecordFiles]:
+    if not scope.design_workshops:
+        return []
+    workshops = await _every(
+        db.designworkshop.find_many, where={"deletedAt": None}, order={"title": "asc"}
+    )
+    if not workshops:
+        return []
+    plain = dataclasses.replace(scope, explorer_filter=None)
+    files, _cut = await explorer_walk.manifest_files(
+        _list_level,
+        plain,
+        [(f"by-design-workshop/{record.id}", record.id) for record in workshops],
+        {"text"},
+        fill=False,
+    )
+    per: dict[str, int] = {}
+    for entry in files:
+        if entry is None or entry.get("mediaId"):
+            continue
+        head = str(entry.get("path") or "").split("/", 1)[0]
+        per[head] = per.get(head, 0) + 1
+    return [
+        await _dw_owner(record, per.get(str(record.id), 0), artisans=True)
+        for record in workshops
+        if per.get(str(record.id), 0)
+    ]
+
+
 async def _list_design_workshops_level(segs: list[str], parent: str, scope: Scope) -> Level:
     if len(segs) == 1:
         workshops = await _every(
@@ -1436,12 +1494,13 @@ async def _list_design_workshops_level(segs: list[str], parent: str, scope: Scop
         stage_folders = _dw_stage_folders(f"{parent}/stages", entries)
         info = _dw_info(record, len(stage_folders), len(entries))
         entries_out: list[dict[str, Any]] = list(stage_folders)
+        shown = await _dw_text_shown(record, scope)
 
-        details = _text(parent, "details.txt", _info_text(info))
+        details = _text(parent, "details.txt", _info_text(info)) if shown else None
         if details:
             entries_out.append(details)
 
-        custom = grouped.get(dw.CUSTOM_ENTITY_KEY) or []
+        custom = (grouped.get(dw.CUSTOM_ENTITY_KEY) or []) if shown else []
         if custom:
             custom_text = _text(
                 parent,
@@ -1451,7 +1510,7 @@ async def _list_design_workshops_level(segs: list[str], parent: str, scope: Scop
             if custom_text:
                 entries_out.append(custom_text)
 
-        if unknown:
+        if unknown and shown:
             note = "\n".join(
                 f"{item.rows} {'entry' if item.rows == 1 else 'entries'} under "
                 f"'{item.entity_key}' come from a newer version of the form and can't be "
@@ -1491,7 +1550,8 @@ async def _list_design_workshops_level(segs: list[str], parent: str, scope: Scop
     )
     grouped, _unknown = dw.flatten(record, entries)
     out: list[dict[str, Any]] = []
-    for entity in stage.entities:
+    shown = await _dw_text_shown(record, scope)
+    for entity in stage.entities if shown else ():
         rows = grouped.get(entity.key) or []
         if not rows:
             continue
@@ -3162,7 +3222,7 @@ def _dw_overview_sheet(
     )
     return _dw_say(
         _sheet(
-            "Design workshops",
+            "Design workshop progress",
             DW_COLOR,
             columns,
             rows,

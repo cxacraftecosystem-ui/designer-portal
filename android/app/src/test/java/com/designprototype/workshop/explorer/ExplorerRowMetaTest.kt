@@ -4,6 +4,7 @@ import com.designprototype.workshop.explorer.data.ExplorerEntry
 import com.designprototype.workshop.explorer.data.ExplorerJson
 import com.designprototype.workshop.explorer.ui.capturedDay
 import com.designprototype.workshop.explorer.ui.fileMeta
+import com.designprototype.workshop.explorer.ui.folderKind
 import com.designprototype.workshop.explorer.ui.folderMeta
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -22,6 +23,15 @@ class ExplorerRowMetaTest {
         assertEquals("Artisan", folderMeta(ExplorerEntry(name = "G", path = "a", kind = "folder", recordType = "artisan")))
         assertNull(folderMeta(ExplorerEntry(name = "G", path = "a", kind = "folder")))
         assertEquals("0 files", folderMeta(ExplorerEntry(name = "G", path = "a", kind = "folder", count = 0, bytes = 0)))
+    }
+
+    @Test fun `a folder kind reads as words, never as the model name`() {
+        assertEquals("Design workshop stage · 1 file", folderMeta(ExplorerEntry(name = "01 Setup", path = "s", kind = "folder", recordType = "designWorkshopStage", count = 1, bytes = 0)))
+        assertEquals("Design workshop", folderKind("designWorkshop"))
+        assertEquals("Process step", folderKind("processStep"))
+        assertEquals("Category", folderKind("category"))
+        assertEquals("Some new kind", folderKind("someNewKind"))
+        assertNull(folderKind(" "))
     }
 
     @QFeature("X2")

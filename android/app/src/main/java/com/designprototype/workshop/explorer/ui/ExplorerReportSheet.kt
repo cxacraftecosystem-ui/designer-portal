@@ -53,6 +53,7 @@ import com.designprototype.workshop.explorer.data.ExplorerViewFilters
 import com.designprototype.workshop.explorer.data.ExplorerMore
 import com.designprototype.workshop.explorer.data.ExplorerPaths
 import com.designprototype.workshop.explorer.portal.ExplorerPortal
+import com.designprototype.workshop.explorer.data.ExplorerReportExtras
 import com.designprototype.workshop.explorer.data.ExplorerReportOptions
 import com.designprototype.workshop.explorer.data.ExplorerReportOptionsBody
 import com.designprototype.workshop.explorer.data.ExplorerSheet
@@ -224,7 +225,7 @@ internal fun ReportOptionsSheet(
         links = links,
         thumbnails = thumbnails,
         locale = locale,
-        extras = extras.filterValues { it },
+        extras = extras,
     )
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet) {
@@ -321,8 +322,8 @@ internal fun ReportOptionsSheet(
                 offered.forEach { x ->
                     com.designprototype.workshop.ui.AppToggle(
                         label = x.title,
-                        checked = extras[x.key] == true,
-                        onCheckedChange = { on -> extras = extras + (x.key to on) },
+                        checked = ExplorerReportExtras.on(extras, x.key),
+                        onCheckedChange = { on -> extras = ExplorerReportExtras.with(extras, offered.map { it.key }, x.key, on) },
                         modifier = Modifier.fillMaxWidth().testTag("explorer.report.extra.${x.key}"),
                     )
                 }

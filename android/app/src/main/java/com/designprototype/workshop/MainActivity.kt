@@ -1987,9 +1987,9 @@ private fun HomeScreen(
     var sections by remember { mutableStateOf<List<QuestionnaireSectionDto>>(emptyList()) }
     var crafts by remember { mutableStateOf<List<CraftDto>>(emptyList()) }
     var artisans by remember { mutableStateOf<List<ArtisanDto>>(emptyList()) }
-    var screen by rememberSaveable(stateSaver = ScreenSaver) { mutableStateOf<Screen>(Screen.Dashboard) }
+    var screen by rememberSaveable(stateSaver = ScreenSaver, key = "home.screen") { mutableStateOf<Screen>(Screen.Dashboard) }
     var questionnaireNewForm by remember { mutableIntStateOf(0) }
-    var dataBrowserPath by rememberSaveable { mutableStateOf("") }
+    var dataBrowserPath by rememberSaveable(key = "home.dataPath") { mutableStateOf("") }
     val dataExplorer = key(user.id) { com.designprototype.workshop.explorer.ui.rememberDataExplorerState() }
     val dataHolder = rememberSaveableStateHolder()
     val searchMemory = remember { SearchMemory() }
@@ -4488,7 +4488,7 @@ private fun RecentSubmissionRow(
     onOpenRecord: (EntryMode, String) -> Unit
 ) {
     val mode = remember(item.type) { recentSubmissionEntryMode(item.type) }
-    val typeLabel = item.type.replaceFirstChar { it.uppercase() }
+    val typeLabel = com.designprototype.workshop.explorer.ui.folderKind(item.type) ?: item.type
     val title = item.title?.takeIf { it.isNotBlank() }
         ?: "Untitled ${item.type.ifBlank { "record" }}"
     Column(
@@ -9709,7 +9709,7 @@ private suspend fun loadViewEntries(repository: WorkshopRepository, mode: EntryM
     EntryMode.WORKSHOP -> repository.workshops().sortedByDescending { it.createdAt ?: "" }.map { it.id to workshopDisplayTitle(it.title, date = it.occurrenceDate(), place = it.place) }
     EntryMode.QUESTIONNAIRE -> repository.interviews().sortedByDescending { it.createdAt ?: "" }.map { it.id to it.title.ifBlank { "Untitled interview" } }
     EntryMode.MEDIA -> repository.mediaList().sortedByDescending { it.createdAt ?: "" }.map { m ->
-        val tag = m.linkedRecordType?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.uppercase() }
+        val tag = com.designprototype.workshop.explorer.ui.folderKind(m.linkedRecordType)
         m.id to (m.originalFilename.ifBlank { "Media" } + " · " + listOfNotNull(m.mediaType, tag).joinToString(" · "))
     }
     else -> emptyList()
@@ -9768,7 +9768,7 @@ private suspend fun loadMyActivity(repository: WorkshopRepository, userId: Strin
         .forEach { items.add(ActivityItem(EntryMode.QUESTIONNAIRE, it.id, it.title.ifBlank { "Untitled interview" }, "Interview", it.createdAt)) }
     attempt { repository.mediaList(uploadedBy = userId) }.filter { it.uploadedBy?.id == userId }
         .forEach { media ->
-            val tag = media.linkedRecordType?.takeIf { it.isNotBlank() }?.replaceFirstChar { it.uppercase() }
+            val tag = com.designprototype.workshop.explorer.ui.folderKind(media.linkedRecordType)
             items.add(
                 ActivityItem(
                     EntryMode.MEDIA,
@@ -11052,7 +11052,7 @@ private fun OrphanRecordingsCard(repository: WorkshopRepository, onError: (Strin
                             .padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        val typeLabel = m.linkedRecordType?.replaceFirstChar { it.uppercase() } ?: "Record"
+                        val typeLabel = com.designprototype.workshop.explorer.ui.folderKind(m.linkedRecordType) ?: "Record"
                         Text("From a deleted $typeLabel", color = Muted, style = MaterialTheme.typography.bodySmall)
                         m.uploadedBy?.name?.let { Text("Recorded by $it", color = Muted, style = MaterialTheme.typography.bodySmall) }
                         MediaWithTranscript(context, m, repository)
@@ -11691,7 +11691,7 @@ private fun PendingReviewRow(
             Text(item.label, color = if (onOpen != null) MaterialTheme.colorScheme.primary else Body, fontWeight = FontWeight.SemiBold)
             Text(
                 listOfNotNull(
-                    item.recordType.replaceFirstChar { it.uppercase() },
+                    com.designprototype.workshop.explorer.ui.folderKind(item.recordType) ?: item.recordType,
                     item.place?.takeIf { it.isNotBlank() },
                     item.createdBy?.name?.takeIf { it.isNotBlank() }?.let { "by $it" },
                     formatIsoDate(item.createdAt)
