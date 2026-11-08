@@ -21,7 +21,8 @@ import { useAppReducedMotion } from "@/components/guide/useAppReducedMotion";
 import { PageSelvedge } from "@/components/PageSelvedge";
 import { WorkshopLogo } from "@/components/WorkshopLogo";
 import { isAdmin, ministrySurface, routeGuardFor } from "@/lib/permissions";
-import { browserOffline, signInHref } from "@/lib/errorKind";
+import { browserOffline } from "@/lib/errorKind";
+import { signInHref } from "@/lib/sessionReturn";
 import { mustChangePassword } from "@/lib/signIn";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 

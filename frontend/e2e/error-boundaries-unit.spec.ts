@@ -3,7 +3,9 @@ import { join } from "node:path";
 
 import { expect, test } from "@playwright/test";
 
-import { errorCopy, errorKindOf, retryDelaySeconds, safeNext, sessionEndedHref, signInHref, type ErrorScreen } from "../lib/errorKind";
+import { ApiError } from "../lib/api";
+import { errorCopy, errorKindOf, retryDelaySeconds, type ErrorScreen } from "../lib/errorKind";
+import { safeNext, sessionEndedHref, signInHref } from "../lib/sessionReturn";
 
 const APP = join(__dirname, "..", "app");
 
@@ -11,8 +13,8 @@ function read(...parts: string[]): string {
   return readFileSync(join(APP, ...parts), "utf8");
 }
 
-function apiError(status: number): Error & { status: number } {
-  return Object.assign(new Error(`status ${status}`), { status });
+function apiError(status: number): ApiError {
+  return new ApiError(status, `status ${status}`, null);
 }
 
 test("every boundary exists, so no failure reaches Next's unthemed page", () => {
@@ -66,8 +68,8 @@ test("API failures sort into the right screen", () => {
   expect(errorKindOf(apiError(403), false)).toBe("forbidden");
   expect(errorKindOf(apiError(404), false)).toBe("not-found");
   expect(errorKindOf(apiError(410), false)).toBe("not-found");
-  for (const status of [408, 502, 503, 504]) expect(errorKindOf(apiError(status), false), String(status)).toBe("unavailable");
-  for (const status of [500, 501, 409, 422]) expect(errorKindOf(apiError(status), false), String(status)).toBe("server");
+  for (const status of [408, 429, 502, 503, 504]) expect(errorKindOf(apiError(status), false), String(status)).toBe("unavailable");
+  for (const status of [500, 400, 409, 422]) expect(errorKindOf(apiError(status), false), String(status)).toBe("server");
   expect(errorKindOf(new TypeError("Failed to fetch"), false)).toBe("offline");
   expect(errorKindOf(new TypeError("Load failed"), false)).toBe("offline");
   expect(errorKindOf(new TypeError("Cannot read properties of undefined (reading 'name')"), false)).toBe("server");

@@ -1,6 +1,6 @@
 import type { PageResult } from "@/lib/types";
 
-import { SESSION_ENDED_PATH, sessionEndedHref } from "@/lib/errorKind";
+import { SESSION_ENDED_PATH, sessionEndedHref } from "@/lib/sessionReturn";
 import { endSession, getSessionMarker } from "@/lib/session";
 
 const SIGNED_OUT_PATHS = new Set(["/login", SESSION_ENDED_PATH]);

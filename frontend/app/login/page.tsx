@@ -13,7 +13,7 @@ import { TwoStepChallengeForm } from "@/components/TwoStepChallengeForm";
 import { Button } from "@/components/ui/button";
 import { GLASS_PANEL, GlassSurface } from "@/components/ui/GlassSurface";
 import { useToast } from "@/components/ui/Toast";
-import { rememberSignInReturn, takeSignInReturn } from "@/lib/errorKind";
+import { rememberSignInReturn, takeSignInReturn } from "@/lib/sessionReturn";
 import { ApiError } from "@/lib/api";
 import {
   beginSignIn,
