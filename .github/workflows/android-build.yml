@@ -53,13 +53,14 @@ jobs:
           "$sdkmanager" "platforms;android-37.2" "build-tools;37.0.0" > /dev/null
 
       - name: Fetch the vendored sherpa-onnx AAR
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           aar="app/libs/sherpa-onnx-static-link-onnxruntime-1.13.8.aar"
           sha="b22c3fc1b6a45666d28892bb2f7694beeb77a8362d7ebd77c1a5431ec9435471"
           mkdir -p app/libs
-          curl -fsSL --retry 3 --retry-delay 5 -o "$aar" \
-            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-static-link-onnxruntime-1.13.8.aar"
+          "$GITHUB_WORKSPACE/scripts/ci/fetch_release_asset.sh" k2-fsa/sherpa-onnx v1.13.8 sherpa-onnx-static-link-onnxruntime-1.13.8.aar "$aar" "$sha" 38691998 555212241
           echo "$sha  $aar" | sha256sum -c -
           test "$(stat -c%s "$aar")" = "38691998"
 
