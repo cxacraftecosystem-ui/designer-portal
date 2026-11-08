@@ -182,9 +182,12 @@ def test_every_filter_gives_the_same_count_to_the_tree_header_tabs_and_facets():
                     }
 
                 out["plain"] = await look({})
+                mine = {"designWorkshopIds": f"{seed['shown'].id},{seed['tables'].id}"}
                 out["facets"] = await get("/api/data/filters")
+                out["facets_mine"] = await get("/api/data/filters", **mine)
                 for facet, value, params in _cases(seed):
-                    out["cases"][(facet, value)] = await look(params)
+                    scoped = params if facet == "designWorkshop" else {**mine, **params}
+                    out["cases"][(facet, value)] = await look(scoped)
                 out["report"] = await get(
                     "/api/data/report", path=ROOT, format="json", designWorkshopIds=seed["tables"].id
                 )
@@ -233,7 +236,9 @@ def test_every_filter_gives_the_same_count_to_the_tree_header_tabs_and_facets():
         assert tree == case["folders"], (key, tree, case["folders"])
         assert sum(tree.values()) == case["header"]["records"], (key, tree, case["header"])
         assert sum(mine.values()) == want, (key, mine, want)
-        assert _option(seen["facets"], *key) == sum(tree.values()), (key, _option(seen["facets"], *key), tree)
+        facets = seen["facets"] if key[0] == "designWorkshop" else seen["facets_mine"]
+        assert set(tree) <= {a, b}, (key, tree)
+        assert _option(facets, *key) == sum(tree.values()), (key, _option(facets, *key), tree)
 
     assert seen["cases"][("hasTranscript", "yes")]["transcripts"] == 1
     assert seen["cases"][("mediaType", "IMAGE")]["transcripts"] == 0
