@@ -18,8 +18,8 @@ val localProperties = Properties().apply {
     }
 }
 
-val appVersionName = "0.0.15"
-val appVersionCode = 40
+val appVersionName = "0.0.16"
+val appVersionCode = 41
 
 val releaseKeystorePath = signingProperty(localProperties, "releaseKeystore", "ANDROID_RELEASE_KEYSTORE")
 val releaseKeystorePassword = signingProperty(localProperties, "releaseKeystorePassword", "ANDROID_RELEASE_KEYSTORE_PASSWORD")

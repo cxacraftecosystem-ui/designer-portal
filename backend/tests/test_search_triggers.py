@@ -122,6 +122,8 @@ async def test_reindex_all_queues_one_type(world):
     queued = await search_indexer.reindex_all("crafts")
     assert queued >= 2
     assert {t for t, _ in await _queued()} == {"crafts"}
+    assert await search_indexer.reindex_all("crafts") == 0
+    assert (await db.query_raw('SELECT count(*)::int AS n FROM "SearchIndexQueue"'))[0]["n"] == queued
     with pytest.raises(ValueError):
         await search_indexer.reindex_all("nonsense")
     await _clear_queue()
