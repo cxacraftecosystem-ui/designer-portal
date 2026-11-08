@@ -67,6 +67,8 @@ EXPLORER_FILES = (
     "backend/tests/test_data_explorer_units.py",
     "backend/tests/test_data_explorer_contract.py",
     "backend/tests/test_data_explorer_sort_units.py",
+    "backend/tests/test_data_explorer_filters_units.py",
+    "backend/app/api/routes/cross_portal_explore.py",
 )
 
 
