@@ -127,6 +127,7 @@ object ApiClient {
                 return@Interceptor response
             } catch (e: IOException) {
                 if (chain.call().isCanceled()) throw e
+                if (e is RequestBackoffException) throw e
                 lastError = e
                 ServerReachability.recordFailure(e)
                 if (!retriable || attempt >= maxAttempts) throw e
@@ -146,6 +147,7 @@ object ApiClient {
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
             .addInterceptor(gatewayRetry())
+            .addInterceptor(RequestGate.shared.interceptor { tokenStore.getToken() })
             .addInterceptor { chain ->
                 val request = chain.request()
                 chain.proceed(
