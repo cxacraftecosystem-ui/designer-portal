@@ -14,6 +14,7 @@ import { bytes } from "@/lib/format";
 import { downloadMediaUrl } from "@/lib/localMediaDownload";
 import type { MediaType } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { mediaFileMissing } from "@/lib/mediaUrlRefresh";
 
 export type PreviewMedia = {
   key: string;
@@ -116,6 +117,7 @@ export function MediaPreviewTile({
 }) {
   const kind = resolvePreviewKind(item);
   const { src, onError, failed: loadFailed } = useMediaUrl(item);
+  const fileMissing = loadFailed && mediaFileMissing(item?.id);
   const percent = progress === null ? null : Math.round(Math.min(1, Math.max(0, progress)) * 100);
   return (
     <div
@@ -136,7 +138,7 @@ export function MediaPreviewTile({
             <div className="mx-auto rounded-full bg-card p-3 text-ink-500 shadow-sm">
               <ImageOff className="h-5 w-5" aria-hidden />
             </div>
-            <span className="text-xs font-semibold">Couldn&apos;t load</span>
+            <span className="text-xs font-semibold">{fileMissing ? "File missing" : "Couldn’t load"}</span>
           </div>
         ) : kind === "IMAGE" && src ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -218,6 +220,7 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
   const panelRef = useRef<HTMLDivElement | null>(null);
   const kind = resolvePreviewKind(item);
   const { src, onError, failed: loadFailed } = useMediaUrl(item);
+  const fileMissing = loadFailed && mediaFileMissing(item?.id);
 
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
@@ -304,7 +307,7 @@ export function MediaLightbox({ item, onClose }: { item: PreviewMedia; onClose: 
           {src && loadFailed ? (
             <div role="status" className="grid gap-3 text-center text-ink-muted" data-testid="media-lightbox-failed">
               <ImageOff className="mx-auto h-6 w-6" aria-hidden />
-              <p>This file couldn&apos;t be loaded.</p>
+              <p>{fileMissing ? "File missing. Ask an admin to upload it again." : "This file couldn’t be loaded."}</p>
             </div>
           ) : kind === "IMAGE" && src ? (
             // eslint-disable-next-line @next/next/no-img-element

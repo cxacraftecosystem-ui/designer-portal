@@ -31,6 +31,7 @@ from app.services.concurrency import gather_reads
 from app.services.custom_sections import load_definition_or_empty
 from app.services.data_explorer import (
     counts as explorer_counts,
+    filters as explorer_filters,
     report_cache,
     report_options,
     report_tools,
@@ -298,6 +299,7 @@ class Scope:
     media: dict[str, Any]
     design_workshops: bool = False
     design_workshop_downloads: bool = False
+    explorer_filter: Any = None
 
     @property
     def restricted(self) -> bool:
@@ -309,6 +311,7 @@ class Scope:
             media=self.media,
             design_workshops=self.design_workshop_downloads,
             design_workshop_downloads=self.design_workshop_downloads,
+            explorer_filter=self.explorer_filter,
         )
 
 
@@ -1961,14 +1964,17 @@ async def data_tree(
     cursor: str | None = None,
     limit: int | None = Query(None, ge=1, le=explorer_tree.TREE_PAGE_MAX),
     sort: str | None = Query(None, max_length=40),
+    flt: explorer_filters.Filter = Depends(explorer_filters.from_request),
     current_user: Any = Depends(require_dataset_downloader),
 ) -> dict[str, Any]:
     chosen = sort_or_422(sort, explorer_sorting.TREE_KEYS, explorer_sorting.TREE_DEFAULT)
-    scope = await _scope_for(current_user)
+    scope = explorer_filters.narrow(await _scope_for(current_user), flt)
     norm = _norm(path)
     entries, info = await _list_level(norm, scope)
+    entries = explorer_filters.prune(entries, flt)
     entries = await transcript_export.settle_tree(entries, pipeline_on=transcript_pipeline.enabled())
     await explorer_counts.fill(norm, entries, scope)
+    entries, hidden = explorer_filters.drop_empty(entries, flt)
     crumbs = await _resolve_crumbs(norm)
     public, total, next_cursor = await explorer_tree.shape(
         entries, lean=lean is True, cursor=cursor, limit=limit, sort=chosen
@@ -1987,6 +1993,8 @@ async def data_tree(
         "taxonomy": _taxonomy_of(norm),
         "designWorkshopsVisible": scope.design_workshops,
         "designWorkshopsDownloadable": scope.design_workshop_downloads,
+        "filters": await explorer_filters.describe(flt),
+        "hidden": hidden,
     }
 
 
@@ -2052,6 +2060,7 @@ async def data_manifest(
     path: str = "",
     include: str | None = None,
     stream: bool = False,
+    flt: explorer_filters.Filter = Depends(explorer_filters.from_request),
     current_user: Any = Depends(require_dataset_downloader),
 ) -> Response:
     from app.api.routes import data_explorer
@@ -2059,7 +2068,7 @@ async def data_manifest(
     include_set: set[str] | None = None
     if include is not None and include.strip():
         include_set = {t.strip().lower() for t in include.split(",") if t.strip()}
-    scope = (await _scope_for(current_user)).for_download()
+    scope = explorer_filters.narrow((await _scope_for(current_user)).for_download(), flt)
     files, truncated = await explorer_walk.manifest_files(
         _list_level, scope, [(_norm(path), "")], include_set, fill=not stream
     )
@@ -2850,6 +2859,23 @@ def _all_records_sheet(
                     _info_text(info_panel(kind, record)),
                 ]
             )
+    for record in data.get("designWorkshops") or []:
+        try:
+            stamps = list(provenance_row(record))
+        except Exception:  # noqa: BLE001
+            stamps = ["" for _ in PROVENANCE_COLUMNS]
+        rows.append(
+            [
+                _cell(getattr(getattr(record, "workshop", None), "title", None) or ""),
+                _cell(getattr(record, "craftName", None) or ""),
+                "",
+                "Design workshop",
+                _cell(getattr(record, "title", None) or "Design workshop"),
+                *stamps,
+                *media_row(media_index.get(record.id, [])),
+                "",
+            ]
+        )
     return _sheet("All records", OVERVIEW_COLOR, columns, rows)
 
 
@@ -3417,6 +3443,7 @@ async def data_report(
     locale: str | None = None,
     extras: str | None = None,
     offset: int = Query(0, ge=0, le=REPORT_TAKE),
+    flt: explorer_filters.Filter = Depends(explorer_filters.from_request),
     current_user: Any = Depends(require_dataset_downloader),
 ) -> Response:
     offset = offset if isinstance(offset, int) else 0
@@ -3436,6 +3463,7 @@ async def data_report(
         return await _build_report(
             path, fmt, current_user, q=q, sheet=sheet, options=options,
             file_name=report_options.file_name(name), offset=offset,
+            flt=flt,
         )
     except report_cache.ReportBusy as busy:
         raise HTTPException(
@@ -3503,7 +3531,7 @@ def _trim_heap() -> None:
 
 async def _report_material(norm: str, scope: Scope, sees_spend: bool) -> dict[str, Any]:
     segs = [s for s in norm.split("/") if s]
-    records = await _report_records(segs, scope)
+    records = explorer_filters.filter_report(await _report_records(segs, scope), scope.explorer_filter)
     await hide_unseen(records["tools"], scope.records)
     await transcript_export.withhold_refused(records["media"])
     transcribed = [str(m.id) for m in records["media"] if transcript_export.has_text(m)]
@@ -3572,15 +3600,19 @@ async def _build_report(
     options: report_options.ReportOptions | None = None,
     file_name: str | None = None,
     offset: int = 0,
+    flt: explorer_filters.Filter | None = None,
 ) -> Response:
     options = options or report_options.ReportOptions()
     if fmt == "xlsx":
         return await report_jobs.fetch(
             current_user,
             report_jobs.REPORT,
-            report_jobs.report_params(path, options, name=file_name, sheet=sheet),
+            report_jobs.report_params(
+                path, options, name=file_name, sheet=sheet,
+                filters=explorer_filters.as_query(flt),
+            ),
         )
-    scope = await _scope_for(current_user)
+    scope = explorer_filters.narrow(await _scope_for(current_user), flt)
     searching = fmt == "json" and bool(report_tools.words(q))
     norm = _norm(path)
     sees_spend = transcript_portal.may_see_spend(current_user)

@@ -27,7 +27,7 @@ Enums: `UserRole`, `AuthProvider`, `RecordStatus`, `WorkshopType`, `MediaType`, 
 
 ## API surface
 
-**631 operations** in the working tree — 302 GET, 214 POST, 48 DELETE,
+**634 operations** in the working tree — 304 GET, 215 POST, 48 DELETE,
 35 PATCH, 32 PUT. 2 of them (`/health`, `/health/ready`) are declared
 on the app rather than on a router; the rest are spread across `backend/app/api/routes/`:
 
@@ -36,7 +36,7 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `questionnaire_v2.py` | 51 |
 | `design_workshops.py` | 50 |
 | `questionnaire_forms.py` | 27 |
-| `data_explorer.py` | 24 |
+| `data_explorer.py` | 26 |
 | `media.py` | 22 |
 | `questionnaire.py` | 22 |
 | `workshops.py` | 21 |
@@ -102,6 +102,7 @@ on the app rather than on a router; the rest are spread across `backend/app/api/
 | `analytics.py` | 1 |
 | `app_versions.py` | 1 |
 | `completeness.py` | 1 |
+| `cross_portal_explore.py` | 1 |
 | `dashboard.py` | 1 |
 | `data_report_pack.py` | 1 |
 | `idempotency_keys.py` | 1 |
@@ -153,8 +154,8 @@ no key is skipped wherever it sits.
 
 | Surface | Files | Cases | Runner |
 |---|---|---|---|
-| Backend unit (`backend/tests/`) | 460 | 7197 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
-| Web end-to-end (`frontend/e2e/`) | 341 | 3747 `test(` | Playwright, `frontend/playwright.config.ts` |
+| Backend unit (`backend/tests/`) | 464 | 7221 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
+| Web end-to-end (`frontend/e2e/`) | 343 | 3765 `test(` | Playwright, `frontend/playwright.config.ts` |
 | Android unit (`android/app/src/test/`) | 435 | 4472 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 48 | 241 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
@@ -181,10 +182,10 @@ and this one asserted an absence it had never looked for.
 
 | Area | Tracked files | Tracked lines | Tree files | Tree lines |
 |---|---|---|---|---|
-| `backend/app` | 467 | 156,266 | 467 | 156,266 |
-| `frontend/app` | 140 | 36,897 | 140 | 36,897 |
-| `frontend/components` | 492 | 111,221 | 492 | 111,221 |
-| `frontend/lib` | 265 | 61,501 | 265 | 61,501 |
+| `backend/app` | 470 | 157,778 | 470 | 157,778 |
+| `frontend/app` | 140 | 36,903 | 140 | 36,903 |
+| `frontend/components` | 495 | 111,729 | 495 | 111,729 |
+| `frontend/lib` | 268 | 61,846 | 268 | 61,846 |
 | `android/app/src/main/java` | 519 | 177,416 | 519 | 177,416 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is

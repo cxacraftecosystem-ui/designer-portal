@@ -190,7 +190,7 @@ function Explorer({ user }: { user: User }) {
     viewer: user.id,
     fileHref: (mediaId) => RECORD_VIEW_HREF.media(mediaId),
     recordHref,
-    renderSearch: (reveal, openPreview, ask) => <DataSearchPanel onReveal={reveal} onPreview={openPreview} ask={ask} />,
+    renderSearch: (reveal, openPreview, ask, portalScope, outer) => <DataSearchPanel onReveal={reveal} onPreview={openPreview} ask={ask} portalScope={portalScope} outer={outer} />,
     emptyBody: (folder) => `Files appear as soon as someone records for ${folder}.`,
     emptyAction: canCreateRecords(user) ? (
       <Link href="/media" className="inline-flex min-h-11 items-center rounded-md bg-purple-700 px-4 text-sm font-semibold text-white hover:bg-purple-800 dark:bg-purple-300 dark:text-purple-950">

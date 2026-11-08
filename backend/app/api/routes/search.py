@@ -27,6 +27,7 @@ from app.services.cross_portal_client import (
     peer_call,
     unavailable_sentence,
 )
+from app.services.data_explorer import filters as explorer_filters
 from app.services.pagination import normalize_pagination
 from app.services.record_filters import (
     DESIGN_WORKSHOP_STAGE_RELATION,
@@ -74,6 +75,7 @@ async def global_search(
     workshopIds: list[str] | None = Query(None),
     page: int = Query(1, ge=1),
     pageSize: int = Query(10, ge=1, le=50),
+    flt: explorer_filters.Filter = Depends(explorer_filters.from_request),
 ) -> dict[str, Any]:
     page, page_size, skip = normalize_pagination(page, pageSize)
     selected = _resolve_types(types)
@@ -98,6 +100,7 @@ async def global_search(
         workshop_ids=workshopIds,
         include_design_workshops=DESIGN_WORKSHOP_TYPE in selected,
     )
+    wheres = explorer_filters.search_wheres(wheres, flt)
     artisan_where = wheres["artisans"]
     workshop_where = wheres["workshops"]
     product_where = wheres["products"]
