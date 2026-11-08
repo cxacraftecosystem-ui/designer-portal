@@ -38,6 +38,7 @@ from app.services import (
     app_settings,
     design_workshop_posts,
     dictation_consent,
+    job_supersede,
     media_mime,
     paid_ai_allowance,
     transcribe_choice,
@@ -997,6 +998,7 @@ async def list_media_processing_jobs(
         where["status"] = enum_filter_or_422(
             statusFilter, MEDIA_PROCESSING_JOB_STATUSES, field="statusFilter"
         )
+    where = await job_supersede.without_superseded(where, client=db)
     total, jobs = await gather_reads(
         db.mediaprocessingjob.count(where=where),
         db.mediaprocessingjob.find_many(

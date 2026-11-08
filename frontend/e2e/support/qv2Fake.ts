@@ -231,6 +231,9 @@ export class QuestionnaireFake {
   prefill: Record<string, string> = {};
   isDefault = false;
   unreachable: RegExp[] = [];
+  extraWorkshops: Json[] = [];
+  emptyWorkshops = new Set<string>();
+  failingCoverage = new Set<string>();
   removedArtisans = new Set<string>();
 
   consent: Record<string, string> = { a2: "REFUSED" };
@@ -255,7 +258,10 @@ export class QuestionnaireFake {
         }
       };
     if (!this.v2 && path.startsWith("/questionnaire/")) return { status: 404, json: { detail: { code: "NOT_FOUND", message: "Not found." } } };
-    if (path === "/design-workshops" && method === "GET") return { status: 200, json: { items: [WORKSHOP], total: 1, page: 1, pageSize: 100, pages: 1 } };
+    if (path === "/design-workshops" && method === "GET") {
+      const items = [WORKSHOP, ...this.extraWorkshops];
+      return { status: 200, json: { items, total: items.length, page: 1, pageSize: 100, pages: 1 } };
+    }
     if (path === "/design-workshops/default-for-me") return { status: 200, json: { workshopId: WORKSHOP.id, title: WORKSHOP.title, accessAt: null, reason: "CREATED" } };
     if (path === "/questionnaires" && method === "GET") {
       const all = query.get("deletedOnly") === "true" ? this.deletedForms : this.forms;
@@ -466,7 +472,15 @@ export class QuestionnaireFake {
     if (m) return { status: 200, json: { id: m[2], sessionId: m[1], name: (body as Json)?.name ?? "", kind: "GUEST", notes: (body as Json)?.notes ?? null, userId: null } };
     if (path === "/questionnaire/sessions/continue") return { status: 200, json: { sessions: [session("s-next")], firstGap: {} } };
     if (path === "/questionnaire/coverage/snapshot") return { status: 200, json: { asOfSeq: "1", takes: [], removedRecordingIds: [] } };
-    if (path === "/questionnaire/coverage") return { status: 200, json: this.grid() };
+    if (path === "/questionnaire/coverage") {
+      const scope = query.get("designWorkshopId") ?? "";
+      if (this.failingCoverage.has(scope)) return { status: 503, json: { detail: { code: "UNAVAILABLE", message: "Try again." } } };
+      if (this.emptyWorkshops.has(scope)) {
+        const grid = this.grid() as { sections: Json[] };
+        return { status: 200, json: { ...grid, artisans: [], respondents: [], sections: grid.sections.map((s) => ({ ...s, cells: [], guestCells: [] })) } };
+      }
+      return { status: 200, json: this.grid() };
+    }
     if (path === "/questionnaire/completion" && method === "PUT") {
       const b = body as { artisanId: string; sectionId: string; status: string | null };
       if (b.status) this.overrides[`${b.artisanId}|${b.sectionId}`] = b.status;

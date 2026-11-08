@@ -36,7 +36,7 @@ export default function WorkshopAccessManagePage() {
         description="Approve or decline workshop access, and manage rosters."
         icon={<UsersRound className="h-5 w-5" aria-hidden />}
       />
-      <div className="grid gap-4">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
         <WorkshopAccessQueuePanel onChanged={bump} refreshToken={refreshToken} />
         <WorkshopRosterPanel onChanged={bump} refreshToken={refreshToken} />
         <DesignWorkshopViewersPanel refreshToken={refreshToken} />

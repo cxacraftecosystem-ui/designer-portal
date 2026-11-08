@@ -328,7 +328,7 @@ export function DesignWorkshopInspectorsPanel({
   }
 
   return (
-    <section className="panel p-5" data-design-workshop-inspectors>
+    <section className="panel min-w-0 p-5" data-design-workshop-inspectors>
       <div className="flex items-center gap-2.5">
         <span className="grid h-8 w-8 place-items-center rounded-md bg-purple-950 text-purple-100">
           <ScanEye className="h-4 w-4" aria-hidden />

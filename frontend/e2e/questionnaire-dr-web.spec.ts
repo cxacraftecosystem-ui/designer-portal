@@ -273,11 +273,37 @@ test("@qf:B25 the inbox lists what needs sorting out", async ({ page }) => {
   await expect(page.getByText("Empty session").first()).toBeVisible();
 });
 
-test("@qf:B12 workshop coverage reads the design workshop's artisans", async ({ page }) => {
+test("@qf:B12 workshop coverage asks by the design workshop, never by a capped artisan list", async ({ page }) => {
   const fake = new QuestionnaireFake();
   await open(page, fake, "/questionnaire/coverage");
   await expect(page.locator("[data-coverage-grid]")).toBeVisible();
-  await expect.poll(() => fake.calledWith("GET", "/questionnaire/coverage").some((c) => (c.query.get("artisanIds") ?? "").includes("a1"))).toBe(true);
+  await expect.poll(() => fake.calledWith("GET", "/questionnaire/coverage").length).toBeGreaterThan(0);
+  const query = fake.calledWith("GET", "/questionnaire/coverage")[0].query;
+  expect(query.get("designWorkshopId")).toBe("dw1");
+  expect(query.has("artisanIds")).toBe(false);
+  expect(fake.calledWith("GET", "/artisans")).toHaveLength(0);
+});
+
+test("a design workshop with no artisans shows an empty grid, and a failed load clears when the workshop changes", async ({ page }) => {
+  const fake = new QuestionnaireFake();
+  fake.extraWorkshops = [
+    { id: "dw-empty", title: "Sanganer dyeing 2026", status: "IN_PROGRESS", workshopKind: "BASELINE", startDate: "2026-11-01", createdAt: "2026-11-01T00:00:00Z" },
+    { id: "dw-down", title: "Kutch weaving 2026", status: "IN_PROGRESS", workshopKind: "BASELINE", startDate: "2026-11-02", createdAt: "2026-11-02T00:00:00Z" }
+  ];
+  fake.emptyWorkshops.add("dw-empty");
+  fake.failingCoverage.add("dw-down");
+  await open(page, fake, "/questionnaire/coverage");
+  await expect(page.locator("[data-coverage-grid]")).toBeVisible();
+  const workshop = page.locator("[data-searchable-select]").nth(1);
+  await workshop.click();
+  await page.getByRole("option", { name: "Kutch weaving 2026" }).click();
+  await expect(page.getByText("Couldn't load coverage. Try again.")).toBeVisible();
+  await expect(page.getByText("Couldn't load sessions.")).toHaveCount(0);
+  await workshop.click();
+  await page.getByRole("option", { name: "Sanganer dyeing 2026" }).click();
+  await expect(page.locator("[data-coverage-empty]")).toHaveText("No artisans in this workshop yet.");
+  await expect(page.locator("[data-coverage-grid]")).toBeVisible();
+  await expect(page.getByText("Couldn't load coverage. Try again.")).toHaveCount(0);
 });
 
 test("@qf:A1 @qf:A6 the pro-forma downloads under its generated name, and a designer starts their own form", async ({ page }) => {

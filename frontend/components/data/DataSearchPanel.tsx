@@ -27,9 +27,11 @@ import {
   type UnifiedType
 } from "@/lib/unifiedSearch";
 import { locateRecord } from "@/components/dataExplorer/paletteSearch";
+import { SortMenu, useRememberedSort } from "@/components/dataExplorer/SortMenu";
+import { effectiveSort, readSort, type SortChoice } from "@/lib/dataExplorer/sorting";
 import { useAuth } from "@/components/AuthProvider";
 import { OpenableCard } from "@/components/data/OpenableRow";
-import { activeFilters, ALL_LIMIT, clock, EMPTY_STATE, flattenGroups, hasMore, LEGACY_PAGE, legacyRows, legacyTotals, mergeRows, moreLabel, offersOpenInData, portalCounts, rangeBounds, rowKey, sameSearch, searchFromParams, searchToParams, sections, showAllLabel, TYPE_LIMIT, unifiedTotals, type DateRange, type GroupTotal, type LegacyResult, type Row, type Scope, type SearchState } from "@/lib/dataSearch";
+import { activeFilters, ALL_LIMIT, clock, EMPTY_STATE, flattenGroups, hasMore, LEGACY_PAGE, legacyRows, legacyTotals, mergeRows, moreLabel, offersOpenInData, portalCounts, rangeBounds, rowKey, sameSearch, SEARCH_SORT_LIST, searchFromParams, searchSort, searchSortKeys, searchSortLevel, searchSortParam, searchToParams, sections, showAllLabel, TYPE_LIMIT, unifiedTotals, type DateRange, type GroupTotal, type LegacyResult, type Row, type Scope, type SearchState } from "@/lib/dataSearch";
 import { workshopDisplayTitle } from "@/lib/workshopTitle";
 
 export const PAGE_STEP = TYPE_LIMIT;
@@ -236,6 +238,23 @@ export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal:
   const [filtersOpen, setFiltersOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const band = useBand();
+  const viewer = user?.id ? String(user.id) : "";
+  const sortLevel = searchSortLevel(focus);
+  const [rememberedSort, rememberSort] = useRememberedSort(viewer, sortLevel, SEARCH_SORT_LIST);
+  const remembered = useMemo(() => rememberedSort ?? readSort(viewer, sortLevel), [rememberedSort, viewer, sortLevel]);
+  const sortKeys = searchSortKeys(answer?.data);
+  const sort = effectiveSort(state.sort ?? remembered, sortKeys, SEARCH_SORT_LIST);
+  const sortText = searchSortParam(sort);
+
+  const chooseSort = (choice: SortChoice) => {
+    rememberSort(choice);
+    setState((previous) => ({ ...previous, sort: searchSort(choice) }));
+  };
+
+  const chooseFocus = (next: UnifiedType | null) => {
+    setFocus(next);
+    setState((previous) => (previous.sort ? { ...previous, sort: null } : previous));
+  };
 
   const workshops = useOptions("/workshops", (row: Workshop) => ({ value: row.id, label: workshopDisplayTitle(row) }));
   const artisans = useOptions("/artisans", (row: Artisan) => ({ value: row.id, label: row.name, hint: row.place ?? undefined }));
@@ -258,7 +277,7 @@ export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal:
     if (!ask) return;
     setDraft(ask.q);
     setFocus(null);
-    setState((previous) => ({ ...previous, q: ask.q }));
+    setState((previous) => ({ ...previous, q: ask.q, sort: null }));
     inputRef.current?.focus();
   }, [ask]);
 
@@ -288,7 +307,7 @@ export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal:
 
   const q = state.q.trim();
   const types = useMemo(() => (state.transcriptOnly ? (["transcripts"] as UnifiedType[]) : state.types), [state.transcriptOnly, state.types]);
-  const key = JSON.stringify([q, state.scope, state.workshopIds, state.artisanId, state.craftId, types, state.range, focus, attempt]);
+  const key = JSON.stringify([q, state.scope, state.workshopIds, state.artisanId, state.craftId, types, state.range, focus, sortText ?? "", attempt]);
 
   useEffect(() => {
     if (q.length < 2) {
@@ -319,7 +338,8 @@ export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal:
       craftId: query.craftId,
       workshopIds: query.workshopIds,
       artisanIds: state.artisanId || undefined,
-      dateFrom: query.dateFrom
+      dateFrom: query.dateFrom,
+      sort: sortText
     })}`;
     fetchUnified({ q }, () => apiFetch<UnifiedResponse>(path))
       .then(async (outcome) => {
@@ -345,7 +365,7 @@ export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal:
     return () => {
       cancelled = true;
     };
-  }, [key, q, state.scope, state.workshopIds, state.artisanId, state.craftId, state.range, types, focus]);
+  }, [key, q, state.scope, state.workshopIds, state.artisanId, state.craftId, state.range, types, focus, sortText]);
 
   const more = useCallback(async () => {
     if (!answer || answer.error || !answer.more) return;
@@ -357,7 +377,7 @@ export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal:
         const legacy = await apiFetch<LegacyResult>(`/search${buildQuery({ q, page: next, pageSize: LEGACY_PAGE, types: focus ?? undefined, craftId: state.craftId || undefined, artisanId: state.artisanId || undefined, ...rangeBounds(state.range) })}`);
         fresh = legacyRows(legacy);
       } else {
-        const path = `/search/unified${buildQuery({ q, type: focus ?? undefined, types: !focus && types.length ? types.join(",") : undefined, page: next, limit: focus ? TYPE_LIMIT : ALL_LIMIT, scope: state.scope === "local" ? "local" : undefined, craftId: state.craftId || undefined, workshopIds: state.workshopIds.join(",") || undefined, artisanIds: state.artisanId || undefined, ...rangeBounds(state.range) })}`;
+        const path = `/search/unified${buildQuery({ q, type: focus ?? undefined, types: !focus && types.length ? types.join(",") : undefined, page: next, limit: focus ? TYPE_LIMIT : ALL_LIMIT, scope: state.scope === "local" ? "local" : undefined, craftId: state.craftId || undefined, workshopIds: state.workshopIds.join(",") || undefined, artisanIds: state.artisanId || undefined, ...rangeBounds(state.range), sort: sortText })}`;
         const data = await apiFetch<UnifiedResponse>(path);
         fresh = flattenGroups(data, focus);
       }
@@ -371,7 +391,7 @@ export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal:
     } finally {
       setLoading(false);
     }
-  }, [focus, answer, q, state, types]);
+  }, [focus, answer, q, state, types, sortText]);
 
   const reveal = async (row: Row) => {
     const type = LOCATE_TYPE[row.type];
@@ -515,7 +535,7 @@ export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal:
             Has transcript
           </button>
           {filters ? (
-            <button type="button" className="min-h-9 px-2 text-[13px] font-semibold text-purple-700 hover:underline dark:text-purple-300" onClick={() => setState({ ...EMPTY_STATE, q: state.q, scope: state.scope })}>
+            <button type="button" className="min-h-9 px-2 text-[13px] font-semibold text-purple-700 hover:underline dark:text-purple-300" onClick={() => setState({ ...EMPTY_STATE, q: state.q, scope: state.scope, sort: state.sort })}>
               Clear {filters} {filters === 1 ? "filter" : "filters"}
             </button>
           ) : null}
@@ -560,7 +580,7 @@ export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal:
               ) : null}
               <ActionGroup>
                 {filters ? (
-                  <button type="button" className={`${QUIET_BUTTON} px-4`} onClick={() => setState({ ...EMPTY_STATE, q: state.q, scope: state.scope })}>
+                  <button type="button" className={`${QUIET_BUTTON} px-4`} onClick={() => setState({ ...EMPTY_STATE, q: state.q, scope: state.scope, sort: state.sort })}>
                     Clear {filters} {filters === 1 ? "filter" : "filters"}
                   </button>
                 ) : null}
@@ -585,7 +605,7 @@ export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal:
                 ) : null}
                 {groups.length ? (
                   <div role="group" aria-label="Result types" className="flex flex-wrap gap-1.5">
-                    <button type="button" aria-pressed={!focus} onClick={() => setFocus(null)} className={`min-h-[34px] rounded-full px-3 text-[13px] pointer-coarse:min-h-11 ${!focus ? "bg-ink-900 font-semibold text-card" : "border border-line-200 bg-card text-ink-900"}`}>
+                    <button type="button" aria-pressed={!focus} onClick={() => chooseFocus(null)} className={`min-h-[34px] rounded-full px-3 text-[13px] pointer-coarse:min-h-11 ${!focus ? "bg-ink-900 font-semibold text-card" : "border border-line-200 bg-card text-ink-900"}`}>
                       All {groups.reduce((sum, group) => sum + group.total, 0)}
                     </button>
                     {groups.map((group) => (
@@ -593,7 +613,7 @@ export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal:
                         key={group.type}
                         type="button"
                         aria-pressed={focus === group.type}
-                        onClick={() => setFocus(group.type)}
+                        onClick={() => chooseFocus(group.type)}
                         className={`min-h-[34px] rounded-full px-3 text-[13px] pointer-coarse:min-h-11 ${focus === group.type ? "bg-ink-900 font-semibold text-card" : "border border-line-200 bg-card text-ink-900"}`}
                       >
                         {group.label} {group.total}
@@ -601,6 +621,7 @@ export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal:
                     ))}
                   </div>
                 ) : null}
+                <SortMenu value={sort} keys={sortKeys} onChange={chooseSort} className="ml-auto" />
               </div>
               {remote && state.scope === "all" && remote.status === "unavailable" ? <p className="text-sm text-ink-500">{remote.label} results aren&apos;t available right now.</p> : null}
               {grouped.map((section) => (
@@ -681,7 +702,7 @@ export function DataSearchPanel({ onReveal, onPreview, ask = null }: { onReveal:
               </ul>
               {section.group && section.rows.length < section.group.total ? (
                 <ActionGroup>
-                  <button type="button" className={QUIET_BUTTON} data-testid={`search-all-${section.group.type}`} onClick={() => setFocus(section.group!.type)}>
+                  <button type="button" className={QUIET_BUTTON} data-testid={`search-all-${section.group.type}`} onClick={() => chooseFocus(section.group!.type)}>
                     {showAllLabel(section.group)}
                   </button>
                 </ActionGroup>

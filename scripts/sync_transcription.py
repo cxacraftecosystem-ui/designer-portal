@@ -56,6 +56,8 @@ SHARED_FILES_EXTRA = (
     "backend/tests/test_media_transcribe_choice.py",
     "backend/app/services/paid_ai_allowance.py",
     "backend/tests/test_paid_ai_allowance.py",
+    "backend/app/services/job_supersede.py",
+    "backend/scripts/clear_superseded_failed_jobs.py",
 )
 FIXTURE_DIR = "backend/tests/fixtures/transcript"
 EXPLORER_DIR = "backend/app/services/data_explorer"
@@ -64,6 +66,7 @@ EXPLORER_FILES = (
     "shared/data-explorer-contract.json",
     "backend/tests/test_data_explorer_units.py",
     "backend/tests/test_data_explorer_contract.py",
+    "backend/tests/test_data_explorer_sort_units.py",
 )
 
 

@@ -355,7 +355,63 @@ export default function WorkshopTypesPage() {
             body="Add one so records can be filed."
           />
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          <ul className="divide-y divide-line-200 lg:hidden" data-workshop-type-cards>
+            {rows.map((type, index) => (
+              <li key={type.id} className={`grid min-w-0 gap-3 px-4 py-3 ${type.isActive ? "" : "bg-surface-50"}`} data-workshop-type={type.key}>
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="grid min-w-0 gap-1">
+                    <span className="font-medium text-ink-900">{type.label}</span>
+                    <code className="w-fit max-w-full rounded bg-surface-50 px-1.5 py-0.5 text-xs text-ink-700 [overflow-wrap:anywhere]">{type.key}</code>
+                  </div>
+                  <div className="flex shrink-0 gap-1.5">
+                    <button
+                      type="button"
+                      className={rowAction("neutral")}
+                      onClick={() => void move(index, -1)}
+                      disabled={busy || index === 0}
+                      aria-label={`Move ${type.label} up`}
+                    >
+                      <ArrowUp className="h-3.5 w-3.5" aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      className={rowAction("neutral")}
+                      onClick={() => void move(index, 1)}
+                      disabled={busy || index === rows.length - 1}
+                      aria-label={`Move ${type.label} down`}
+                    >
+                      <ArrowDown className="h-3.5 w-3.5" aria-hidden />
+                    </button>
+                  </div>
+                </div>
+                <p className="text-sm text-ink-700">
+                  {type.routesToDesignWorkshop ? "Design & prototype workshop" : "Ordinary workshop"}
+                  {" · "}
+                  {type.isActive ? (
+                    <span className="text-ink-700">Offered</span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-ink-500">
+                      <Lock className="h-3.5 w-3.5" aria-hidden />
+                      Retired
+                    </span>
+                  )}
+                </p>
+                <ActionGroup>
+                  <button type="button" className={rowAction("edit")} onClick={() => openEdit(type)} disabled={busy}>
+                    Update
+                  </button>
+                  <button type="button" className={rowAction("neutral")} onClick={() => void toggleActive(type)} disabled={busy}>
+                    {type.isActive ? "Retire" : "Offer again"}
+                  </button>
+                  <button type="button" data-danger className={rowAction("danger")} onClick={() => void remove(type)} disabled={busy}>
+                    Delete
+                  </button>
+                </ActionGroup>
+              </li>
+            ))}
+          </ul>
+          <div className="relative hidden overflow-x-auto lg:block">
             <table className="w-full text-left text-sm">
               <thead className="border-b border-line-200 bg-surface-50 text-xs uppercase tracking-wide text-ink-500">
                 <tr>
@@ -409,7 +465,7 @@ export default function WorkshopTypesPage() {
                     </td>
                     <td className="px-4 py-3 align-top font-medium text-ink-900">{type.label}</td>
                     <td className="px-4 py-3 align-top">
-                      <code className="rounded bg-surface-50 px-1.5 py-0.5 text-xs text-ink-700">{type.key}</code>
+                      <code className="whitespace-nowrap rounded bg-surface-50 px-1.5 py-0.5 text-xs text-ink-700">{type.key}</code>
                     </td>
                     <td className="px-4 py-3 align-top text-ink-700">
                       {type.routesToDesignWorkshop ? (
@@ -465,6 +521,7 @@ export default function WorkshopTypesPage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </section>
     </>

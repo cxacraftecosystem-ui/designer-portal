@@ -51,6 +51,7 @@ class PeerSearch(BaseModel):
     page: int = Field(default=1, ge=1, le=1000)
     filters: PeerFilters = Field(default_factory=PeerFilters)
     requester: Requester = Field(default_factory=Requester)
+    sort: str | None = Field(default=None, max_length=40)
 
 
 class PeerRecord(BaseModel):
@@ -113,6 +114,11 @@ async def peer_search(
         await _log(asker, ACTION_SEARCH, "rate_limited")
         return signed(settings, request, {"detail": "Too many searches."}, status_code=429)
 
+    try:
+        chosen = search_query.parse_sort(body.sort)
+    except ValueError:
+        await _log(asker, ACTION_SEARCH, "bad_sort")
+        return signed(settings, request, {"detail": "Unknown sort."}, status_code=422)
     text = " ".join(plain(body.q).split())[:200]
     if len(text) < 2:
         return signed(settings, request, {"mode": "text", "groups": []})
@@ -129,7 +135,9 @@ async def peer_search(
     qvec = None
     if await search_embeddings.available(settings):
         qvec = await search_embeddings.embed_query(text, settings=settings)
-    result = await search_query.run(text, scope, limit=body.limit, offset=offset, qvec=qvec)
+    result = await search_query.run(
+        text, scope, limit=body.limit, offset=offset, qvec=qvec, sort=chosen
+    )
 
     every_artisan = [a for items in result.items.values() for i in items for a in i["artisanIds"]]
     remote_ids = await _linked_remote_ids(sorted(set(every_artisan)))

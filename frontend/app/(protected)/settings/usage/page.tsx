@@ -145,7 +145,7 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
   }
 
   return (
-    <section className="panel p-4">
+    <section className="panel min-w-0 p-4">
       <div className="flex items-start gap-2.5">
         <UserSearch className="mt-0.5 h-5 w-5 shrink-0 text-purple-700 dark:text-purple-300" aria-hidden />
         <div className="min-w-0">
@@ -182,8 +182,8 @@ function AccountTrailPanel({ from, to }: { from: string; to: string }) {
       ) : null}
 
       {trail ? (
-        <div className="mt-3 grid gap-2">
-          <p className="text-sm text-ink-700">
+        <div className="mt-3 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
+          <p className="text-sm text-ink-700 [overflow-wrap:anywhere]">
             <span className="font-mono text-xs">{trail.userId}</span> — their answer:{" "}
             <span className="font-medium">{consentStateText(trail.subjectConsent.state)}</span>
             {trail.subjectConsent.at ? <> since {consentMoment(trail.subjectConsent.at)}</> : null}.
@@ -364,7 +364,7 @@ export default function UsagePage() {
   return (
     <>
       {header}
-      <div className="grid gap-4">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
         {methodError ? (
           <SectionError message={methodError} />
         ) : method ? (
@@ -432,7 +432,7 @@ export default function UsagePage() {
           <Loading what="usage" />
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Stat label="Requests on this page" value={routes.totalsForThisPage.requests.toLocaleString("en-IN")} />
               <Stat label="Succeeded" value={routes.totalsForThisPage.ok.toLocaleString("en-IN")} />
               <Stat
@@ -455,7 +455,7 @@ export default function UsagePage() {
             ) : !timeline ? (
               <Loading what="traffic over time" />
             ) : (
-              <div className="grid gap-4 xl:grid-cols-2">
+              <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-2">
                 <ChartFrame
                   title="Traffic over time"
                   description={`Requests per ${timeline.bucket} (UTC). Hatched gaps are hidden periods.`}
@@ -626,7 +626,7 @@ export default function UsagePage() {
             ) : !screens ? (
               <Loading what="the busiest and slowest screens" />
             ) : (
-              <div className="grid gap-4 xl:grid-cols-2">
+              <div className="grid grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-2">
                 <ChartFrame
                   title="Busiest screens"
                   description="The screens with the most requests."

@@ -64,7 +64,7 @@ export function OpenBundleButton({ className = "field-button-secondary" }: { cla
         ref={input}
         type="file"
         accept={BUNDLE_EXTENSIONS.join(",")}
-        className="sr-only"
+        className="hidden"
         tabIndex={-1}
         aria-hidden
         data-bundle-input

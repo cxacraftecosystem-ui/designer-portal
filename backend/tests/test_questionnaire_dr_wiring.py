@@ -238,3 +238,43 @@ def test_the_app_version_middleware_is_installed() -> None:
     from app.services.app_versions import AppVersionMiddleware
 
     assert any(getattr(m, "cls", None) is AppVersionMiddleware for m in app.user_middleware)
+
+
+class CoverageScopeDB:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self.rows = rows
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    async def query_raw(self, sql: str, *args: Any) -> list[dict[str, Any]]:
+        self.calls.append((sql, args))
+        return self.rows
+
+
+@pytest.mark.parametrize("rows,expected", [
+    ([], []),
+    ([{"artisanId": f"a{n:03d}"} for n in range(150)], [f"a{n:03d}" for n in range(150)]),
+])
+def test_coverage_for_a_design_workshop_sends_every_artisan_and_an_empty_one_gets_a_grid(
+    monkeypatch: pytest.MonkeyPatch, rows: list[dict[str, Any]], expected: list[str]
+) -> None:
+    from app.core import db as db_module
+    from app.core.config import get_settings
+    from app.questionnaire import coverage
+
+    monkeypatch.setattr(get_settings(), "questionnaire_v2", True)
+    fake = CoverageScopeDB(rows)
+    seen: dict[str, Any] = {}
+
+    async def grid(questionnaire_id: str, **kwargs: Any) -> dict[str, Any]:
+        seen.update(kwargs, questionnaireId=questionnaire_id)
+        return {"sections": [{"sectionId": "s1"}], "artisans": [], "cells": []}
+
+    monkeypatch.setattr(db_module, "db", fake)
+    monkeypatch.setattr(coverage, "grid", grid)
+    response = _client(monkeypatch).get("/api/questionnaire/coverage", params={"questionnaireId": "q1", "designWorkshopId": "dw1"})
+    assert response.status_code == 200, response.text
+    assert seen["questionnaireId"] == "q1"
+    assert seen["artisan_ids"] == expected
+    assert "workshop_id" not in seen
+    sql, args = fake.calls[0]
+    assert '"designWorkshopId" = $1' in sql and args == ("dw1", "q1")
