@@ -161,7 +161,7 @@ test("an ordinary 401 still ends the session and still lands on /login", async (
     const refused = await apiFetch("/products?page=1").catch((error: unknown) => error);
     expect((refused as ApiError).passwordChangeRequired).toBe(false);
     expect(tokenNow(), "a dead token is still dropped").toBeNull();
-    expect(recorded.replace).toEqual(["/login"]);
+    expect(recorded.replace).toEqual(["/session-ended?next=%2Fproducts"]);
     expect(sessionOwesPasswordChange(), "and nothing is said about a password").toBe(false);
     expect(told).toBe(0);
   } finally {
@@ -279,7 +279,7 @@ test("apiFetchWithHeaders is apiFetch with the headers kept: same body, same ref
   expect(refused).toBeInstanceOf(ApiError);
   expect((refused as ApiError).message).toBe("This session is no longer valid. Sign in again.");
   expect(tokenNow()).toBeNull();
-  expect(recorded.replace).toEqual(["/login"]);
+  expect(recorded.replace).toEqual(["/session-ended?next=%2Fsettings"]);
 });
 
 test("the API lets a browser read the session header — or every web password change costs a sign-in", () => {
@@ -341,5 +341,5 @@ test("a token CLEARED while the request was out is not 'replaced': the usual 401
   answer(401, { detail: "This session is no longer valid. Sign in again." }, () => session.set(null));
   await apiFetch("/products?page=1").catch(() => undefined);
   expect(tokenNow()).toBeNull();
-  expect(recorded.replace).toEqual(["/login"]);
+  expect(recorded.replace).toEqual(["/session-ended?next=%2Fproducts"]);
 });
