@@ -16,9 +16,8 @@ export function retryDelaySeconds(round: number): number {
 }
 
 function statusOf(error: unknown): number | null {
-  if (!error || typeof error !== "object") return null;
-  const status = (error as { status?: unknown }).status;
-  return typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599 ? status : null;
+  const answered = triageFailure(error).answered;
+  return answered ? answered.status : null;
 }
 
 export function browserOffline(): boolean {
