@@ -43,6 +43,9 @@ async def _seed() -> dict[str, Any]:
         data={
             "title": f"A {STAMP}",
             "status": "APPROVED",
+            "approvedAt": BASE,
+            "approvedById": admin.id,
+            "approvedRound": 1,
             "craftId": craft.id,
             "workshopId": workshop.id,
             "createdById": admin.id,
