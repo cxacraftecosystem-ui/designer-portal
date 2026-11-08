@@ -3555,6 +3555,7 @@ def _report_key(norm: str, scope: Scope, sees_spend: bool, version: str) -> str:
     return REPORT_CACHE.key(
         "report", norm, scope.records, scope.media, scope.design_workshops,
         scope.design_workshop_downloads, sees_spend, version,
+        explorer_filters.as_query(getattr(scope, "explorer_filter", None)),
     )
 
 

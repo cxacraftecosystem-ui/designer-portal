@@ -691,7 +691,8 @@ internal const val QUICK_SEARCH_LIMIT = 8
 
 internal fun SearchFilters.searchesCrafts(): Boolean =
     query.isNotBlank() && includes(SearchRecordTypes.CRAFT) && place.isBlank() && range == SearchRange.ANY &&
-        craftId.isBlank() && artisanId.isBlank() && mediaType.isBlank()
+        craftId.isBlank() && artisanId.isBlank() && mediaType.isBlank() &&
+        explorer["recordTypes"].isNullOrBlank() && explorer["hasTranscript"] != "yes"
 
 internal suspend fun searchWithCrafts(
     filters: SearchFilters,
