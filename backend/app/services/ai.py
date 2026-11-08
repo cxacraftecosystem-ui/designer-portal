@@ -470,8 +470,7 @@ def _discard(path: str | None) -> None:
 def _decode_to_wav(content: bytes | None, source_path: str | None) -> str | None:
     import subprocess
 
-    from app.transcription import audio as audio_tools
-    from app.transcription import workdir
+    from app.transcription import audio as audio_tools, workdir
 
     staged: str | None = None
     target: str | None = None
