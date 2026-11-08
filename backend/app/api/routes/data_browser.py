@@ -3592,7 +3592,10 @@ async def _build_report(
         return await report_jobs.fetch(
             current_user,
             report_jobs.REPORT,
-            report_jobs.report_params(path, options, name=file_name, sheet=sheet, parts=parts),
+            report_jobs.report_params(
+                path, options, name=file_name, sheet=sheet, parts=parts,
+                filters=explorer_filters.as_query(flt),
+            ),
         )
     scope = explorer_filters.narrow(await _scope_for(current_user), flt)
     searching = fmt == "json" and bool(report_tools.words(q))
