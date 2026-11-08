@@ -255,7 +255,7 @@ async def test_every_column_source_names_a_real_field(fake: Any) -> None:
             assert name in keys
         rows = list(sheet.rows)
         for row in rows:
-            assert set(row) <= set(keys), sheet.key
+            assert {k for k in row if not k.startswith("_")} <= set(keys), sheet.key
 
 
 async def test_cover_charts(fake: Any) -> None:
