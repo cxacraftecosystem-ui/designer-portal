@@ -210,7 +210,7 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
   }
 
   return (
-    <section className="panel p-5">
+    <section className="panel min-w-0 p-5">
       <div className="flex items-center gap-2.5">
         <span className="grid h-8 w-8 place-items-center rounded-md bg-purple-950 text-purple-100">
           <Users className="h-4 w-4" aria-hidden />
@@ -263,7 +263,7 @@ export function WorkshopRosterPanel({ refreshToken, onChanged }: { refreshToken:
           <EmptyState title="Nobody on this roster" body="No one has been granted access and nobody has asked. Add somebody below." />
         </div>
       ) : (
-        <div className="mt-4 overflow-x-auto">
+        <div className="mt-4 max-w-full overflow-x-auto overscroll-x-contain">
           <table className="w-full min-w-[860px] text-left text-sm">
             <thead className="bg-surface-50 text-xs uppercase text-ink-500">
               <tr>
