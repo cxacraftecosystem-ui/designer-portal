@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui
 
+import com.designprototype.workshop.explorer.MainThreadCalls
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -141,7 +142,7 @@ class DataSearchReachUiTest {
                 .body(body.toResponseBody("application/json".toMediaType()))
                 .build()
         }.build()
-        val api = ApiClient.retrofit(store).newBuilder().client(client).build().create(WorkshopRepositoryApi::class.java)
+        val api = ApiClient.retrofit(store).newBuilder().callFactory(MainThreadCalls.factory(client)).build().create(WorkshopRepositoryApi::class.java)
         return WorkshopRepository(api, store)
     }
 
