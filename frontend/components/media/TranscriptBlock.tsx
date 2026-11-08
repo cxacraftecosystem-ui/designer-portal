@@ -40,7 +40,8 @@ export function TranscriptBlock(props: TranscriptBlockProps) {
       }}
     />
   );
-  if (!isAudio && !isVideo) {
+  const untranscribed = !(media.transcriptStatus ?? "").trim() && !(media.transcriptText ?? "").trim();
+  if ((!isAudio && !isVideo) || untranscribed) {
     return (
       <>
         <LegacyTranscriptBlock {...inner} />
