@@ -1,6 +1,7 @@
 package com.designprototype.workshop
 
 import com.designprototype.workshop.transcript.data.TranscribeChoices
+import com.designprototype.workshop.ui.FieldRadioButton
 import com.designprototype.workshop.transcript.ui.TranscribeChoiceItem
 import com.designprototype.workshop.transcript.ui.TranscribeChoiceRows
 import com.designprototype.workshop.data.workshopDisplayTitle
@@ -85,9 +86,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Timeline
 import com.designprototype.workshop.ui.CachedCopyNote
@@ -3711,7 +3710,7 @@ private fun SettingsRadioRow(title: String, subtitle: String, selected: Boolean,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        RadioButton(selected = selected, onClick = null)
+        FieldRadioButton(selected = selected, onClick = null)
         Column(modifier = Modifier.weight(1f)) {
             Text(title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
             Text(subtitle, color = Muted, style = MaterialTheme.typography.bodySmall)

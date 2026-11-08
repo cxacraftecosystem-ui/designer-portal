@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.material3.RadioButton
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
@@ -785,7 +784,7 @@ private fun AccessEditDialog(
                                     onClick = { signIn = option }
                                 )
                         ) {
-                            RadioButton(selected = signIn == option, onClick = null)
+                            FieldRadioButton(selected = signIn == option, onClick = null)
                             Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(start = 8.dp))
                         }
                     }

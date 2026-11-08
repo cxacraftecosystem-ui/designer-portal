@@ -117,6 +117,6 @@ class StaticControlsUiTest {
         compose.waitForIdle()
         compose.onNodeWithTag("nav.view_data").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Data").assertIsDisplayed()
-        compose.onNode(hasContentDescription("Logout")).assertIsDisplayed()
+        compose.onNode(hasContentDescription("Logout")).performScrollTo().assertIsDisplayed()
     }
 }

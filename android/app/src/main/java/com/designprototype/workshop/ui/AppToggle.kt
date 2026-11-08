@@ -8,8 +8,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,19 +67,7 @@ fun AppToggle(
                 )
             }
         }
-        Switch(
-            checked = checked,
-            onCheckedChange = null,
-            enabled = enabled,
-            colors = SwitchDefaults.colors(
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                checkedBorderColor = MaterialTheme.colorScheme.primary,
-                uncheckedTrackColor = MaterialTheme.field.surface200,
-                uncheckedThumbColor = MaterialTheme.field.muted,
-                uncheckedBorderColor = MaterialTheme.field.muted,
-            )
-        )
+        FieldSwitch(checked = checked, onCheckedChange = null, enabled = enabled)
     }
 }
 
