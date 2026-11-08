@@ -247,6 +247,14 @@ def _barred_detail(email: str, state: str) -> str:
     )
 
 
+def _setup_label(mode: Any) -> str:
+    if mode == "GENERATE":
+        return "GENERATE"
+    if mode == "NONE":
+        return "NONE"
+    return "SET"
+
+
 async def assert_not_overturning_a_bar(
     actor: Any, email: Any, *, role: str | None, moving: bool = False
 ) -> tuple[str | None, bool]:
@@ -490,7 +498,7 @@ async def _write_in_one_transaction(
         actor_id,
         user.id,
         plan.role,
-        plan.password_mode,
+        _setup_label(plan.password_mode),
         "required" if plan.must_change_password and has_password else "not required",
         True,
         ",".join(role_lists) or "-",

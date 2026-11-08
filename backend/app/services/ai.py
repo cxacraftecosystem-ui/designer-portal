@@ -459,6 +459,39 @@ def _post_deepgram_transcription(
     return _legacy_result(result, language=False)
 
 
+def _discard(path: str | None) -> None:
+    if path:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _decode_to_wav(content: bytes | None, source_path: str | None) -> str | None:
+    import subprocess
+
+    from app.transcription import audio as audio_tools
+    from app.transcription import workdir
+
+    staged: str | None = None
+    target: str | None = None
+    try:
+        if not source_path:
+            with workdir.named_file(prefix="work-chunk-source-", suffix=".bin") as handle:
+                handle.write(content or b"")
+                staged = handle.name
+        with workdir.named_file(prefix="work-chunk-", suffix=".wav") as handle:
+            target = handle.name
+        if audio_tools.normalise_to_wav(source_path or staged or "", target):
+            return target
+    except (OSError, subprocess.SubprocessError, audio_tools.UnsafeInput, workdir.WorkDirFull) as exc:
+        logger.warning("Unable to decode audio for chunked transcription: %s", type(exc).__name__)
+    finally:
+        _discard(staged)
+    _discard(target)
+    return None
+
+
 def _split_audio_into_chunks(
     content: bytes | None, *, source_path: str | None = None
 ) -> Iterator[tuple[bytes, str, str]] | None:
@@ -469,11 +502,17 @@ def _split_audio_into_chunks(
     except Exception:  # noqa: BLE001 - missing optional dependency
         logger.warning("pydub/ffmpeg unavailable; long audio cannot be chunked for transcription")
         return None
+    wav_path = _decode_to_wav(content, source_path)
+    if wav_path is None:
+        logger.warning("Unable to decode audio for chunked transcription")
+        return None
     try:
-        audio = AudioSegment.from_file(source_path or io.BytesIO(content or b""))
+        audio = AudioSegment.from_file(wav_path, format="wav")
     except Exception as exc:  # noqa: BLE001 - undecodable container
         logger.warning("Unable to decode audio for chunked transcription: %s", exc)
         return None
+    finally:
+        _discard(wav_path)
 
     def _stream() -> Iterator[tuple[bytes, str, str]]:
         for index, start in enumerate(range(0, max(len(audio), 1), TRANSCRIPTION_CHUNK_MS)):

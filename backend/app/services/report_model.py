@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-_XML_ILLEGAL = re.compile("[^\u0009\u000a\u000d\u0020-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+_XML_ILLEGAL = dict.fromkeys([*range(0x00, 0x09), 0x0B, 0x0C, *range(0x0E, 0x20), *range(0xD800, 0xE000), 0xFFFE, 0xFFFF])
 
 _LINE_ENDINGS = re.compile("\r\n?|\u2028|\u2029")
 
@@ -18,7 +18,7 @@ def clean_text(value: Any) -> str:
         return "Yes" if value else "No"
     text = value if isinstance(value, str) else str(value)
     text = _LINE_ENDINGS.sub("\n", text)
-    return _XML_ILLEGAL.sub("", text)
+    return text.translate(_XML_ILLEGAL)
 
 
 

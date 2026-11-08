@@ -495,6 +495,11 @@ def _user_field(user: Any, name: str) -> Any:
     return user.get(name) if isinstance(user, dict) else getattr(user, name, None)
 
 
+def _user_id(user: Any) -> str:
+    raw = user.get("id") if isinstance(user, dict) else getattr(user, "id", None)
+    return str(raw) if raw is not None else "-"
+
+
 
 @dataclass(frozen=True)
 class AttemptBudget:
@@ -672,7 +677,7 @@ async def notify_second_factor_locked(user: Any, until: datetime, budget: Attemp
             email_params=params,
         )
     except Exception:
-        logger.exception("mail: could not queue a second-factor lock notice for %s", _user_field(user, "id"))
+        logger.exception("mail: could not queue a second-factor lock notice for %s", _user_id(user))
 
 
 async def clear_failures(user_id: str) -> None:

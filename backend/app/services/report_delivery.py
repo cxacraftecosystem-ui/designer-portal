@@ -20,7 +20,7 @@ LINK_DAYS = 7
 DOWNLOAD_PATH = "/report-download"
 MAX_OFFICE_ADDRESSES = 10
 RECEIVED_ROWS_PER_WORKSHOP = 20
-_ADDRESS = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
+_ADDRESS = re.compile(r"^[^@\s,;]+@[^@\s,;.]+(?:\.[^@\s,;.]+)+$")
 
 NOT_CONFIGURED = (
     "No office e-mail addresses are set, so the report was not sent. Hand it on yourself, or ask an "

@@ -5688,10 +5688,14 @@ private fun ArtisanMultiSelectField(
     var scanNote by remember { mutableStateOf<String?>(null) }
     val cardsOn = repository != null && artisans.any { it.card != null }
     val pendingCards = selectedIds.filter { ArtisanCardCode.isPending(it) }
+    val options = remember(artisans) {
+        artisans.map { artisan -> SelectOption(artisan.id, listOf(artisan.name, artisan.place).filter { it.isNotBlank() }.joinToString(" · ")) }
+    }
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("$label (${selectedIds.size} selected)", color = Muted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-            if (cardsOn) ArtisanCardScanButton(onClick = { scanNote = null; scanning = true })
+        if (cardsOn) {
+            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                ArtisanCardScanButton(onClick = { scanNote = null; scanning = true })
+            }
         }
         scanNote?.let { Text(it, color = Muted, style = MaterialTheme.typography.bodySmall) }
         if (scanning && repository != null) {
@@ -5723,28 +5727,19 @@ private fun ArtisanMultiSelectField(
                 modifier = Modifier.heightIn(min = 48.dp)
             )
         }
-        if (artisans.isEmpty()) {
-            Text("No artisans yet. Create one first.", color = Muted, style = MaterialTheme.typography.bodySmall)
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(SurfaceCard, RoundedCornerShape(12.dp))
-                    .padding(8.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                artisans.forEach { artisan ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onToggle(artisan.id) }
-                    ) {
-                        FieldCheckbox(checked = selectedIds.contains(artisan.id), onCheckedChange = { onToggle(artisan.id) })
-                        Text("${artisan.name} · ${artisan.place}", color = Body, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-            }
+        SearchableMultiSelectField(
+            label = label,
+            options = options,
+            selected = selectedIds,
+            placeholder = "Select artisans",
+            emptyMessage = "No artisans yet. Create one first.",
+            searchable = true,
+        ) { next ->
+            val listed = options.mapTo(HashSet()) { it.value }
+            val before = selectedIds.filterTo(HashSet()) { it in listed }
+            val after = next.filterTo(HashSet()) { it in listed }
+            (after - before).forEach(onToggle)
+            (before - after).forEach(onToggle)
         }
     }
 }
@@ -11947,6 +11942,17 @@ private val CompletionAmber: Color get() = StatusWarning
 private val CompletionRed: Color get() = StatusError
 private val CompletionEmpty: Color get() = StatusEmpty
 
+@Composable
+internal fun CompletionCellMark(status: String?, derived: Boolean) {
+    val mark = when {
+        status == "COMPLETED" || (status == null && derived) -> Triple(com.designprototype.workshop.explorer.ui.ExplorerMarkKind.SAVED, OnStatusSuccess, CompletionGreen)
+        status == "NEEDS_REVIEW" -> Triple(com.designprototype.workshop.explorer.ui.ExplorerMarkKind.FAILED, OnStatusWarning, CompletionAmber)
+        status == "NEEDS_REDO" -> Triple(com.designprototype.workshop.explorer.ui.ExplorerMarkKind.REDO, OnStatusError, CompletionRed)
+        else -> null
+    } ?: return
+    com.designprototype.workshop.explorer.ui.ExplorerMarkBadge(mark.first, background = mark.second, tint = mark.third, size = 22.dp, icon = 14.dp)
+}
+
 private fun completionColor(status: String?, derived: Boolean): Color = when (status) {
     "COMPLETED" -> CompletionGreen
     "NEEDS_REVIEW" -> CompletionAmber
@@ -12124,13 +12130,7 @@ private fun CompletionMatrixCard(
                                                 },
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            if (status == "COMPLETED" || (status == null && derived)) {
-                                                Text("✓", color = OnStatusSuccess, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                                            } else if (status == "NEEDS_REVIEW") {
-                                                Text("!", color = OnStatusWarning, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                                            } else if (status == "NEEDS_REDO") {
-                                                Text("✗", color = OnStatusError, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                                            }
+                                            CompletionCellMark(status, derived)
                                         }
                                     }
                                 }
