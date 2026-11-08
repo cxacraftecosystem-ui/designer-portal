@@ -72,6 +72,7 @@ How to add a check, the same in both repositories:
 1. **Search reindex**, on each box, through SSM, from the backend directory: `python -m scripts.search_reindex`. It queues every record for the queue worker to rebuild its search document. A second run queues only records that are not already waiting, and rebuilding a document twice gives the same document.
 2. **Superseded failed jobs**: the two commands in Superseded failed jobs below. A second run finds 0.
 3. **Private media storage**: the runbook below, after both Android 0.0.15 builds are out. If `terraform plan` already shows `No changes`, the cut-over was applied before: skip to its step 6 and verify.
+4. **Question codes for the fourth workshop (FR)**: on the FR box, through SSM, from the backend directory, `python scripts/reconcile_question_codes.py` first. It prints how many questions would change and changes nothing. Expect only codes to set (the 32 new or reworded W4 questions, CTW4.D.06 to CTW4.W.05, in each copy of the instrument) and 0 to clear; if it would clear any, stop and ask. Then `python scripts/reconcile_question_codes.py --apply`, which runs `cross_portal_codes.reconcile_question_codes` and exits 0 only when nothing is left to change. A second run finds 0. No migration: the codes are in `backend/app/data/cross_portal_codes.json`.
 
 ## Private media storage (DR 0.0.15, FR 0.0.15)
 
