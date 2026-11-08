@@ -1668,7 +1668,7 @@ private fun LoginScreen(
     onOpenSetPasswordLink: () -> Unit = {},
     onForgotPassword: (String) -> Unit = {}
 ) {
-    var email by remember { mutableStateOf("") }
+    var email by rememberSaveable { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
 
