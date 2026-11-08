@@ -205,7 +205,7 @@ def test_data_explorer_transcript_list_hides_consent_withheld_text(monkeypatch):
     async def scope(_user):
         return SimpleNamespace()
 
-    async def folder(_scope, _norm, _offset=0):
+    async def folder(_scope, _norm, _offset=0, _sort=None):
         return {"m1": {"mediaId": "m1", "name": "a.m4a", "path": "x/a.m4a", "mediaType": "AUDIO"}}, {"m1": row}, False
 
     async def withheld(ids, **_k):
