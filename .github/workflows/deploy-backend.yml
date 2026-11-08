@@ -376,7 +376,7 @@ jobs:
             stage="$(sudo mktemp -d /opt/cpython/.incoming.XXXXXX)"
             sudo chmod 0755 "$stage"
             trap 'sudo rm -rf "$stage"' EXIT
-            sudo curl -fsSL --proto '=https' --tlsv1.2 --retry 5 --retry-delay 10 --retry-all-errors --connect-timeout 30 --max-time 900 -o "$stage/python.tar.gz" "$BOX_PYTHON_URL"
+            sudo curl -fsSL --proto '=https' --tlsv1.2 --retry 2 --retry-delay 5 --retry-all-errors --connect-timeout 30 --max-time 900 -o "$stage/python.tar.gz" "$BOX_PYTHON_URL" \n              || sudo curl -fsSL --proto '=https' --tlsv1.2 --retry 5 --retry-delay 10 --retry-all-errors --connect-timeout 30 --max-time 900 -H "Accept: application/octet-stream" -o "$stage/python.tar.gz" "https://api.github.com/repos/astral-sh/python-build-standalone/releases/assets/678585943"
             got="$(sudo sha256sum "$stage/python.tar.gz" | cut -d' ' -f1)"
             if [ "$got" != "$BOX_PYTHON_SHA256" ]; then
               echo "::error::REFUSING TO INSTALL: $BOX_PYTHON_URL has SHA-256 $got, and the pin is $BOX_PYTHON_SHA256. Nothing was unpacked and nothing on the box changed; it still serves $(readlink -f /home/ubuntu/app/current 2>/dev/null || echo '<no release yet>'). Re-read the digest from that release's SHA256SUMS before changing the pin."
@@ -983,6 +983,8 @@ jobs:
           '"
 
       - name: Install the pinned CPython on the runner, at the box's path
+        env:
+          GH_API_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           minor="${BOX_PYTHON_VERSION%.*}"
@@ -991,7 +993,7 @@ jobs:
           [ "$BOX_PYTHON_URL" = "$want_url" ] || { echo "::error::BOX_PYTHON_URL is not $want_url. Change the four BOX_PYTHON_* values together."; exit 1; }
           [ "$(uname -m)" = "x86_64" ] || { echo "::error::this runner is $(uname -m); the pinned build is for x86_64."; exit 1; }
           stage="$(mktemp -d)"
-          curl -fsSL --proto '=https' --tlsv1.2 --retry 5 --retry-delay 10 --retry-all-errors --connect-timeout 30 --max-time 900 -o "$stage/python.tar.gz" "$BOX_PYTHON_URL"
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 2 --retry-delay 5 --retry-all-errors --connect-timeout 30 --max-time 900 -o "$stage/python.tar.gz" "$BOX_PYTHON_URL" \n            || curl -fsSL --proto '=https' --tlsv1.2 --retry 5 --retry-delay 10 --retry-all-errors --connect-timeout 30 --max-time 900 -H "Accept: application/octet-stream" -H "Authorization: Bearer ${GH_API_TOKEN}" -o "$stage/python.tar.gz" "https://api.github.com/repos/astral-sh/python-build-standalone/releases/assets/678585943"
           got="$(sha256sum "$stage/python.tar.gz" | cut -d' ' -f1)"
           [ "$got" = "$BOX_PYTHON_SHA256" ] || { echo "::error::$BOX_PYTHON_URL has SHA-256 $got, and the pin is $BOX_PYTHON_SHA256. Nothing was built."; exit 1; }
           tar -xzf "$stage/python.tar.gz" -C "$stage"
