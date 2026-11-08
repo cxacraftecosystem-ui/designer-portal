@@ -147,7 +147,8 @@ data class SearchFilters(
     val to: LocalDate? = null,
     val craftId: String = "",
     val artisanId: String = "",
-    val mediaType: String = ""
+    val mediaType: String = "",
+    val explorer: Map<String, String> = emptyMap()
 ) {
     val typed: Pair<String, String>
         get() = query to place
@@ -777,7 +778,8 @@ internal class QuickSearchState(private val repository: WorkshopRepository) {
                     dateFrom = dateFrom,
                     dateTo = dateTo,
                     page = 1,
-                    pageSize = limit
+                    pageSize = limit,
+                    filters = filters.explorer
                 )
             }
             hits = results.toQuickHits(filters, limit)
@@ -966,7 +968,8 @@ internal fun SearchFilterBar(
     onChange: (SearchFilters) -> Unit,
     modifier: Modifier = Modifier,
     offeredTypes: List<String> = SearchRecordTypes.ALL,
-    extraFilters: (@Composable ColumnScope.() -> Unit)? = null
+    extraFilters: (@Composable ColumnScope.() -> Unit)? = null,
+    showSheet: Boolean = true
 ) {
     var open by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -1000,7 +1003,7 @@ internal fun SearchFilterBar(
                     onClick = { onChange(value.copy(types = setOf(recordType))) }
                 )
             }
-            SearchChip(
+            if (showSheet) SearchChip(
                 text = if (hidden > 0) "Filters · $hidden" else "Filters",
                 tone = if (open || hidden > 0) ChipTone.PART else ChipTone.OFF,
                 icon = Icons.Filled.FilterList,
@@ -1010,14 +1013,14 @@ internal fun SearchFilterBar(
 
         if (value.types.size > 1) {
             Text(
-                "Searching ${value.types.size} record types. Tap a chip for one; more under Filters.",
+                if (showSheet) "Searching ${value.types.size} record types. Tap a chip for one; more under Filters." else "Searching ${value.types.size} record types. Tap a chip for one.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
 
-    if (open) {
+    if (open && showSheet) {
         ModalBottomSheet(
             onDismissRequest = { open = false },
             sheetState = sheetState,
