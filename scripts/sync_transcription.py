@@ -66,6 +66,7 @@ EXPLORER_FILES = (
     "shared/data-explorer-contract.json",
     "backend/tests/test_data_explorer_units.py",
     "backend/tests/test_data_explorer_contract.py",
+    "backend/tests/test_data_explorer_sort_units.py",
 )
 
 

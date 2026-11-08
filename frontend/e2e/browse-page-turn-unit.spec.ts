@@ -33,6 +33,6 @@ test("a page turn keeps the type and the search", () => {
 
 test("the search reaches every row on the server, not the page in the browser", () => {
   const code = read(...BROWSE);
-  expect(code).toContain("fetchBrowse({ type: chosen.value, page, q, workshopIds: scopeIds })");
+  expect(code).toContain("fetchBrowse({ type: chosen.value, page, q, workshopIds: scopeIds, sort: sortText })");
   expect(code).toContain("return chosen.legacy(page, q, scopeIds);");
 });
