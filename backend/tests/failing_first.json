@@ -45,6 +45,17 @@
     "to": "8f9e26f8721463c4a700555a1e7626c5f64b2bef"
   },
   {
+    "id": "upload-completion-checks-storage",
+    "tests": [
+      "tests/test_upload_landing.py::test_an_upload_that_never_reached_storage_is_refused_so_the_client_sends_it_again",
+      "tests/test_upload_landing.py::test_completion_checks_storage_before_it_creates_the_media_record"
+    ],
+    "revert": [
+      "backend/app/api/routes/media.py"
+    ],
+    "to": "2e3fd31d3b9ed15c6585c38c6fddc3f43487ff3d"
+  },
+  {
     "id": "wp3-ffmpeg-input-guard",
     "tests": [
       "tests/test_data_explorer_units.py::test_the_waveform_reads_only_this_portals_media_and_never_a_protocol_or_playlist",
@@ -119,16 +130,5 @@
       "backend/app/services/paid_ai_allowance.py"
     ],
     "to": "8f9e26f8721463c4a700555a1e7626c5f64b2bef"
-  },
-  {
-    "id": "upload-completion-checks-storage",
-    "tests": [
-      "tests/test_upload_landing.py::test_an_upload_that_never_reached_storage_is_refused_so_the_client_sends_it_again",
-      "tests/test_upload_landing.py::test_completion_checks_storage_before_it_creates_the_media_record"
-    ],
-    "revert": [
-      "backend/app/api/routes/media.py"
-    ],
-    "to": "2e3fd31d3b9ed15c6585c38c6fddc3f43487ff3d"
   }
 ]
