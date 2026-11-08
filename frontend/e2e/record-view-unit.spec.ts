@@ -321,11 +321,10 @@ test("a record that did not open says gone or not yours, never the server's bare
   expect(recordLoadFailure("artisan", null, "")).toBe("Unable to load this artisan.");
 });
 
-test("the artisan edit form explains a failed load the way the read-only page does", () => {
+test("the artisan edit form explains a failed load, and the read-only page draws the matching error state", () => {
   const edit = readFileSync(join(ROOT, "app/(protected)/artisans/[id]/edit/page.tsx"), "utf8");
   const view = readFileSync(join(ROOT, "components/records/RecordView.tsx"), "utf8");
-  for (const source of [edit, view]) {
-    expect(source).toContain("recordLoadFailure(");
-    expect(source).not.toMatch(/setError\(err instanceof Error \? err\.message/);
-  }
+  expect(edit).toContain("recordLoadFailure(");
+  expect(view).toContain("<ApiErrorState");
+  for (const source of [edit, view]) expect(source).not.toMatch(/setError\(err instanceof Error \? err\.message/);
 });

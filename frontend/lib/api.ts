@@ -1,6 +1,9 @@
 import type { PageResult } from "@/lib/types";
 
+import { SESSION_ENDED_PATH, sessionEndedHref } from "@/lib/sessionReturn";
 import { endSession, getSessionMarker } from "@/lib/session";
+
+const SIGNED_OUT_PATHS = new Set(["/login", SESSION_ENDED_PATH]);
 
 export const API_BASE = "";
 
@@ -193,8 +196,8 @@ export async function apiFetchWithHeaders<T>(
     } else if (response.status === 401 && token && typeof window !== "undefined") {
       endSession();
 
-      if ((options.redirectOn401 ?? true) && window.location.pathname !== "/login") {
-        window.location.replace("/login");
+      if ((options.redirectOn401 ?? true) && !SIGNED_OUT_PATHS.has(window.location.pathname)) {
+        window.location.replace(sessionEndedHref(`${window.location.pathname}${window.location.search ?? ""}`));
       }
     }
     throw error;

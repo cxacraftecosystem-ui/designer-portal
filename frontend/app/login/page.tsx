@@ -13,6 +13,7 @@ import { TwoStepChallengeForm } from "@/components/TwoStepChallengeForm";
 import { Button } from "@/components/ui/button";
 import { GLASS_PANEL, GlassSurface } from "@/components/ui/GlassSurface";
 import { useToast } from "@/components/ui/Toast";
+import { rememberSignInReturn, takeSignInReturn } from "@/lib/sessionReturn";
 import { ApiError } from "@/lib/api";
 import {
   beginSignIn,
@@ -181,7 +182,11 @@ function LoginView() {
   const passwordGate = mustChangePassword(user) ? user : null;
 
   useEffect(() => {
-    if (user && !signingIn.current && !held && !passwordGate && !challenge) router.replace("/dashboard");
+    rememberSignInReturn(window.location.search);
+  }, []);
+
+  useEffect(() => {
+    if (user && !signingIn.current && !held && !passwordGate && !challenge) router.replace(takeSignInReturn());
   }, [challenge, held, passwordGate, router, user]);
 
   useEffect(() => {
@@ -268,7 +273,7 @@ function LoginView() {
           return;
         }
         if (mustChangePassword(account)) return;
-        router.replace("/dashboard");
+        router.replace(takeSignInReturn());
       } catch (err) {
         signingIn.current = false;
         describeFailure(err);
@@ -297,7 +302,7 @@ function LoginView() {
         return;
       }
       if (mustChangePassword(account)) return;
-      router.replace("/dashboard");
+      router.replace(takeSignInReturn());
     } finally {
       signingIn.current = false;
       setChallenge(null);
@@ -326,7 +331,7 @@ function LoginView() {
         return;
       }
       if (mustChangePassword(account)) return;
-      router.replace("/dashboard");
+      router.replace(takeSignInReturn());
     } catch (err) {
       setDoorPassword("");
       describeFailure(err);
@@ -405,7 +410,7 @@ function LoginView() {
           return;
         }
         if (mustChangePassword(account)) return;
-        router.replace("/dashboard");
+        router.replace(takeSignInReturn());
       } catch (err) {
         signingIn.current = false;
         describeFailure(err);
@@ -476,7 +481,7 @@ function LoginView() {
               onDone={() => {
                 setDoorPassword("");
                 markPasswordChanged();
-                router.replace("/dashboard");
+                router.replace(takeSignInReturn());
               }}
               onSignOut={() => {
                 setDoorPassword("");

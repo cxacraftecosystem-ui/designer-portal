@@ -112,6 +112,15 @@ def test_the_payload_carries_no_personal_data_and_no_record_id():
         assert not re.search(r"\d{12}", short.replace("-", ""))
 
 
+def test_a_new_code_is_never_all_digits_so_the_short_code_cannot_read_as_an_aadhaar(monkeypatch):
+    draws = iter("0123456789" * 3 + "A123456789")
+    monkeypatch.setattr(ac.secrets, "choice", lambda _alphabet: next(draws))
+    code = ac.new_code()
+    assert code == "A123456789"
+    for issuer in ac.ISSUERS:
+        assert not re.search(r"\d{12}", ac.short_code(issuer, code).replace("-", ""))
+
+
 def test_the_qr_is_version_3_at_level_q_and_the_svg_is_the_printed_symbol():
     token = ac.payload(KEY, "D", 1, "7K3QM9XA2F")
     matrix = pdf.qr_matrix(token)

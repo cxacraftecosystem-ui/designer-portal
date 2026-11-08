@@ -114,7 +114,7 @@ test("the sign-in card offers only the ways in that exist", () => {
 
 test("the redirect effect refuses to navigate while either gate stands", () => {
   expect(LOGIN).toMatch(
-    /if \(user && !signingIn\.current && !held && !passwordGate && !challenge\) router\.replace\("\/dashboard"\)/
+    /if \(user && !signingIn\.current && !held && !passwordGate && !challenge\) router\.replace\(takeSignInReturn\(\)\)/
   );
 });
 
@@ -127,7 +127,7 @@ test("a completed change closes the gate through the ONE latch, shared with the 
   const onDone = /onDone=\{\(\) => \{[\s\S]*?\}\}/.exec(LOGIN)?.[0] ?? "";
   expect(onDone, "the gate's completion was located").toContain("markPasswordChanged()");
   expect(onDone.indexOf("markPasswordChanged()"), "cleared BEFORE the navigation, so the dashboard reads it").toBeLessThan(
-    onDone.indexOf('router.replace("/dashboard")')
+    onDone.indexOf("router.replace(takeSignInReturn())")
   );
   const latch = AUTH.slice(AUTH.indexOf("const markPasswordChanged = useCallback("));
   const body = latch.slice(0, latch.indexOf("}, [refreshMe]);"));
