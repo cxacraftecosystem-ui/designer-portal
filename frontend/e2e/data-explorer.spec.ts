@@ -962,6 +962,9 @@ test.describe("@qf:X6 the report never saves an error as a file", () => {
 test.describe("@qf:X1 keyboard", () => {
   test("Ctrl+K opens quick jump, a record jumps to its folder, Escape closes it", async ({ browser }) => {
     const { context, page } = await openExplorer(browser, { path: "workshops" });
+    page.on("pageerror", (error) => console.log("PAGEERROR", error.message, (error.stack ?? "").slice(0, 600)));
+    page.on("console", (message) => console.log("CONSOLE", message.type(), message.text().slice(0, 300)));
+    page.on("framenavigated", (frame) => console.log("NAV", frame.url()));
     try {
       await page.getByRole("heading", { name: "All workshops", exact: true }).first().click();
       await page.keyboard.press("Control+k");
