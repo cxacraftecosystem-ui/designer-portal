@@ -515,8 +515,8 @@ jobs:
           write_dropin fieldrepo-queue.service memory.conf <<'CONF'
           [Service]
           MemoryAccounting=yes
-          MemoryHigh=800M
-          MemoryMax=1100M
+          MemoryHigh=1000M
+          MemoryMax=1200M
           CONF
 
           if [ "$changed" = "1" ]; then

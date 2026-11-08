@@ -10,6 +10,7 @@ from conftest import needs_db
 from query_count_support import count_statements
 
 from app.core.db import db
+from tests.report_worker import body as file_body, running_worker
 
 pytestmark = needs_db
 
@@ -116,8 +117,9 @@ def test_the_json_preview_is_cut_and_the_xlsx_gets_every_row(monkeypatch):
         seed = await _seed()
         try:
             shown = await data_browser.data_report(path="", format="json", current_user=seed["admin"])
-            download = await data_browser.data_report(path="", format="xlsx", current_user=seed["admin"])
-            body = bytes(download.body)
+            async with running_worker():
+                download = await data_browser.data_report(path="", format="xlsx", current_user=seed["admin"])
+            body = file_body(download)
             return {"json": json.loads(shown.body), "xlsx": body, "sheets": handed}
         finally:
             await _cleanup(seed)
