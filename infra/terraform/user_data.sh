@@ -79,7 +79,7 @@ ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m app.worker
 # working); MemoryMax kills it if it keeps climbing, which is survivable: Restart=always brings it
 # back and the job is retried.
 #
-# The two soft ceilings total 1800M on the t3.small's 1906 MiB of usable RAM, which is the same bet
+# The two soft ceilings total 2000M on the t3.medium's 4 GiB of RAM, which is the same bet
 # the old pair made inside 1 GiB: MemoryHigh bounds one cgroup, it does not reserve memory, and these
 # two do not peak together (an easy bet on the t3.medium). MemoryMax here is the one hard stop on the
 # box, and it stays on the queue.

@@ -96,7 +96,7 @@ times; that path has downtime and says so in the log.
 Unbounded, the kernel's OOM killer picked uvicorn because the queue was hungry, and the API then
 answered 502 for a reason nowhere in its own logs. The API gets `MemoryHigh=1000M` and no
 `MemoryMax`: killing the API to save memory is the outcome these limits exist to prevent. The queue
-gets `MemoryHigh=800M` and `MemoryMax=1100M`, because a killed queue restarts and its job is retried.
+gets `MemoryHigh=1000M` and `MemoryMax=1200M` (since 0.0.15), because a killed queue restarts and its job is retried.
 The box was a t3.micro until 2026-09-17 (it thrashed with steal time 0, which ruled out CPU credits), a
 t3.small until 2026-10-10, and a t3.medium since; see [CI.md](CI.md).
 

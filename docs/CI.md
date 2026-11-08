@@ -454,7 +454,7 @@ limits are the ones set for the **t3.small** (2 GiB) it replaced, kept until the
 picks by badness score, which on this box has meant **uvicorn dying because the queue was hungry**,
 with the API then 502-ing for a reason that appears nowhere in its own logs. So `fieldrepo` gets
 `MemoryHigh=1000M` and deliberately **no** `MemoryMax`: killing the API to save memory is the outcome
-these limits exist to prevent. `fieldrepo-queue` gets `MemoryHigh=800M` and `MemoryMax=1100M`, because
+these limits exist to prevent. `fieldrepo-queue` gets `MemoryHigh=1000M` and `MemoryMax=1200M` (since 0.0.15, which builds reports there), because
 the queue being killed is recoverable — `Restart=always`, and the job is retried.
 
 **It was a t3.micro with 500M/400M/550M until 2026-09-17, and the day it stopped being one is worth
@@ -470,7 +470,7 @@ through swap. The box was resized (`instance_type` in `infra/terraform/main.tf` 
 output) and the ceilings raised together; either alone would have made things worse.
 
 The API's figure is now a measurement. **The queue's is not** — 400M was never observed to be hit,
-and 800M is simply that arithmetic doubled. If the queue thrashes on real transcription work, raise
+and 800M was simply that arithmetic doubled; 0.0.15 raised it to 1000M for report building. If the queue thrashes on real transcription work, raise
 `MemoryHigh` from the memory line in `systemctl status fieldrepo-queue` rather than doubling again.
 
 One more thing the drop-in restates: `Environment=MEDIA_QUEUE_WORKER_ENABLED=false` on `fieldrepo`.

@@ -334,13 +334,13 @@ ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m app.worker
 # after uvicorn. MemoryHigh throttles it first (slow, still working); MemoryMax kills it if it keeps
 # climbing, which is survivable — Restart=always brings it back and the job is retried. The queue is
 # the process that CAN be killed; uvicorn is not, which is why only this unit has a hard stop.
-# 800M/1100M since 2026-09-17 — the old 400M/550M doubled with the box, and UNLIKE the API's figure
-# this one is still inherited arithmetic rather than a reading: 400M was never observed to be hit.
+# 1000M/1200M since 0.0.15, when report building moved onto the queue (800M/1100M from 2026-09-17,
+# the old 400M/550M doubled with the box). UNLIKE the API's figure it is not yet a reading.
 # If transcription work thrashes, raise it from the memory line in `systemctl status
 # fieldrepo-queue`, not by doubling again.
 MemoryAccounting=yes
-MemoryHigh=800M
-MemoryMax=1100M
+MemoryHigh=1000M
+MemoryMax=1200M
 KillMode=control-group
 Restart=always
 RestartSec=10
