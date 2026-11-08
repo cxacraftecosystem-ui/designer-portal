@@ -27,7 +27,7 @@ export function ChartFrame({
   table?: ReactNode;
 }) {
   return (
-    <section className="panel p-4">
+    <section className="panel min-w-0 p-4">
       <h2 className="font-display font-bold text-ink-900">{title}</h2>
       <p className="mt-0.5 text-sm leading-6 text-ink-500">{description}</p>
       {legend ? <div className="mt-3">{legend}</div> : null}

@@ -352,11 +352,28 @@ async def coverage_check(request: Request, user: Any = Depends(get_current_user)
     return await coverage.check(payload, user)
 
 
+async def design_workshop_artisans(client: Any, design_workshop_id: str, questionnaire_id: str) -> list[str]:
+    rows = await client.query_raw(
+        'SELECT "id" AS "artisanId" FROM "Artisan" WHERE "designWorkshopId" = $1 '
+        'UNION SELECT qa."artisanId" FROM "QuestionnaireInterviewArtisan" qa '
+        'JOIN "QuestionnaireInterview" i ON i."id" = qa."interviewId" '
+        'WHERE i."designWorkshopId" = $1 AND i."questionnaireId" = $2 AND i."deletedAt" IS NULL',
+        design_workshop_id, questionnaire_id,
+    )
+    return sorted({str(r["artisanId"]) for r in rows})
+
+
 @router.get("/coverage", dependencies=V2)
 async def coverage_grid(
-    questionnaireId: str, workshopId: str | None = None, artisanIds: list[str] = Query(default=[]), _: Any = Depends(get_current_user)
+    questionnaireId: str, workshopId: str | None = None, designWorkshopId: str | None = None,
+    artisanIds: list[str] = Query(default=[]), _: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
     ids = [a for value in artisanIds for a in value.split(",") if a]
+    if designWorkshopId and not ids and not workshopId:
+        from app.core.db import db
+
+        scoped = await design_workshop_artisans(db, designWorkshopId, questionnaireId)
+        return await coverage.grid(questionnaireId, artisan_ids=scoped, client=db)
     return await coverage.grid(questionnaireId, artisan_ids=ids or None, workshop_id=workshopId)
 
 

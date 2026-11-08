@@ -389,7 +389,7 @@ export function DesignWorkshopViewersPanel({ refreshToken }: { refreshToken?: nu
   }
 
   return (
-    <section className="panel p-5" data-design-workshop-viewers>
+    <section className="panel min-w-0 p-5" data-design-workshop-viewers>
       <div className="flex items-center gap-2.5">
         <span className="grid h-8 w-8 place-items-center rounded-md bg-purple-950 text-purple-100">
           <DraftingCompass className="h-4 w-4" aria-hidden />

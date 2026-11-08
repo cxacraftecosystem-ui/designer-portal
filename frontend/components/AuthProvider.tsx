@@ -17,7 +17,7 @@ import {
   sessionReplacedSince,
   setSessionOwesPasswordChange
 } from "@/lib/api";
-import { migrateStoredToken } from "@/lib/session";
+import { hasLegacyToken, mayHoldSession, migrateStoredToken } from "@/lib/session";
 import type { loginBody } from "@/lib/oidcSignIn";
 import { forgetCachedMe, meFailure, meRetryDelay, readCachedMe, withinTimeout, writeCachedMe, type MeReach } from "@/lib/meProbe";
 import { mustChangePassword } from "@/lib/signIn";
@@ -103,7 +103,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [refreshMe]);
 
   useEffect(() => {
+    const legacyToken = hasLegacyToken();
     void migrateStoredToken().finally(() => {
+      if (!mayHoldSession(window.location.pathname, legacyToken)) {
+        setReach("ok");
+        setLoading(false);
+        return;
+      }
       const cached = readCachedMe(getSessionMarker());
       if (cached) {
         setSessionOwesPasswordChange(mustChangePassword(cached));
