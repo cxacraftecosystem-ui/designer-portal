@@ -191,6 +191,10 @@ private fun detailMessage(detail: JsonElement): String? = when (detail) {
     else -> null
 }
 
+private const val UPLOAD_MISSING_CODE = 409
+
+internal fun HttpException.uploadNeverLanded(): Boolean = code() == UPLOAD_MISSING_CODE
+
 fun Throwable.isAccountRefusal(): Boolean = (this as? HttpException)?.code() == 403
 
 enum class AccessRefusal {
@@ -3777,38 +3781,51 @@ class WorkshopRepository(
         )
         val source = withContext(Dispatchers.IO) { resolveUploadSource(context, uri) }
         try {
-            val target = uploadBytesToS3(
-                context = context,
-                filename = filename,
-                mimeType = mimeType,
-                mediaType = mediaType,
-                source = source,
-                linkedRecordType = linkedRecordType,
-                linkedRecordId = linkedRecordId,
-                onProgress = onProgress
-            )
-            val media = completeUpload(
-                MediaCompleteRequest(
-                    originalFilename = filename,
-                    mediaType = mediaType,
+            val send: suspend () -> MediaFileDto = {
+                val target = uploadBytesToS3(
+                    context = context,
+                    filename = filename,
                     mimeType = mimeType,
-                    sizeBytes = source.size,
-                    objectKey = target.objectKey,
-                    bucket = target.bucket,
-                    url = target.publicUrl,
-                    caption = caption.blankToNull(),
-                    linkedRecordType = linkedRecordType.blankToNull(),
-                    linkedRecordId = linkedRecordId.blankToNull(),
-                    designWorkshopId = designWorkshopId.blankToNull(),
-                    recordedAt = Instant.now().toString(),
-                    location = location,
-                    processingRequests = resolvedProcessing,
-                    extraMetadata = extraMetadata
-                ),
-                target.checksum
-            )
-            StagedJournal.drop(target.objectKey)
-            return media
+                    mediaType = mediaType,
+                    source = source,
+                    linkedRecordType = linkedRecordType,
+                    linkedRecordId = linkedRecordId,
+                    onProgress = onProgress
+                )
+                val media = try {
+                    completeUpload(
+                        MediaCompleteRequest(
+                            originalFilename = filename,
+                            mediaType = mediaType,
+                            mimeType = mimeType,
+                            sizeBytes = source.size,
+                            objectKey = target.objectKey,
+                            bucket = target.bucket,
+                            url = target.publicUrl,
+                            caption = caption.blankToNull(),
+                            linkedRecordType = linkedRecordType.blankToNull(),
+                            linkedRecordId = linkedRecordId.blankToNull(),
+                            designWorkshopId = designWorkshopId.blankToNull(),
+                            recordedAt = Instant.now().toString(),
+                            location = location,
+                            processingRequests = resolvedProcessing,
+                            extraMetadata = extraMetadata
+                        ),
+                        target.checksum
+                    )
+                } catch (refused: HttpException) {
+                    if (refused.uploadNeverLanded()) StagedJournal.drop(target.objectKey)
+                    throw refused
+                }
+                StagedJournal.drop(target.objectKey)
+                media
+            }
+            return try {
+                send()
+            } catch (refused: HttpException) {
+                if (!refused.uploadNeverLanded()) throw refused
+                send()
+            }
         } finally {
             source.cleanup()
         }

@@ -87,6 +87,7 @@ from app.services.s3 import (
     delete_object,
     head_object,
     make_object_key,
+    object_exists,
     presign_put_url,
     presign_upload_part,
     public_url_for_key,
@@ -99,6 +100,8 @@ from app.services.workshop_access import (
 )
 
 MULTIPART_PART_SIZE = 16 * 1024 * 1024
+UPLOAD_LANDING_WAITS: tuple[float, ...] = (0.0, 0.5, 1.0, 2.0)
+UPLOAD_MISSING_HEADER = "X-Upload-Missing"
 
 MEDIA_PROCESSING_JOB_STATUSES = frozenset(
     {"QUEUED", "PROCESSING", "COMPLETED", "FAILED", "CANCELLED"}
@@ -518,6 +521,27 @@ SERVER_WRITTEN_TRANSCRIPT_FIELDS = frozenset(
 )
 
 
+async def _assert_upload_landed(object_key: str) -> None:
+    answered = False
+    for wait in UPLOAD_LANDING_WAITS:
+        if wait:
+            await asyncio.sleep(wait)
+        found = await asyncio.to_thread(object_exists, object_key)
+        if found:
+            return
+        answered = answered or found is False
+    if not answered:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Storage couldn't confirm the file arrived. Try the upload again.",
+        )
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="The file didn't reach storage. Upload it again.",
+        headers={UPLOAD_MISSING_HEADER: "1"},
+    )
+
+
 async def _assert_stored_object_within_ceiling(object_key: str, settings: Any) -> None:
     ceiling = int(getattr(settings, "media_upload_max_bytes", 0) or 0)
     if not ceiling:
@@ -593,6 +617,7 @@ async def complete_media_upload(
         _upload_as_filed(payload), current_user
     )
 
+    await _assert_upload_landed(payload.objectKey)
     await _assert_stored_object_within_ceiling(payload.objectKey, settings)
 
     data = clean_data(

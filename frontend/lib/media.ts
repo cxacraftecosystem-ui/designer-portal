@@ -174,6 +174,8 @@ export function audioExtensionForMimeType(mimeType: string | null | undefined): 
   return "webm";
 }
 
+const UPLOAD_MISSING_STATUS = 409;
+
 class EtagUnavailableError extends Error {}
 
 function isRetriableApiFailure(error: unknown): boolean {
@@ -1105,8 +1107,8 @@ async function linkOrUpload({
       }
     }
   }
-  if (!staged) {
-    staged = await uploadObject({
+  const send = () =>
+    uploadObject({
       file,
       linkedRecordType: params.linkedRecordType,
       linkedRecordId: params.linkedRecordId,
@@ -1114,10 +1116,23 @@ async function linkOrUpload({
       onObjectKey: rememberStagedObject,
       redirectOn401
     });
+  if (!staged) staged = await send();
+  try {
+    const media = await completeUpload(file, staged, params, redirectOn401);
+    forgetStagedObject(staged.objectKey);
+    return media;
+  } catch (error) {
+    if (!uploadNeverLanded(error)) throw error;
+    forgetStagedObject(staged.objectKey);
   }
-  const media = await completeUpload(file, staged, params, redirectOn401);
-  forgetStagedObject(staged.objectKey);
+  const again = await send();
+  const media = await completeUpload(file, again, params, redirectOn401);
+  forgetStagedObject(again.objectKey);
   return media;
+}
+
+export function uploadNeverLanded(error: unknown): boolean {
+  return triageFailure(error).status === UPLOAD_MISSING_STATUS;
 }
 
 export async function uploadMediaFile({
