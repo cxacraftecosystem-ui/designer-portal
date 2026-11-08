@@ -79,19 +79,12 @@ ExecStart=/home/ubuntu/app/current/backend/.venv/bin/python -m app.worker
 # working); MemoryMax kills it if it keeps climbing, which is survivable: Restart=always brings it
 # back and the job is retried.
 #
-# 800M/1100M since 2026-09-17, the old 400M/550M doubled with the box. STILL NOT A MEASUREMENT, and
-# this one has to say so twice: 400M was never observed to be hit — unlike the API's 500M, which was
-# (see its unit above, and the vmstat figures on `instance_type` in main.tf). So the API's number
-# now comes from a reading and the queue's is still inherited arithmetic. If real transcription work
-# thrashes here, read the memory line in `systemctl status fieldrepo-queue` and raise it from THAT
-# number rather than doubling again.
-#
 # The two soft ceilings total 1800M on the t3.small's 1906 MiB of usable RAM, which is the same bet
 # the old pair made inside 1 GiB: MemoryHigh bounds one cgroup, it does not reserve memory, and these
 # two do not peak together (an easy bet on the t3.medium). MemoryMax here is the one hard stop on the
 # box, and it stays on the queue.
-MemoryHigh=800M
-MemoryMax=1100M
+MemoryHigh=1000M
+MemoryMax=1200M
 Restart=always
 RestartSec=10
 KillMode=control-group

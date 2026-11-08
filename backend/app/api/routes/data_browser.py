@@ -39,6 +39,7 @@ from app.services.data_explorer import (
     tree as explorer_tree,
     walk as explorer_walk,
 )
+from app.services.datareport import jobs as report_jobs
 from app.services.dictation_consent import MEDIA_TAG as DESIGN_WORKSHOP_MEDIA_TAG
 from app.services.media_naming import (
     RESERVED_NAMES as _RESERVED_NAMES,
@@ -3576,6 +3577,12 @@ async def _build_report(
     parts: bool = False,
 ) -> Response:
     options = options or report_options.ReportOptions()
+    if fmt == "xlsx":
+        return await report_jobs.fetch(
+            current_user,
+            report_jobs.REPORT,
+            report_jobs.report_params(path, options, name=file_name, sheet=sheet, parts=parts),
+        )
     scope = await _scope_for(current_user)
     searching = fmt == "json" and bool(report_tools.words(q))
     norm = _norm(path)
@@ -3622,18 +3629,4 @@ async def _build_report(
             }
         )
 
-    del sheets, material
-    from app.services.datareport import build as report_build
-
-    chosen = report_build.from_parsed(options, name=file_name)
-    if sheet and sheet.strip() and chosen.sheets is None:
-        chosen.sheets = [sheet.strip()]
-    built = await report_build.build_report(current_user, path, chosen, status=None)
-    for hook in built.ctx.delivered:
-        await hook()
-    payload, delivered_name, mime = report_build.deliverable(built, parts=parts)
-    return Response(
-        content=payload,
-        media_type=mime,
-        headers={"Content-Disposition": _content_disposition(delivered_name)},
-    )
+    raise HTTPException(status_code=422, detail="format must be 'json', 'xlsx' or 'csv'")

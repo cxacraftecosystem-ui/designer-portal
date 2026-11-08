@@ -91,10 +91,6 @@ async def drain_pass(settings: Any, *, recover: bool, search: bool) -> bool:
         await run_weekly_digests(settings=settings)
     except Exception:
         logger.exception("Weekly digest pass failed")
-    try:
-        await run_report_schedules(settings=settings)
-    except Exception:
-        logger.exception("Scheduled report pass failed")
     if search:
         try:
             await run_search_index_pass(settings)
@@ -119,6 +115,19 @@ async def drain_pass(settings: Any, *, recover: bool, search: bool) -> bool:
     return swept or not recover
 
 
+async def run_scheduled_reports(settings: Any) -> None:
+    try:
+        await run_report_schedules(settings=settings)
+    except Exception:
+        logger.exception("Scheduled report pass failed")
+
+
+async def run_reports_lane(stop: asyncio.Event, settings: Any) -> None:
+    from app.services.datareport import jobs as report_jobs
+
+    await report_jobs.run_lane(stop, between=lambda: run_scheduled_reports(settings))
+
+
 async def _wait_for_stop(stop: asyncio.Event, interval: float) -> None:
     with suppress(asyncio.TimeoutError):
         await asyncio.wait_for(stop.wait(), timeout=interval)
@@ -141,6 +150,7 @@ async def _run() -> None:
     with suppress(Exception):
         await asyncio.to_thread(workdir.on_worker_start)
     lane = asyncio.create_task(media_queue.run_insights_lane(stop, settings))
+    reports = asyncio.create_task(run_reports_lane(stop, settings))
     last_search_pass = 0.0
     last_recovery = float("-inf")
     try:
@@ -157,8 +167,11 @@ async def _run() -> None:
     finally:
         stop.set()
         lane.cancel()
+        reports.cancel()
         with suppress(asyncio.CancelledError, Exception):
             await lane
+        with suppress(asyncio.CancelledError, Exception):
+            await reports
         await disconnect_db()
         logger.info("Media queue worker stopped")
 
