@@ -2859,6 +2859,23 @@ def _all_records_sheet(
                     _info_text(info_panel(kind, record)),
                 ]
             )
+    for record in data.get("designWorkshops") or []:
+        try:
+            stamps = list(provenance_row(record))
+        except Exception:  # noqa: BLE001
+            stamps = ["" for _ in PROVENANCE_COLUMNS]
+        rows.append(
+            [
+                _cell(getattr(getattr(record, "workshop", None), "title", None) or ""),
+                _cell(getattr(record, "craftName", None) or ""),
+                "",
+                "Design workshop",
+                _cell(getattr(record, "title", None) or "Design workshop"),
+                *stamps,
+                *media_row(media_index.get(record.id, [])),
+                "",
+            ]
+        )
     return _sheet("All records", OVERVIEW_COLOR, columns, rows)
 
 
