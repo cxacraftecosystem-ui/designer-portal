@@ -35,6 +35,8 @@ import com.designprototype.workshop.explorer.data.ExplorerText
 import com.designprototype.workshop.explorer.ui.ExplorerScreen
 import com.designprototype.workshop.explorer.ui.ExplorerState
 import com.designprototype.workshop.explorer.ui.ExplorerUiText
+import com.designprototype.workshop.explorer.ui.LocalExplorerFilters
+import com.designprototype.workshop.explorer.ui.LocalExplorerPeerSearch
 import com.designprototype.workshop.explorer.ui.LocalExplorerSearchAll
 
 @Composable
@@ -65,6 +67,7 @@ fun DataBrowserScreen(
         onRecordNow = onRecordNow,
         onOpenSection = onOpenSection,
         onOpenRecord = onOpenRecord,
+        onOpenRemote = onOpenRemote,
         search = { onOpen -> DataRecordSearch(repository, onOpen) },
         searchScreen = { query, onOpenInData, onPlay, onClose ->
             DataUnifiedSearch(
@@ -98,6 +101,7 @@ internal fun quickSearchFetch(repository: WorkshopRepository, filters: SearchFil
                 dateTo = dateTo,
                 page = page,
                 pageSize = pageSize,
+                filters = filters.explorer,
             )
         }
     }
@@ -105,17 +109,21 @@ internal fun quickSearchFetch(repository: WorkshopRepository, filters: SearchFil
 
 @Composable
 internal fun DataRecordSearch(repository: WorkshopRepository, onOpen: (recordType: String, recordId: String, title: String) -> Unit) {
-    var filters by remember { mutableStateOf(SearchFilters()) }
+    var typed by remember { mutableStateOf(SearchFilters()) }
     var browsing by remember { mutableStateOf(false) }
     var showAll by remember { mutableStateOf<SearchFilters?>(null) }
-    val search = rememberQuickSearch(repository, filters, browse = browsing)
+    val shared = LocalExplorerFilters.current
+    val peerSearch = LocalExplorerPeerSearch.current
+    val filters = typed.copy(explorer = shared.query())
+    val local = shared.includesThis
+    val search = rememberQuickSearch(repository, if (local) filters else filters.copy(query = ""), browse = browsing && local)
     val searchAll = LocalExplorerSearchAll.current
-    val active = quickSearchRuns(filters, browsing)
+    val active = local && quickSearchRuns(filters, browsing)
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val runSearchAll: () -> Unit = {
         val q = filters.query
-        filters = SearchFilters()
+        typed = SearchFilters()
         browsing = false
         focusManager.clearFocus()
         keyboard?.hide()
@@ -124,7 +132,7 @@ internal fun DataRecordSearch(repository: WorkshopRepository, onOpen: (recordTyp
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         OutlinedTextField(
             value = filters.query,
-            onValueChange = { filters = filters.copy(query = it) },
+            onValueChange = { typed = typed.copy(query = it) },
             placeholder = { Text(ExplorerUiText.jumpHint, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.field.placeholder) },
             singleLine = true,
             textStyle = MaterialTheme.typography.bodyLarge,
@@ -138,7 +146,7 @@ internal fun DataRecordSearch(repository: WorkshopRepository, onOpen: (recordTyp
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.field.muted, modifier = Modifier.size(18.dp)) },
             trailingIcon = {
                 if (filters.query.isNotBlank()) {
-                    IconButton(onClick = { filters = filters.copy(query = "") }) {
+                    IconButton(onClick = { typed = typed.copy(query = "") }) {
                         Icon(Icons.Filled.Close, contentDescription = ExplorerText.clear, modifier = Modifier.size(18.dp))
                     }
                 }
@@ -147,7 +155,7 @@ internal fun DataRecordSearch(repository: WorkshopRepository, onOpen: (recordTyp
             keyboardActions = KeyboardActions(onSearch = { runSearchAll() }),
             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("explorer.search")
         )
-        SearchFilterBar(value = filters, onChange = { filters = it; browsing = true })
+        SearchFilterBar(value = typed, onChange = { typed = it.copy(explorer = emptyMap()); browsing = true }, showSheet = false)
         search.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
         if (active && search.searched && !search.loading && search.hits.isEmpty() && search.error == null) {
             Text(DataSearchText.noMatches(filters.query.trim()), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -174,10 +182,13 @@ internal fun DataRecordSearch(repository: WorkshopRepository, onOpen: (recordTyp
                     focusManager.clearFocus()
                     keyboard?.hide()
                     onOpen(hit.recordType, hit.id, hit.title)
-                    filters = SearchFilters()
+                    typed = SearchFilters()
                     browsing = false
                 })
             }
+        }
+        if (shared.includesOther && peerSearch != null && filters.query.trim().length >= 2) {
+            peerSearch(filters.query.trim())
         }
         if (searchAll != null && filters.query.trim().length >= 2) {
             TextButton(onClick = runSearchAll, modifier = Modifier.heightIn(min = 44.dp).testTag("explorer.search.everything")) {
@@ -193,7 +204,7 @@ internal fun DataRecordSearch(repository: WorkshopRepository, onOpen: (recordTyp
                 focusManager.clearFocus()
                 keyboard?.hide()
                 onOpen(type, id, title)
-                filters = SearchFilters()
+                typed = SearchFilters()
                 browsing = false
             },
             onClose = { showAll = null },
