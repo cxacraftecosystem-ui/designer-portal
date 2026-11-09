@@ -1,6 +1,7 @@
 package com.designprototype.workshop.questionnaire.portal
 
 import com.designprototype.workshop.ui.LocationFieldsSection
+import com.designprototype.workshop.ui.LocationSubject
 import com.designprototype.workshop.questionnaire.ui.SessionLocationCard
 import com.designprototype.workshop.questionnaire.data.QSessionLocation
 import com.designprototype.workshop.data.WorkshopRepository
@@ -157,5 +158,13 @@ fun LocationRequest.session(): QSessionLocation = QSessionLocation(
 )
 
 fun sessionLocationCard(repository: WorkshopRepository): SessionLocationCard = { value, editing, onChange ->
-    LocationFieldsSection(repository = repository, value = value?.request(), onChange = { onChange(it?.session()) }, required = false, isEdit = editing)
+    LocationFieldsSection(repository = repository, value = value?.request(), onChange = { onChange(it?.session()) }, required = false, isEdit = editing, subject = SESSION_LOCATION_SUBJECT)
 }
+
+val SESSION_LOCATION_SUBJECT: LocationSubject = LocationSubject(
+    heading = "Session location",
+    subtitle = "Where this sitting took place. A pin fills state, district and pincode; GPS fills only blanks.",
+    label = "the session",
+    possessive = "the session's",
+    pinLabel = "Session pin"
+)
