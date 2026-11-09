@@ -71,7 +71,8 @@ class BrandTileContrastTest {
         assertFalse(moving.failed)
 
         val done = attachedUploadsStatus(total = 2, done = 2, failed = 0, fraction = 1f)
-        assertEquals("All uploaded ✓ — ready to save", done.line)
+        assertEquals("All uploaded — ready to save", done.line)
+        assertTrue(done.done)
         assertFalse(done.showProgress)
     }
 }

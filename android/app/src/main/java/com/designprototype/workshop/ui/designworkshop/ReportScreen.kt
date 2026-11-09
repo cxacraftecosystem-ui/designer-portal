@@ -573,15 +573,10 @@ fun ReportScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                     listOf(true to "Pages", false to "Reading").forEach { (pages, label) ->
                         val selected = previewAsPages == pages
-                        Text(
-                            if (selected) "$label ✓" else label,
-                            color = if (selected) {
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            } else {
-                                MaterialTheme.field.body
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        val ink = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.field.body
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                             modifier = Modifier
                                 .background(
                                     if (selected) {
@@ -593,7 +588,15 @@ fun ReportScreen(
                                 )
                                 .clickable { previewAsPages = pages }
                                 .padding(horizontal = 12.dp, vertical = 6.dp)
-                        )
+                        ) {
+                            Text(
+                                label,
+                                color = ink,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            )
+                            if (selected) com.designprototype.workshop.explorer.ui.ExplorerMarkIcon(com.designprototype.workshop.explorer.ui.ExplorerMarkKind.SAVED, ink, 14.dp)
+                        }
                     }
                 }
                 if (previewUnresolvedMedia > 0) {

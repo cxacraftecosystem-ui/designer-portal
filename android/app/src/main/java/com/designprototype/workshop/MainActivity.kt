@@ -148,6 +148,7 @@ import com.designprototype.workshop.ui.LocalBannerClearance
 import com.designprototype.workshop.ui.LocalIslandClearance
 import com.designprototype.workshop.ui.OfflineNotice
 import com.designprototype.workshop.ui.OutboxDeviceBannerCard
+import com.designprototype.workshop.ui.AttachedUploadsLine
 import com.designprototype.workshop.ui.attachedUploadsStatus
 import com.designprototype.workshop.ui.onTileBorder
 import com.designprototype.workshop.ui.onTileButtonColors
@@ -3764,7 +3765,10 @@ private fun CarryForwardPanel(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Saved ${prefill.artisanName ?: "artisan"} ✓", display = true, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Saved ${prefill.artisanName ?: "artisan"}", display = true, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+                com.designprototype.workshop.explorer.ui.ExplorerMarkIcon(com.designprototype.workshop.explorer.ui.ExplorerMarkKind.SAVED, MaterialTheme.colorScheme.onSurface, 22.dp)
+            }
             Text("Continue for the same artisan — details are pre-filled.", color = Muted, style = MaterialTheme.typography.bodySmall)
             ActionRow {
                 Button(onClick = { onSelect(EntryMode.PRODUCT) }) { Text("Add product") }
@@ -6124,11 +6128,7 @@ private fun MediaCaptureSection(
                         trackColor = FieldProgressDefaults.onBrandTileTrack
                     )
                 }
-                Text(
-                    status.line,
-                    color = if (status.failed) MaterialTheme.field.errorOnBrandTile else MaterialTheme.field.onBrandTileMuted,
-                    style = MaterialTheme.typography.bodySmall
-                )
+                AttachedUploadsLine(status, if (status.failed) MaterialTheme.field.errorOnBrandTile else MaterialTheme.field.onBrandTileMuted)
                 var attachmentsExpanded by remember { mutableStateOf(false) }
                 val attachmentsCap = 6
                 val shownAttachments = if (attachmentsExpanded) media.uris else media.uris.take(attachmentsCap)
@@ -6254,11 +6254,7 @@ private fun AttachedUploadsCard(
                 trackColor = FieldProgressDefaults.onBrandTileTrack
             )
         }
-        Text(
-            status.line,
-            color = if (status.failed) MaterialTheme.field.errorOnBrandTile else MaterialTheme.field.onBrandTileMuted,
-            style = MaterialTheme.typography.bodySmall
-        )
+        AttachedUploadsLine(status, if (status.failed) MaterialTheme.field.errorOnBrandTile else MaterialTheme.field.onBrandTileMuted)
         var expanded by remember { mutableStateOf(false) }
         val cap = 8
         val shown = if (expanded) uris else uris.take(cap)
@@ -10292,7 +10288,7 @@ private fun TranscriptRefineControls(
                             runCatching { repository.applyTranscript(media.id, md) }
                                 .onSuccess {
                                     onApplied(md)
-                                    appliedNote = "Saved as the transcript ✓"
+                                    appliedNote = "Saved as the transcript"
                                     refined = null
                                 }
                                 .onFailure {
@@ -10313,7 +10309,12 @@ private fun TranscriptRefineControls(
             }
         }
     }
-    appliedNote?.let { Text(it, color = SuccessGreen, style = MaterialTheme.typography.bodySmall) }
+    appliedNote?.let {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(it, color = SuccessGreen, style = MaterialTheme.typography.bodySmall)
+            com.designprototype.workshop.explorer.ui.ExplorerMarkIcon(com.designprototype.workshop.explorer.ui.ExplorerMarkKind.SAVED, SuccessGreen, 14.dp)
+        }
+    }
 
     val mode = pendingTranslate
     if (mode != null) {
@@ -12952,12 +12953,16 @@ private fun AndroidMediaForm(
             Text(
                 when {
                     uploading -> "Uploading..."
-                    uploadStatus == ActionStatus.SUCCESS -> "Uploaded ✓"
+                    uploadStatus == ActionStatus.SUCCESS -> "Uploaded"
                     uploadStatus == ActionStatus.ERROR -> "Upload failed — tap to retry"
                     linkedMode == null -> "Choose a record type"
                     else -> "Upload batch"
                 }
             )
+            if (!uploading && uploadStatus == ActionStatus.SUCCESS) {
+                Spacer(Modifier.width(6.dp))
+                com.designprototype.workshop.explorer.ui.ExplorerMarkIcon(com.designprototype.workshop.explorer.ui.ExplorerMarkKind.SAVED, Color.White, 18.dp)
+            }
         }
         if (savedMedia.isNotEmpty()) {
             Text("Recent saved media", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)

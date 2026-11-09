@@ -110,7 +110,7 @@ export function MediaPreviewTile({
   removeDescribedBy?: string;
   progress?: number | null;
   failed?: boolean;
-  statusLabel?: string | null;
+  statusLabel?: ReactNode;
   onRetry?: () => void;
   onDownload?: () => void;
   downloadUnavailableReason?: string | null;

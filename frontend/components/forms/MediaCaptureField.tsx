@@ -1,8 +1,8 @@
 "use client";
 
 import { ProgressBar } from "@/components/ui/ProgressBar";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Camera, FolderOpen, Mic, Square, Video } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { AlertTriangle, Camera, Check, FolderOpen, Mic, Square, Video } from "lucide-react";
 
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { TranscribeChoices } from "@/components/transcript/TranscribeChoices";
@@ -70,9 +70,15 @@ function fileKey(file: File): string {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
-function stageStatusLabel(entry: StageEntry | null): string | null {
+function stageStatusLabel(entry: StageEntry | null): ReactNode {
   if (!entry) return null;
-  if (entry.status === "ready") return "Uploaded ✓";
+  if (entry.status === "ready")
+    return (
+      <>
+        Uploaded
+        <Check className="ml-1 inline h-3.5 w-3.5 align-[-2px]" aria-hidden />
+      </>
+    );
   if (entry.status === "error") return entry.error ? `Upload failed — ${entry.error}` : "Upload failed";
   const percent = entry.total > 0 ? Math.floor((entry.loaded * 100) / entry.total) : 0;
   return `Uploading… ${percent}%`;
@@ -402,7 +408,12 @@ export function MediaCaptureField({
             </p>
             <p className={`text-xs ${staging.failed ? "font-medium text-red-800 dark:text-red-300" : "text-ink-500"}`}>
               {staging.allReady
-                ? "All uploaded ✓ — ready to save"
+                ? (
+                  <>
+                    <Check className="mr-1 inline h-3.5 w-3.5 align-[-2px]" aria-hidden />
+                    All uploaded — ready to save
+                  </>
+                )
                 : staging.failed
                   ? `${staging.failed} upload${staging.failed === 1 ? "" : "s"} failed — retry below, or just save to try again`
                   : `Uploading… ${Math.round(staging.fraction * 100)}% (${staging.ready}/${staging.total} files done)`}

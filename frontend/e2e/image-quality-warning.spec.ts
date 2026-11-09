@@ -47,12 +47,12 @@ test.describe("On-device photograph quality warnings", () => {
 
     await expect(panel).toContainText(/uploading anyway/i);
 
-    await expect(page.getByText("All uploaded ✓ — ready to save")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText("All uploaded — ready to save")).toBeVisible({ timeout: 60_000 });
 
     await page.getByRole("button", { name: "Dismiss" }).click();
     await expect(panel).toHaveCount(0);
     await expect(page.getByText("1 file attached")).toBeVisible();
-    await expect(page.getByText("All uploaded ✓ — ready to save")).toBeVisible();
+    await expect(page.getByText("All uploaded — ready to save")).toBeVisible();
   });
 
   test("a sharp, full-resolution photograph produces no warning at all", async ({ page }) => {
@@ -61,7 +61,7 @@ test.describe("On-device photograph quality warnings", () => {
 
     await attachGeneratedImage(page, 2400, 1800, "good-plate.jpg");
 
-    await expect(page.getByText("All uploaded ✓ — ready to save")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText("All uploaded — ready to save")).toBeVisible({ timeout: 60_000 });
     await expect(page.getByText(/Check this photograph/)).toHaveCount(0);
   });
 });

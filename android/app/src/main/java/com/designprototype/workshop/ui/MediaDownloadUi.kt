@@ -292,10 +292,21 @@ fun onTileButtonColors(ink: Color) = ButtonDefaults.outlinedButtonColors(
 
 fun onTileBorder(ink: Color) = BorderStroke(1.dp, ink.copy(alpha = 0.7f))
 
-data class AttachedUploadsStatus(val line: String, val showProgress: Boolean, val failed: Boolean)
+data class AttachedUploadsStatus(val line: String, val showProgress: Boolean, val failed: Boolean, val done: Boolean = false)
+
+@Composable
+fun AttachedUploadsLine(status: AttachedUploadsStatus, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (status.done) {
+            com.designprototype.workshop.explorer.ui.ExplorerMarkIcon(com.designprototype.workshop.explorer.ui.ExplorerMarkKind.SAVED, color, 14.dp)
+            Spacer(Modifier.width(4.dp))
+        }
+        Text(status.line, color = color, style = MaterialTheme.typography.bodySmall)
+    }
+}
 
 fun attachedUploadsStatus(total: Int, done: Int, failed: Int, fraction: Float): AttachedUploadsStatus = when {
-    done >= total -> AttachedUploadsStatus("All uploaded ✓ — ready to save", showProgress = false, failed = false)
+    done >= total -> AttachedUploadsStatus("All uploaded — ready to save", showProgress = false, failed = false, done = true)
     failed > 0 && done + failed >= total -> AttachedUploadsStatus(
         if (failed == 1) "1 file didn't upload." else "$failed files didn't upload.",
         showProgress = false,
