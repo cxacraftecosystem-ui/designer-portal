@@ -38,10 +38,6 @@ import com.designprototype.workshop.questionnaire.ui.LocalSessionReaders
 import com.designprototype.workshop.ui.field
 
 @Composable
-fun questionnaireViewportHeight(): androidx.compose.ui.unit.Dp =
-    (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp - 190.dp).coerceAtLeast(420.dp)
-
-@Composable
 fun questionnaireSessionsOn(): Boolean {
     val context = LocalContext.current
     val v2 = remember { QuestionnaireV2.get(context) }
