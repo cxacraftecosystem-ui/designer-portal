@@ -515,7 +515,6 @@ import com.designprototype.workshop.ui.designworkshop.WorkshopViewersScreen
 import com.designprototype.workshop.questionnaire.portal.DesignerArtisanQuestionnaireRecords
 import com.designprototype.workshop.questionnaire.portal.DesignerQuestionnaireHome
 import com.designprototype.workshop.questionnaire.portal.questionnaireSessionsOn
-import com.designprototype.workshop.questionnaire.portal.questionnaireViewportHeight
 import com.designprototype.workshop.questionnaire.ui.QuestionnaireTab
 import com.designprototype.workshop.questionnaire.ui.QuestionnaireV2Nav
 import com.designprototype.workshop.questionnaire.ui.LocalScreenMemory
@@ -2687,11 +2686,12 @@ private fun HomeScreen(
         DisposableEffect(clearance) { onDispose { clearance?.value = 0.dp } }
         val pageReserve = pageBottomReserve(islandReserve, bannerReserve)
 
+        val questionnaireViewport = screen is Screen.Questionnaires || (screen as? Screen.Create)?.mode == EntryMode.QUESTIONNAIRE
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .nestedScroll(quickReturn.connection)
-                .verticalScroll(pageScroll)
+                .then(if (questionnaireViewport) Modifier else Modifier.verticalScroll(pageScroll))
                 .padding(top = with(LocalDensity.current) { quickReturn.reservePx.toDp() })
                 .padding(bottom = pageReserve + if (messageState.text != null) 88.dp else 0.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -2945,7 +2945,7 @@ private fun HomeScreen(
                     },
                     onNewForm = { questionnaireNewForm++ },
                     onError = { showError(it) },
-                    modifier = Modifier.fillMaxWidth().height(questionnaireViewportHeight()),
+                    modifier = Modifier.fillMaxWidth().fillMaxHeight(),
                     onLeaveSession = s.from?.let { origin -> { message = null; restoreScrollFor = origin; screen = origin } }
                 )
                 EntryMode.TASKS -> MyTasksScreen(
@@ -3259,7 +3259,7 @@ private fun HomeScreen(
                 },
                 onNewForm = { questionnaireNewForm++ },
                 onError = { showError(it) },
-                modifier = Modifier.fillMaxWidth().height(questionnaireViewportHeight())
+                modifier = Modifier.fillMaxWidth().fillMaxHeight()
             )
 
             is Screen.QuestionnaireDetail -> QuestionnaireDetailScreen(
