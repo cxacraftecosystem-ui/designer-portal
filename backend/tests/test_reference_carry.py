@@ -375,6 +375,8 @@ QUESTIONNAIRE_INTERVIEW_CARRIED = {
     "workshopId": "artisanBaseline.interviewDocumentedAtWorkshop (Workshop.title, via the relation)",
 }
 QUESTIONNAIRE_INTERVIEW_NOT_CARRIED = {
+    "crafts": "the shared questionnaire's session crafts (migration 20261213100000), filled from its artisans; written only by app/questionnaire",
+    "craftsByHand": "the crafts a researcher added to a session by hand (migration 20261213100000); written only by app/questionnaire",
     "clientKey": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     "closedAt": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
     "endedAt": "the shared questionnaire's session column (UNIFY U0, migration 20261107090000); written only by app/questionnaire, dark until U1",
