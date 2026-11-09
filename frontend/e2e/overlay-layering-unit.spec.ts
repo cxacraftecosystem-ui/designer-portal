@@ -25,7 +25,7 @@ const SCROLL_LOCK = "lib/scrollLock.ts";
 test("main keeps its positioning and loses its z-index", () => {
   const shell = read(APP_SHELL);
   expect(shell).toContain(
-    'className="relative mx-auto max-w-7xl px-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] pt-[calc(60px+1.25rem)] lg:pb-12 lg:pt-24"'
+    'className="relative mx-auto max-w-7xl px-4 pb-[calc(var(--bottom-nav-h,env(safe-area-inset-bottom,0px))+1.5rem)] pt-[calc(60px+1.25rem)] lg:pb-12 lg:pt-24"'
   );
   expect(shell).not.toMatch(/className="relative z-\S+ mx-auto max-w-7xl/);
 });
