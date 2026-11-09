@@ -37,6 +37,7 @@ import com.designprototype.workshop.questionnaire.data.QResearcherRef
 import com.designprototype.workshop.questionnaire.data.QRespondentInput
 import com.designprototype.workshop.questionnaire.data.QSession
 import com.designprototype.workshop.questionnaire.data.QSessionCreate
+import com.designprototype.workshop.questionnaire.data.QSessionLocation
 import com.designprototype.workshop.questionnaire.data.QSubjects
 import com.designprototype.workshop.questionnaire.data.QWorkshopOption
 import com.designprototype.workshop.questionnaire.data.QuestionnaireCopy
@@ -78,6 +79,7 @@ data class StartForm(
     val guests: List<StartGuest> = emptyList(),
     val purpose: String = SessionPurpose.FIRST_SITTING.wire,
     val place: String = "",
+    val location: QSessionLocation? = null,
     val languageCode: String = "",
     val languageOther: String = "",
     val note: String = ""
@@ -114,7 +116,8 @@ data class StartForm(
         note = note.trim().take(80).ifBlank { null },
         participants = artisanIds.map { QArtisanRef(it) },
         researchers = listOfNotNull(me?.let { QResearcherRef(it, "LEAD") }),
-        respondents = guests.map { it.input() }
+        respondents = guests.map { it.input() },
+        location = location
     )
 }
 
@@ -287,9 +290,9 @@ fun SessionStartSheet(
                     }
                 }
             }
-            OutlinedTextField(
-                value = form.place, onValueChange = { form = form.copy(place = it) },
-                label = { Text(QuestionnaireCopy.s("start.place")) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            SessionPlaceField(
+                value = SessionWhere(form.place, form.location),
+                onChange = { where -> form = form.copy(place = where.place, location = where.location) },
                 trailingIcon = { PlaceFromDevice(onPlace = { form = form.copy(place = it) }, onError = onError) }
             )
             SearchableSelectField(

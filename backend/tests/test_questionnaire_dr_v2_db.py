@@ -224,6 +224,48 @@ def test_a_session_keeps_the_start_sheet_fix_and_an_admin_sets_the_global_defaul
     asyncio.run(go())
 
 
+def test_a_session_place_is_pinned_on_start_read_back_and_moved_or_cleared_on_edit(monkeypatch: pytest.MonkeyPatch, v2_on) -> None:
+    from app.core import db as core_db
+    from app.questionnaire import schemas as S, sessions
+    from app.services import questionnaire_forms as forms_service, records
+
+    async def go() -> None:
+        client = await _client()
+        for module in (core_db, forms_service, records):
+            monkeypatch.setattr(module, "db", client)
+        tag = uuid.uuid4().hex[:10]
+        try:
+            ids = await _seed(client, tag)
+            lead = _user(ids["lead"])
+            create = S.SessionCreate(
+                clientKey=f"pin{tag}", questionnaireId=ids["form"], designWorkshopId=ids["dw"], sessionDate=date(2026, 11, 9),
+                place="Bagru, Jaipur", respondents=[S.RespondentInput(name="Visitor", kind="GUEST")],
+                location=S.SessionLocation(latitude=26.8105, longitude=75.5466, placeName="Bagru, Jaipur, Rajasthan"),
+            )
+            session, _ = await sessions.create_session(create, lead)
+            assert session["location"] == {"latitude": 26.8105, "longitude": 75.5466, "accuracy": None, "placeName": "Bagru, Jaipur, Rajasthan"}
+            moved = await sessions.patch_session(
+                session["id"],
+                S.SessionPatch(version=session["version"], place="Sanganer, Jaipur", location=S.SessionLocation(latitude=26.8213, longitude=75.7849, placeName="Sanganer")),
+                lead,
+            )
+            assert moved["place"] == "Sanganer, Jaipur"
+            assert moved["location"] == {"latitude": 26.8213, "longitude": 75.7849, "accuracy": None, "placeName": "Sanganer"}
+            kept = await sessions.patch_session(session["id"], S.SessionPatch(version=moved["version"], note="Under the neem tree"), lead)
+            assert kept["location"] == moved["location"]
+            cleared = await sessions.patch_session(session["id"], S.SessionPatch(version=kept["version"], location=None), lead)
+            assert cleared["location"] is None
+            assert cleared["place"] == "Sanganer, Jaipur"
+            again = await sessions.patch_session(session["id"], S.SessionPatch(version=cleared["version"], location=S.SessionLocation(latitude=26.8, longitude=75.5)), lead)
+            assert again["location"]["latitude"] == 26.8
+            dropped = await sessions.patch_session(session["id"], S.SessionPatch(version=again["version"], clearLocation=True), lead)
+            assert dropped["location"] is None
+        finally:
+            await client.disconnect()
+
+    asyncio.run(go())
+
+
 def test_a_researcher_may_use_a_bound_shared_default_or_own_form_on_a_workshop(monkeypatch: pytest.MonkeyPatch, v2_on) -> None:
     from fastapi import HTTPException
 

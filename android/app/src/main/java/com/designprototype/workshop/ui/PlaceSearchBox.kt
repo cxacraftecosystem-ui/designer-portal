@@ -29,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -73,7 +74,10 @@ fun PlaceSearchOverlay(
     apiKey: String,
     getProximity: () -> Pair<Double, Double>?,
     onChoose: (PlaceHit) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    label: String = "Search for a place to move the map",
+    hint: String = "Search only moves the map; place the pin yourself.",
+    elevated: Boolean = true
 ) {
     if (!placeSearchAvailable(apiKey)) {
         Surface(
@@ -137,14 +141,14 @@ fun PlaceSearchOverlay(
     Surface(
         color = Canvas,
         shape = RoundedCornerShape(10.dp),
-        shadowElevation = 2.dp,
-        modifier = modifier.fillMaxWidth()
+        shadowElevation = if (elevated) 2.dp else 0.dp,
+        modifier = modifier.fillMaxWidth().testTag("place-search")
     ) {
-        Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(modifier = Modifier.padding(if (elevated) 8.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it; open = true },
-                label = { Text("Search for a place to move the map") },
+                label = { Text(label) },
                 placeholder = { Text("Village, town or district", color = Muted) },
                 singleLine = true,
                 leadingIcon = {
@@ -170,7 +174,7 @@ fun PlaceSearchOverlay(
             )
 
             Text(
-                "Search only moves the map; place the pin yourself.",
+                hint,
                 color = Muted,
                 style = MaterialTheme.typography.bodySmall,
                 lineHeight = 14.sp

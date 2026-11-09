@@ -19,11 +19,13 @@ export function PlaceSearchBox({
   getProximity,
   onChoose,
   label = "Search for a place",
+  hint = "Searching only moves the map. Nothing is filled in until you place the pin yourself.",
   disabled
 }: {
   getProximity?: () => { lon: number; lat: number } | null;
   onChoose: (hit: PlaceHit) => void;
   label?: string;
+  hint?: string;
   disabled?: boolean;
 }) {
   const baseId = useId();
@@ -187,7 +189,7 @@ export function PlaceSearchBox({
       </div>
 
       <p id={`${baseId}-hint`} className="text-xs leading-5 text-ink-500">
-        Searching only moves the map. Nothing is filled in until you place the pin yourself.
+        {hint}
       </p>
 
       <span className="sr-only" role="status" aria-live="polite">
