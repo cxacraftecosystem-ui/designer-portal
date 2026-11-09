@@ -1,5 +1,7 @@
 package com.designprototype.workshop
 
+import com.designprototype.workshop.questionnaire.portal.sessionLocationCard
+import com.designprototype.workshop.questionnaire.ui.LocalSessionLocationCard
 import com.designprototype.workshop.transcript.data.TranscribeChoices
 import com.designprototype.workshop.ui.FieldRadioButton
 import com.designprototype.workshop.transcript.ui.TranscribeChoiceItem
@@ -2927,7 +2929,7 @@ private fun HomeScreen(
                     },
                     onError = { showError(it) }
                 )
-                EntryMode.QUESTIONNAIRE -> DesignerQuestionnaireHome(
+                EntryMode.QUESTIONNAIRE -> CompositionLocalProvider(LocalSessionLocationCard provides remember(repository) { sessionLocationCard(repository) }) { DesignerQuestionnaireHome(
                     artisans = artisans,
                     user = user,
                     initialTab = QuestionnaireTab.SESSIONS,
@@ -2947,7 +2949,7 @@ private fun HomeScreen(
                     onError = { showError(it) },
                     modifier = Modifier.fillMaxWidth().fillMaxHeight(),
                     onLeaveSession = s.from?.let { origin -> { message = null; restoreScrollFor = origin; screen = origin } }
-                )
+                ) }
                 EntryMode.TASKS -> MyTasksScreen(
                     repository = repository,
                     canAssign = isAdmin && adminChrome,
@@ -3241,7 +3243,7 @@ private fun HomeScreen(
                 onPendingCount = onPendingAccessRequests,
             )
 
-            is Screen.Questionnaires -> DesignerQuestionnaireHome(
+            is Screen.Questionnaires -> CompositionLocalProvider(LocalSessionLocationCard provides remember(repository) { sessionLocationCard(repository) }) { DesignerQuestionnaireHome(
                 artisans = artisans,
                 user = user,
                 initialTab = QuestionnaireTab.FORMS,
@@ -3260,7 +3262,7 @@ private fun HomeScreen(
                 onNewForm = { questionnaireNewForm++ },
                 onError = { showError(it) },
                 modifier = Modifier.fillMaxWidth().fillMaxHeight()
-            )
+            ) }
 
             is Screen.QuestionnaireDetail -> QuestionnaireDetailScreen(
                 repository = repository,

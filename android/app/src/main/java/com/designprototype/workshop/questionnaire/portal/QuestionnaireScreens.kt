@@ -1,5 +1,10 @@
 package com.designprototype.workshop.questionnaire.portal
 
+import com.designprototype.workshop.ui.LocationFieldsSection
+import com.designprototype.workshop.questionnaire.ui.SessionLocationCard
+import com.designprototype.workshop.questionnaire.data.QSessionLocation
+import com.designprototype.workshop.data.WorkshopRepository
+import com.designprototype.workshop.data.LocationRequest
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -137,4 +142,20 @@ fun DesignerArtisanQuestionnaireRecords(
             )
         }
     }
+}
+
+fun QSessionLocation.request(): LocationRequest = LocationRequest(
+    latitude = latitude, longitude = longitude, altitude = altitude, accuracy = accuracy, address = address, placeName = placeName,
+    state = state, district = district, village = village, pincode = pincode,
+    subjectLatitude = subjectLatitude, subjectLongitude = subjectLongitude, capturedAt = capturedAt
+)
+
+fun LocationRequest.session(): QSessionLocation = QSessionLocation(
+    latitude = latitude, longitude = longitude, accuracy = accuracy, altitude = altitude, placeName = placeName, address = address,
+    state = state, district = district, village = village, pincode = pincode,
+    subjectLatitude = subjectLatitude, subjectLongitude = subjectLongitude, capturedAt = capturedAt
+)
+
+fun sessionLocationCard(repository: WorkshopRepository): SessionLocationCard = { value, editing, onChange ->
+    LocationFieldsSection(repository = repository, value = value?.request(), onChange = { onChange(it?.session()) }, required = false, isEdit = editing)
 }
