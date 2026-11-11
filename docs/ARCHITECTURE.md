@@ -419,7 +419,7 @@ Flash, plus the summary, quotes and craft terms. That pipeline, its switches, th
 the video path are in [TRANSCRIPT_PIPELINE.md](TRANSCRIPT_PIPELINE.md). This section is the first
 step: which speech-to-text provider hears the audio.
 
-Not Whisper. Scribe v2 is first, Whisper is the **third** provider, and on a deployment with an ElevenLabs key it is
+Not Whisper. Scribe v3 is first, Whisper is the **third** provider, and on a deployment with an ElevenLabs key it is
 usually never called.
 
 ```mermaid
@@ -427,7 +427,7 @@ usually never called.
 flowchart TD
   job["MediaProcessingJob<br/>TRANSCRIPTION, QUEUED"] --> claim{"worker claims it<br/>single elected worker"}
   claim --> chain["transcription_provider_chain()<br/>master admin's ranking,<br/>minus every provider with no key"]
-  chain --> p1["1 · ElevenLabs Scribe<br/>≤ ~1 GB · auto language · scribe_v2"]
+  chain --> p1["1 · ElevenLabs Scribe<br/>≤ ~1 GB · auto language · scribe_v3,<br/>scribe_v2 on a refused option"]
 
   p1 -->|text| done[["write transcript<br/>+ formatted dialogue"]]
   p1 -->|"429 / 503"| rl1[[remember: throttled]]

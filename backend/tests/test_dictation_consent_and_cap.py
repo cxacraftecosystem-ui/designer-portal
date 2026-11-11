@@ -1542,7 +1542,7 @@ def keeping(monkeypatch):
     return SimpleNamespace(routes=routes, seen=seen)
 
 
-_HEARD = {"status": "COMPLETED", "text": "dabu resist printing", "provider": "elevenlabs", "model": "scribe_v2"}
+_HEARD = {"status": "COMPLETED", "text": "dabu resist printing", "provider": "elevenlabs", "model": "scribe_v3"}
 
 
 def test_a_heard_clip_is_stored_named_turned_into_a_transcript_and_queued_for_english(keeping):

@@ -138,7 +138,7 @@ class Settings(BaseSettings):
     access_pending_max: int = Field(default=500, alias="ACCESS_PENDING_MAX")
 
     elevenlabs_api_key: str | None = Field(default=None, alias="ELEVENLABS_API_KEY")
-    elevenlabs_stt_model: str = Field(default="scribe_v2", alias="ELEVENLABS_STT_MODEL")
+    elevenlabs_stt_model: str = Field(default="scribe_v3", alias="ELEVENLABS_STT_MODEL")
     deepgram_api_key: str | None = Field(default=None, alias="DEEPGRAM_API_KEY")
     deepgram_stt_model: str = Field(default="nova-3", alias="DEEPGRAM_STT_MODEL")
     meta_model_api_key: str | None = Field(default=None, alias="META_MODEL_API_KEY")

@@ -1,4 +1,4 @@
-# Transcript pipeline (Scribe v2 → Gemini 3.8 Flash)
+# Transcript pipeline (Scribe v3 → Gemini 3.8 Flash)
 
 Built 31 Oct 2026 from the approved design, `C:/dev/IIT/docs/transcription/DESIGN_2026-10-31_Scribe-Gemini-Pipeline.md`.
 The backend is the same in both portals: shared files are listed in `shared/transcription.sha256`
@@ -21,7 +21,7 @@ and copied with `python scripts/sync_transcription.py --to ../documentation-port
 ## The queue step
 
 1. **Transcribe.** The existing TRANSCRIPTION job. `transcription_jobs.transcribe_recording` asks
-   Scribe v2 with the recording's own key terms (artisans, its craft, glossary terms for that craft,
+   Scribe v3 (`scribe_v3`) with the recording's own key terms (artisans, its craft, glossary terms for that craft,
    crafts of its state, the vocabulary file, the master list; at most 100, most specific first), then
    stores the words as a new `TranscriptVersion` of `TranscriptTurn`s.
 2. **Translate + insights.** The existing TRANSCRIPT_INSIGHTS job. One Gemini pass (structured JSON,
@@ -39,7 +39,7 @@ re-translate a turn, Ask, auto-draft, quote card).
 - Transcription stays paused (`AppSetting.transcriptionPaused`) until the coordinator un-pauses it.
 - **Budget:** `AppSetting.transcriptMonthlyBudgetUsd` (default USD 100). At 80 % the admins get one
   notice a month; at 100 % `transcriptionPaused` is set and translation jobs wait too. Spend is
-  `SttUsage` (Scribe, USD 0.22 an hour) plus `TranscriptSpend` (Gemini).
+  `SttUsage` (Scribe v3, USD 0.22 an hour, the same rate as Scribe v2) plus `TranscriptSpend` (Gemini).
 
 ## Keys
 

@@ -125,7 +125,7 @@ class DwAiVerbWireTest {
             {
               "id": "lyr_09", "designWorkshopId": "dw_77", "kind": "RAW_TRANSCRIPT",
               "tier": "TIER_3", "source": {"kind": "MEDIA", "id": "med_4", "text": null},
-              "provider": "elevenlabs", "modelId": "scribe_v2", "modelVersion": null,
+              "provider": "elevenlabs", "modelId": "scribe_v3", "modelVersion": null,
               "language": "multi", "sourceLanguage": null, "targetLanguage": null,
               "producedAt": null, "createdAt": "2026-08-19T10:30:05+00:00",
               "createdById": "usr_ravi", "accepted": false, "acceptedAt": null,
@@ -141,7 +141,7 @@ class DwAiVerbWireTest {
         assertNull(layer.payload)
         assertNull(layer.text)
         assertEquals("elevenlabs", layer.provider)
-        assertEquals("scribe_v2", layer.modelId)
+        assertEquals("scribe_v3", layer.modelId)
         assertEquals("TIER_3", layer.tier)
         assertEquals("multi", layer.language)
     }

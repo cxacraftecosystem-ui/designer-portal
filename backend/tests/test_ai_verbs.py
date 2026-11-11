@@ -461,7 +461,7 @@ def test_the_speaker_labels_on_a_layer_are_labels_and_not_provider_ids():
         workshop_id="wsp_1", media_id="med_1",
         answer={
             "available": True, "status": "COMPLETED", "provider": "elevenlabs",
-            "model": "scribe_v2", "language": "or",
+            "model": "scribe_v3", "language": "or",
             "fragments": [
                 {"start": 0.0, "end": 1.0, "text": "How is it mixed?", "speaker": "speaker_3"},
                 {"start": 1.2, "end": 2.0, "text": "With gum.", "speaker": "speaker_0"},

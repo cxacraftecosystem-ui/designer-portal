@@ -4944,7 +4944,7 @@ model DwAiLayer {
   /// system has ever produced was written by `media_queue._transcript_write`, which stores
   /// `transcriptText`, `transcriptSummary`, `transcriptStatus` and `transcriptError` and NOT which
   /// of the four providers in the chain produced them. `services/ai.py` knows — it picks between
-  /// OpenAI, ElevenLabs Scribe v2, Deepgram Nova-3 and Gemini at call time, and Deepgram is called
+  /// OpenAI, ElevenLabs Scribe v3, Deepgram Nova-3 and Gemini at call time, and Deepgram is called
   /// with `language=multi` — but nothing persists the answer. So a Tier 3 raw transcript registered
   /// from an existing `MediaFile` truthfully carries `provider = "UNRECORDED"`, and the annexure
   /// can say so instead of asserting a model that may not have produced it.
@@ -4996,7 +4996,7 @@ model DwAiLayer {
   /// WHICH SLOT IS THE PRINCIPAL ONE IS DECIDED BY KIND, IN `ai_layers._check_content`: prose kinds
   /// must fill `text`, structured kinds must fill this. The OTHER slot stays optional in both
   /// directions rather than being forbidden, and that is not slackness — a Tier 3 transcript
-  /// legitimately has structure beside its prose (Scribe v2 diarizes up to 32 speakers, and those
+  /// legitimately has structure beside its prose (Scribe v3 diarizes up to 32 speakers, and those
   /// turns belong with the text they came from rather than in a second row somebody has to keep in
   /// step with it), and a structured layer may carry a human-readable rendering.
   ///
