@@ -649,3 +649,13 @@ to a decision, and put the new date beside the new figure.
 **Text provider (coordinator decision, 4 November 2026).** Every text verb on the deployment's key (proofread, expand, summarise, translate, captions, refine transcript, answer drafts, transcript summaries) runs on Gemini 3.8 Flash and falls back to Gemini 3.7 Flash when 3.8 returns 404 (`ai_providers.post_gemini`, `gemini_models`). An OpenAI or Anthropic deployment key is not used for these jobs, even when it is configured, unless an operator sets `AI_TEXT_PROVIDER=OPENAI` or `AI_TEXT_PROVIDER=ANTHROPIC` in the box `.env`. A user's own key still runs their own choice. When OpenAI is selected, the default model is `gpt-6-luna` (GPT-6 Luna). When Anthropic is selected, the default model is `claude-sonnet-5-5` (Claude Sonnet 5.5). Transcription keeps its own provider order. Prices per million tokens, input / output, as `price_per_mtok` in `ai_providers.py` records them: Gemini 3.8 Flash and 3.7 Flash USD 0.75 / 3.75, GPT-6 Luna USD 0.10 / 0.50 (its published price, set on 4 November 2026), Claude Sonnet 5.5 USD 2.00 / 10.00. On `GET /transcripts/{id}/versions`, cost and badges follow one rule: ADMIN, MASTER_ADMIN and MINISTRY_ADMIN see them, and no one else does.
 
 **Refine transcript on the web (R1).** Under a stored transcript, the uploader and the content admins see Refine transcript and Refine & translate (`components/media/TranscriptRefine.tsx`, `lib/transcriptRefine.ts`, identical in both portals). The cost confirmation, its "Do not remind me again" switch (kept in this browser), the refined Markdown and Approve or Reject match Android. Approve saves through `POST /media/{id}/transcript`. Read-only record pages and held workshops show no control.
+
+## Release 0.0.2: speech-to-text cost
+
+Scribe v3 is billed at ElevenLabs' published batch rate, USD 0.20 an hour, plus USD 0.05 an hour for
+keyterm prompting when key terms are sent ([pricing](https://elevenlabs.io/pricing/api)). A request
+carries the recording's key terms (at most 1,000, the Scribe v3 limit), so it counts USD 0.25 an hour;
+the `scribe_v2` retry sends none and counts USD 0.20. One rule, `chain.hourly_rate` in
+`backend/app/transcription/chain.py`, sets the `SttUsage` ledger, the minutes a provider's spend cap
+still buys, the monthly budget, the admin cost columns and the backfill estimate. Rows written before
+0.0.2 keep the USD 0.22 an hour they were counted at.
