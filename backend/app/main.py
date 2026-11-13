@@ -26,6 +26,7 @@ from app.core.db import connect_db, db, disconnect_db
 from app.core.deps import PASSWORD_CHANGE_REQUIRED_HEADER
 from app.core.idempotency import IdempotencyMiddleware
 from app.core.security import verify_jwt_configuration
+from app.core.validation_errors import install_validation_handler
 from app.release import live_release
 from app.scale import install_rate_limit
 from app.services import aadhaar_fingerprint, two_factor, usage
@@ -528,6 +529,7 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if expose_docs else None,
         openapi_url="/openapi.json" if expose_docs else None,
     )
+    install_validation_handler(app)
     cors_origins = settings.cors_origins
     allow_credentials = settings.cors_allow_credentials
     if not allow_credentials:

@@ -75,6 +75,8 @@ from app.services.workshop_inference import (
 
 router = APIRouter(prefix="/workshops", tags=["workshops"])
 
+_CLEARABLE_COLUMNS = ("startDate", "endDate", "description", "notes")
+
 RELATIONS = (
     Relation("location", "location", "locationId"),
     Relation("createdBy", "user", "createdById"),
@@ -514,7 +516,7 @@ async def update_workshop(
     current_user: Any = Depends(require_workshop_manager),
 ) -> dict[str, Any]:
     workshop = await require_record(db.workshop, workshop_id)
-    data = clean_data(payload.model_dump(exclude_unset=True))
+    data = clean_data(payload.model_dump(exclude_unset=True), clearable=_CLEARABLE_COLUMNS)
     expected_updated_at = take_expected_updated_at(data)
     await redirect_payload(data)
     artisan_ids = data.pop("artisanIds", None)
@@ -691,7 +693,7 @@ async def update_workshop_assignment(
         )
     data["decidedById"] = get_value(current_user, "id")
     data["decidedAt"] = datetime.now(UTC)
-    if payload.note is not None:
+    if "note" in payload.model_fields_set:
         data["decisionNote"] = payload.note
     await db.workshopassignment.update(where={"id": row.id}, data=data)
     return await _hydrate_assignment(row.id)

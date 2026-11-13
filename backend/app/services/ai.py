@@ -339,6 +339,7 @@ def _stt_options(
     session_id: str | None = None,
     keep_payload: bool = False,
     keyterms: list[str] | None = None,
+    spoken_language: str | None = None,
 ) -> SttOptions:
     models = {"elevenlabs": _elevenlabs_model(settings)}
     deepgram_model = getattr(settings, "deepgram_stt_model", None)
@@ -356,13 +357,17 @@ def _stt_options(
         models=models,
         session_id=session_id,
         keep_payload=keep_payload,
+        spoken_language=spoken_language or "auto",
     )
 
 
 def transcription_options(
-    settings: Settings | None, *, language_bias: list[str] | None = None
+    settings: Settings | None,
+    *,
+    language_bias: list[str] | None = None,
+    spoken_language: str | None = None,
 ) -> SttOptions:
-    return _stt_options(settings, language_bias=language_bias)
+    return _stt_options(settings, language_bias=language_bias, spoken_language=spoken_language)
 
 
 def _audio(
@@ -676,6 +681,7 @@ async def transcribe_audio_bytes(
     skip_providers: set[str] | None = None,
     source_path: str | None = None,
     keyterms: list[str] | None = None,
+    spoken_language: str | None = None,
 ) -> dict[str, Any]:
     await managed_secrets.refresh_if_stale()
 
@@ -720,7 +726,11 @@ async def transcribe_audio_bytes(
     state.skip |= set(skip_providers or ())
     hooks = StoreHooks(store, asyncio.get_running_loop(), media_id=media_id, job_id=job_id)
     opts = _stt_options(
-        settings, language_bias=language_bias, session_id=media_id, keyterms=keyterms
+        settings,
+        language_bias=language_bias,
+        session_id=media_id,
+        keyterms=keyterms,
+        spoken_language=spoken_language,
     )
     try:
         return await asyncio.to_thread(

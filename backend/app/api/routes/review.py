@@ -3,6 +3,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from pydantic import Field, ValidationError
 
 from app.core.db import db
@@ -372,6 +373,42 @@ _EDIT_SCHEMAS: dict[str, type[APIModel]] = {
     "media": MediaReviewEdit,
 }
 
+_REVIEW_CLEARABLE: dict[str, tuple[str, ...]] = {
+    "artisan": (
+        "localName",
+        "gender",
+        "phone",
+        "phoneCountryCode",
+        "email",
+        "address",
+        "notes",
+        "dos",
+        "donts",
+    ),
+    "workshop": ("description", "notes"),
+    "product": (
+        "localName",
+        "timeTakenToCompleteProduct",
+        "size",
+        "rawMaterialsUsed",
+        "mainToolsUsed",
+        "productFunctionUse",
+        "remarks",
+    ),
+    "tool": (
+        "materialFamily",
+        "localName",
+        "englishName",
+        "processUsedIn",
+        "material",
+        "suggestionsForToolImprovement",
+        "remarks",
+    ),
+    "process": ("notes",),
+    "questionnaire": ("place", "language", "notes"),
+    "media": ("caption", "transcriptText", "transcriptSummary"),
+}
+
 _NOT_REVIEW_EDITABLE = frozenset(
     {
         "status",
@@ -429,9 +466,8 @@ async def edit_reviewed_record(
     try:
         parsed = schema(**payload.fields)
     except ValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=jsonable_encoder(exc.errors(include_url=False)),
+        raise RequestValidationError(
+            [{**e, "loc": ("body", "fields", *e.get("loc", ()))} for e in exc.errors(include_url=False)]
         ) from exc
 
     record = await delegate.find_unique(where={"id": record_id}, include={creator_relation: True})
@@ -463,7 +499,11 @@ async def edit_reviewed_record(
         )
 
     data = drop_masked_identity_numbers(
-        decimal_to_string(clean_data(parsed.model_dump(exclude_unset=True)))
+        decimal_to_string(
+            clean_data(
+                parsed.model_dump(exclude_unset=True), clearable=_REVIEW_CLEARABLE.get(key, ())
+            )
+        )
     )
     if not data:
         raise HTTPException(

@@ -1,0 +1,86 @@
+name: Hotfix 0.0.3 server tests
+
+on:
+  push:
+    branches: ["hotfix/0.0.3-server"]
+
+permissions:
+  contents: read
+
+jobs:
+  targeted:
+    name: The tests for the server hotfix, against a database
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: design_workshop
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PYTHONUTF8: "1"
+      DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/design_workshop"
+      JWT_SECRET: "ci-integration-not-a-secret-0123456789abcdef"
+      AWS_ACCESS_KEY_ID: "ci-placeholder"
+      AWS_SECRET_ACCESS_KEY: "ci-placeholder"
+      AWS_S3_BUCKET: "ci-placeholder"
+      MASTER_ADMIN_EMAIL: "ci@example.invalid"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15"
+          check-latest: true
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.lock
+            backend/pyproject.toml
+      - name: Install from the lock
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+          pip install -e . --no-deps
+      - name: Fetch the Prisma engines and generate the client
+        run: |
+          set -euo pipefail
+          python -m prisma py fetch
+          python scripts/generate_prisma_client.py --schema prisma/schema.prisma
+      - name: Apply the migrations
+        run: python -m prisma migrate deploy
+      - name: The other portal, for the shared-file parity tests
+        working-directory: .
+        env:
+          PEER: cxacraftecosystem-ui/documentation-portal
+          BRANCH: ${{ github.ref_name }}
+          PEER_ENV_NAMES: CROSS_PORTAL_PEER_REPO SIBLING_REPO
+        run: bash scripts/ci/peer_checkout.sh
+      - name: Lint the backend
+        run: |
+          set -euo pipefail
+          python -m pip install ruff
+          ruff check .
+      - name: Run the targeted tests
+        run: |
+          set -uo pipefail
+          mapfile -t files < tests/hotfix-0.0.3-server.txt
+          echo "Running ${#files[@]} test files:"
+          for f in "${files[@]}"; do echo "  $f"; done
+          python -m pytest -rfs -v "${files[@]}" | tee pytest-hotfix.log
+          status=${PIPESTATUS[0]}
+          grep -q '^database: local DSN resolved' pytest-hotfix.log || { echo "::error::no local database"; exit 1; }
+          exit "$status"

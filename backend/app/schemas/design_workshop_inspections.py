@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from app.schemas.blank_text import BlankTextModel
 from app.schemas.design_workshop_review_loop import (
     MAX_BATCH_NOTES,
     MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS,
@@ -7,11 +8,11 @@ from app.schemas.design_workshop_review_loop import (
 from app.services.design_workshop_inspectors import MAX_DESIGN_WORKSHOP_INSPECTORS
 
 
-class DesignWorkshopInspectorsIn(BaseModel):
+class DesignWorkshopInspectorsIn(BlankTextModel):
     userIds: list[str] = Field(default_factory=list, max_length=MAX_DESIGN_WORKSHOP_INSPECTORS)
 
 
-class DwInspectionFeedbackIn(BaseModel):
+class DwInspectionFeedbackIn(BlankTextModel):
     note: str = Field(min_length=1, max_length=MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS)
     stageKey: str | None = Field(default=None, max_length=120)
     fieldKey: str | None = Field(default=None, max_length=120)
@@ -22,13 +23,13 @@ class DwInspectionSendBackIn(DwInspectionFeedbackIn):
     pass
 
 
-class DwNoteItem(BaseModel):
+class DwNoteItem(BlankTextModel):
     note: str = Field(min_length=1, max_length=MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS)
     stageKey: str | None = Field(default=None, max_length=120)
     fieldKey: str | None = Field(default=None, max_length=120)
 
 
-class DwInspectionNotesIn(BaseModel):
+class DwInspectionNotesIn(BlankTextModel):
     notes: list[DwNoteItem] = Field(min_length=1, max_length=MAX_BATCH_NOTES)
     note: str | None = Field(default=None, max_length=MAX_DESIGN_WORKSHOP_FEEDBACK_CHARS)
     recordedAt: str | None = Field(default=None, max_length=40)

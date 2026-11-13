@@ -56,6 +56,7 @@ from app.services.record_filters import (
     resolve_workshop_ids,
     workshop_clause,
 )
+from app.services.record_names import fill_place_from_artisans
 from app.services.records import (
     RECORD_STATUSES,
     Relation,
@@ -795,6 +796,7 @@ async def create_interview(
     await assert_referenced_records_exist(payload.artisanIds, payload.responses)
     data = clean_data(payload.model_dump(exclude={"artisanIds", "responses"}))
     _standardise(apply_interview_values, data)
+    data = await fill_place_from_artisans(data, payload.artisanIds, client=db)
     default_interview_date(data)
     data = await attach_location(data)
     stamp_workshop_submission(data, check=check)

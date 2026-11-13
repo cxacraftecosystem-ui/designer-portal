@@ -38,6 +38,7 @@ from app.services.record_filters import (
     tool_craft_clause,
     tool_workshop_clause,
 )
+from app.services.record_names import fill_linked_names
 from app.services.records import (
     RECORD_STATUSES,
     Relation,
@@ -359,6 +360,7 @@ async def create_tool(
     if matched != craft_ids:
         craft_ids = matched
         await _resolve_craft_links(data, craft_ids)
+    data = await fill_linked_names(data, client=db)
     data = await attach_location(data)
     stamp_workshop_submission(data, check=check)
     data["createdById"] = current_user.id

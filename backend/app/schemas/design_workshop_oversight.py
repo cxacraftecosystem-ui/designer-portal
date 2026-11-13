@@ -1,29 +1,30 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
+from app.schemas.blank_text import BlankTextModel
 from app.schemas.design_workshop_viewers import MAX_DESIGN_WORKSHOP_VIEWERS
 
 
-class DesignWorkshopOversightIn(BaseModel):
+class DesignWorkshopOversightIn(BlankTextModel):
     assistantDirectorId: str | None = Field(default=None, max_length=64)
     regionalDirectorId: str | None = Field(default=None, max_length=64)
 
     model_config = ConfigDict(extra="forbid")
 
 
-class DesignWorkshopDesignerIn(BaseModel):
+class DesignWorkshopDesignerIn(BlankTextModel):
     designerId: str = Field(min_length=1, max_length=64)
 
     model_config = ConfigDict(extra="forbid")
 
 
-class DesignWorkshopDesignersIn(BaseModel):
+class DesignWorkshopDesignersIn(BlankTextModel):
     userIds: list[str] = Field(default_factory=list, max_length=MAX_DESIGN_WORKSHOP_VIEWERS)
     leadUserId: str | None = Field(default=None, max_length=64)
 
     model_config = ConfigDict(extra="forbid")
 
 
-class DesignWorkshopOversightCreateIn(BaseModel):
+class DesignWorkshopOversightCreateIn(BlankTextModel):
     title: str = Field(min_length=1, max_length=220)
     workshopKind: str | None = Field(default=None, max_length=48)
     designerUserId: str | None = Field(default=None, max_length=64)

@@ -20,6 +20,7 @@ from app.services.record_design_workshop import (
     assert_may_write_a_record_filed_under,
     assert_payload_workshop,
 )
+from app.services.record_names import fill_linked_names
 from app.services.records import (
     RECORD_STATUSES,
     Relation,
@@ -190,6 +191,7 @@ async def create_product(
     await assert_payload_workshop(data, current_user, filed_under=None)
     data = await craft_master.resolve_record_craft(db, data, keep_name=True)
     data = await fill_craft_name(data)
+    data = await fill_linked_names(data, columns=("artisanName", "place"), client=db)
     data = await attach_location(data)
     stamp_workshop_submission(data, check=check)
     data["createdById"] = current_user.id

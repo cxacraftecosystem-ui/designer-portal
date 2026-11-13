@@ -5,9 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from app.schemas import design_workshop_review_loop as loop
+from app.schemas.blank_text import BlankTextModel
 from app.schemas.design_workshop_review_loop import (
     APPROVAL_CACHE_KEYS,
     APPROVED,
@@ -158,33 +159,33 @@ def hand_on_refusal(status_value: str, *, handed_on: bool) -> tuple[int, str] | 
 
 
 
-class DwApproveIn(BaseModel):
+class DwApproveIn(BlankTextModel):
     note: str | None = Field(default=None, max_length=MAX_DECISION_NOTE_CHARS)
     round: int = Field(ge=1)
     readAt: str = Field(min_length=1, max_length=64)
 
 
-class DwDecisionNoteIn(BaseModel):
+class DwDecisionNoteIn(BlankTextModel):
     note: str = Field(min_length=1, max_length=MAX_DECISION_NOTE_CHARS)
     stageKey: str | None = Field(default=None, max_length=120)
     fieldKey: str | None = Field(default=None, max_length=120)
 
 
-class DwReviseIn(BaseModel):
+class DwReviseIn(BlankTextModel):
     note: str | None = Field(default=None, max_length=MAX_DECISION_NOTE_CHARS)
     stageKey: str | None = Field(default=None, max_length=120)
     fieldKey: str | None = Field(default=None, max_length=120)
     notes: list[DwDecisionNoteIn] = Field(default_factory=list, max_length=MAX_BATCH_NOTES)
 
 
-class DwHandOnIn(BaseModel):
+class DwHandOnIn(BlankTextModel):
     note: str | None = Field(default=None, max_length=MAX_DECISION_NOTE_CHARS)
     handedOnTo: str | None = Field(default=None, max_length=MAX_HANDED_ON_TO_CHARS)
     exportId: str | None = Field(default=None, max_length=64)
 
 
 
-class DwApproveAndHandOnIn(BaseModel):
+class DwApproveAndHandOnIn(BlankTextModel):
     note: str | None = Field(default=None, max_length=MAX_DECISION_NOTE_CHARS)
     round: int | None = Field(default=None, ge=1)
     readAt: str | None = Field(default=None, max_length=64)
