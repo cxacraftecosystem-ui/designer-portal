@@ -724,9 +724,9 @@ data class ArtisanCreateRequest(
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class ProductCreateRequest(
-    val craftName: String,
-    val place: String,
-    val artisanName: String,
+    val craftName: String? = null,
+    val place: String? = null,
+    val artisanName: String? = null,
     val productName: String,
     val localName: String? = null,
     @EncodeDefault
@@ -760,9 +760,9 @@ data class ProductCreateRequest(
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class ToolCreateRequest(
-    val craftName: String,
-    val place: String,
-    val artisanName: String,
+    val craftName: String? = null,
+    val place: String? = null,
+    val artisanName: String? = null,
     val toolkitName: String,
     val localName: String? = null,
     val englishName: String? = null,

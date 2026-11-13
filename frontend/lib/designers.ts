@@ -1,4 +1,5 @@
 import { apiFetch, buildQuery } from "@/lib/api";
+import { writeBody } from "@/lib/writeBody";
 import type { LocationPayload, PageResult, UserRole } from "@/lib/types";
 
 export const DESIGNER_PROFILE_MEDIA_RECORD_TYPE = "designerProfile";
@@ -52,10 +53,14 @@ export function listDesignerRoster(params: DesignerRosterListParams = {}) {
   );
 }
 
+export function designerRosterCreateBody(body: DesignerRosterCreateBody) {
+  return writeBody(body, "POST");
+}
+
 export function addDesignerToRoster(body: DesignerRosterCreateBody) {
   return apiFetch<DesignerRosterEntry>("/designers/roster", {
     method: "POST",
-    body: JSON.stringify(body)
+    body: JSON.stringify(designerRosterCreateBody(body))
   });
 }
 

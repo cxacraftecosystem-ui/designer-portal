@@ -3,6 +3,7 @@ import { filtersToQuery, type Filters } from "@/lib/questionnaire/filters";
 import { fetchFile } from "@/lib/fileDownload";
 import type { PageResult } from "@/lib/types";
 import { exportFilename } from "@/lib/naming";
+import { writeBody } from "@/lib/writeBody";
 
 export type QFormQuestion = {
   id: string;
@@ -352,7 +353,7 @@ export function removeQuestion(id: string, questionId: string) {
 }
 
 export function createEntry(id: string, body: QFormEntryCreateBody) {
-  return apiFetch<QFormEntryRow>(`/questionnaires/${id}/entries`, { method: "POST", body: JSON.stringify(body) });
+  return apiFetch<QFormEntryRow>(`/questionnaires/${id}/entries`, { method: "POST", body: JSON.stringify(writeBody(body, "POST")) });
 }
 
 export function patchEntry(id: string, entryId: string, body: QFormEntryUpdateBody) {

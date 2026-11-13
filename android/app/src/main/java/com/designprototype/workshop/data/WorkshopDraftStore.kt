@@ -58,7 +58,8 @@ data class DraftMedia(
     val uploadedAt: String? = null,
     val uploadFailure: String? = null,
     val uploadFailedAt: String? = null,
-    val transcribe: Boolean? = null
+    val transcribe: Boolean? = null,
+    val spokenLanguage: String? = null
 ) {
     val isConfirmedRemote: Boolean get() = !remoteMediaId.isNullOrBlank()
 }
@@ -551,6 +552,18 @@ object WorkshopDraftStore {
             draft.copy(
                 media = draft.media.map { item ->
                     if (item.id == mediaId && !item.isConfirmedRemote) item.copy(transcribe = on).also { changed = it } else item
+                }
+            )
+        }
+        return changed
+    }
+
+    suspend fun setSpokenLanguage(context: Context, workshopId: String, mediaId: String, code: String): DraftMedia? {
+        var changed: DraftMedia? = null
+        update(context, workshopId) { draft ->
+            draft.copy(
+                media = draft.media.map { item ->
+                    if (item.id == mediaId && !item.isConfirmedRemote) item.copy(spokenLanguage = code).also { changed = it } else item
                 }
             )
         }

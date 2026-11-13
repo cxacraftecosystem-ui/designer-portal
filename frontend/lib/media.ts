@@ -10,7 +10,7 @@ import {
 import { LocalRefusalError, StorageError, triageFailure, underlyingError } from "@/lib/failureTriage";
 import { byCount, bytes } from "@/lib/format";
 import { field, questionSequence, recordingFilename, sectionSequence, splitExtension } from "@/lib/naming";
-import { processingFor } from "@/lib/transcript/uploadChoice";
+import { processingFor, withSpokenLanguage } from "@/lib/transcript/uploadChoice";
 import type { MediaFile, MediaType } from "@/lib/types";
 
 export function inferMediaType(file: File): MediaType {
@@ -1072,7 +1072,7 @@ async function completeUpload(
         linkedRecordId: params.linkedRecordId,
         designWorkshopId: params.designWorkshopId,
         location: params.location,
-        extraMetadata: params.extraMetadata,
+        extraMetadata: withSpokenLanguage(file, params.extraMetadata),
         recordedAt: params.recordedAt,
         recordedTimezone: params.recordedTimezone,
         processingRequests: params.processingRequests

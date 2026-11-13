@@ -1,5 +1,6 @@
 package com.designprototype.workshop.data
 
+import com.designprototype.workshop.transcript.data.SpokenLanguageChoices
 import com.designprototype.workshop.transcript.data.TranscribeChoices
 import android.content.Context
 import android.net.ConnectivityManager
@@ -43,6 +44,7 @@ data class PendingMedia(
     val purpose: String? = null,
     val designWorkshopId: String? = null,
     val location: LocationRequest? = null,
+    val spokenLanguage: String? = null,
 )
 
 @Serializable
@@ -790,7 +792,8 @@ object OfflineOutbox {
             processing = processing ?: TranscribeChoices.processingFor(uri.toString(), inferMediaType(mimeType)),
             linkedType = linkedType,
             stepIndex = stepIndex,
-            purpose = purpose
+            purpose = purpose,
+            spokenLanguage = SpokenLanguageChoices.forKey(uri.toString())
         )
     }
 

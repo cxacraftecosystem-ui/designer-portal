@@ -111,6 +111,7 @@ function sourceOf(...parts: string[]): string {
 const picker = sourceOf("components", "designworkshop", "WorkshopDesignerPicker.tsx");
 const page = sourceOf("app", "(protected)", "design-workshops", "page.tsx");
 const wire = sourceOf("lib", "designWorkshops.ts");
+const bodies = sourceOf("lib", "designWorkshopBodies.ts");
 const store = sourceOf("lib", "designWorkshopStore.ts");
 
 test("the picker is a multi-select whose own filter is off, with a capHint naming the server box", () => {
@@ -148,7 +149,8 @@ test("PATCH is closed to BOTH designer keys, or a header edit is refused whole",
 });
 
 test("one normaliser decides the wire shape, and both create arms go through it", () => {
-  expect(wire).toContain("designerCreateFields({ chosen: designerUserIds ?? [], lead: designerUserId ?? \"\" })");
+  expect(bodies).toContain("designerCreateFields({ chosen: designerUserIds ?? [], lead: designerUserId ?? \"\" })");
+  expect(wire).toContain("JSON.stringify(designWorkshopCreateBody(body))");
   expect(store).toContain("designerUserId: draft.header.designerUserId,\n              designerUserIds: draft.header.designerUserIds,");
 });
 

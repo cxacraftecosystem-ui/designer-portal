@@ -123,12 +123,16 @@ test("ticking a SECOND artisan does not rewrite the name and place boxes", () =>
 });
 
 test("the save body always states both link lists, and does not sort them", () => {
-  const payload = CODE.slice(CODE.indexOf("const payload = {"), CODE.indexOf("const outcome = await saveOrQueue"));
+  const payload = CODE.slice(CODE.indexOf("const payload = toolBody(form, {"), CODE.indexOf("const outcome = await saveOrQueue"));
   expect(payload).toMatch(/^\s*craftIds,$/m);
   expect(payload).toMatch(/^\s*artisanIds,$/m);
-  expect(payload).toContain("artisanId: artisanId || null,");
-  expect(payload).toContain("craftId: craftId || null,");
-  expect(payload, "the lists must not be re-sorted on the way out").not.toMatch(/craftIds: \[\.\.\.craftIds\]/);
+  const builders = codeOf(readFileSync(join(__dirname, "..", "lib", "recordPayloads.ts"), "utf8"));
+  const builder = builders.slice(builders.indexOf("export function toolBody("), builders.indexOf("export type ProductBodyContext"));
+  expect(builder).toContain("artisanId: ctx.artisanIds[0] || null,");
+  expect(builder).toContain("craftId: ctx.craftIds[0] || null,");
+  expect(builder).toContain("craftIds: ctx.craftIds,");
+  expect(builder).toContain("artisanIds: ctx.artisanIds,");
+  expect(payload + builder, "the lists must not be re-sorted on the way out").not.toMatch(/craftIds: \[\.\.\./);
   expect(CODE).toContain("body: payload,");
 });
 

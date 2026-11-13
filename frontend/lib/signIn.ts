@@ -1,6 +1,7 @@
 import { ApiError, apiFetch, apiFetchWithHeaders } from "@/lib/api";
 import { SESSION_ROTATED_HEADER } from "@/lib/sessionCookie";
 import type { User, UserRole } from "@/lib/types";
+import { writeBody } from "@/lib/writeBody";
 
 export const SIGN_IN_HINT_HEADER = "x-sign-in-hint";
 
@@ -189,8 +190,12 @@ export type CreatedAccount = User & {
   passwordLinkError?: string | null;
 };
 
+export function passwordAccountBody(account: NewPasswordAccount) {
+  return writeBody(account, "POST");
+}
+
 export async function createPasswordAccount(account: NewPasswordAccount): Promise<CreatedAccount> {
-  return apiFetch<CreatedAccount>("/users", { method: "POST", body: JSON.stringify(account) });
+  return apiFetch<CreatedAccount>("/users", { method: "POST", body: JSON.stringify(passwordAccountBody(account)) });
 }
 
 export const EXISTING_ACCOUNT_HEADER = "x-existing-account-id";

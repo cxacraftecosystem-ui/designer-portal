@@ -42,10 +42,11 @@ import { apiFetch, listResource } from "@/lib/api";
 import { parseCompletenessFilter, type CompletenessFilter as CompletenessValue } from "@/lib/completenessCore";
 import { countNoun, formatDate, formatDateTime } from "@/lib/format";
 import { RECORD_VIEW_HREF } from "@/lib/recordView";
-import { locationFromForm, requiredText, textValue, useFocusField } from "@/lib/forms";
+import { locationFromForm, requiredText, useFocusField } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
 import { inferMediaType, uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
+import { workshopBody } from "@/lib/recordPayloads";
 import { LIST_PAGE_CEILING } from "@/components/data/cappedList";
 import { RENDER_CAP } from "@/components/ui/selectFilter";
 import {
@@ -298,21 +299,13 @@ function WorkshopsPageBody() {
     setSaving(true);
     try {
       const title = requiredText(form, "title");
-      const location = locationFromForm(form);
-      const payload: Record<string, unknown> = {
-        title,
+      const payload = workshopBody(form, {
         workshopType,
-        date: requiredText(form, "date"),
-        startDate: requiredText(form, "startDate"),
-        endDate: requiredText(form, "endDate"),
-        place: requiredText(form, "place"),
-        description: textValue(form, "description"),
-        notes: textValue(form, "notes"),
-        status: canSetStatus ? requiredText(form, "status") : "PENDING",
-        location
-      };
-      if (!editing || !sameIdSet(artisanIds, linkedArtisanIds(editing))) payload.artisanIds = artisanIds;
-      if (!editing || !sameIdSet(craftIds, linkedCraftIds(editing))) payload.craftIds = craftIds;
+        canSetStatus,
+        artisanIds: !editing || !sameIdSet(artisanIds, linkedArtisanIds(editing)) ? artisanIds : undefined,
+        craftIds: !editing || !sameIdSet(craftIds, linkedCraftIds(editing)) ? craftIds : undefined
+      });
+      const location = locationFromForm(form);
       const outcome = await saveOrQueue<Workshop>({
         label: `Workshop · ${title || "Untitled"}`,
         endpoint: editing ? `/workshops/${editing.id}` : "/workshops",

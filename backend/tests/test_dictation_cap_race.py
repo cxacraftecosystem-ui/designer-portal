@@ -82,7 +82,7 @@ def capped(monkeypatch):
     async def _unpaused():
         return False
 
-    async def _transcribe(content, filename, mime, settings, *, user_id=None):
+    async def _transcribe(content, filename, mime, settings, *, user_id=None, spoken_language=None):
         state.provider_calls += 1
         for _ in range(5):
             await asyncio.sleep(0)

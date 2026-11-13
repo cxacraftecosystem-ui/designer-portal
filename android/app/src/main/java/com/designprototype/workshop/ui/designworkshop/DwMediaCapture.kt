@@ -571,6 +571,8 @@ internal fun DwMediaCaptureCard(
                 enabled = enabled,
                 isOn = { key -> transcribeItems.firstOrNull { it.id == key }?.transcribe == true },
                 onChange = { key, on -> media.setTranscribe(key, on) },
+                spokenLanguageOf = { key -> transcribeItems.firstOrNull { it.id == key }?.spokenLanguage },
+                onSpokenLanguage = { key, code -> media.setSpokenLanguage(key, code) },
             )
         }
 

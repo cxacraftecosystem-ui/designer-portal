@@ -47,11 +47,11 @@ import {
   QUESTIONNAIRE_KINDS,
   QUESTIONNAIRE_KIND_LABELS,
   type QForm,
-  type QFormKind,
   type QFormSummary,
   type QFormUploadReport
 } from "@/lib/questionnaireForms";
 import { saveOrQueue } from "@/lib/offline";
+import { questionnaireCreateBody } from "@/lib/recordPayloads";
 import { queueForm } from "@/lib/questionnaireAuthoringOutbox";
 import type { PageResult } from "@/lib/types";
 import {
@@ -227,12 +227,7 @@ export default function QuestionnairesPage() {
         label: `Questionnaire · ${title}`,
         endpoint: "/questionnaires",
         method: "POST",
-        body: {
-          title,
-          description: String(form.get("description") ?? "").trim() || undefined,
-          designWorkshopId: newWorkshopId || undefined,
-          kind: (newKind || undefined) as QFormKind | undefined
-        }
+        body: questionnaireCreateBody(form, { designWorkshopId: newWorkshopId, kind: newKind })
       });
       if (outcome.queued) {
         setNotice(

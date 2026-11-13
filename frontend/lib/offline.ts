@@ -12,7 +12,8 @@ import {
   underlyingIsTransient
 } from "@/lib/failureTriage";
 import { MediaBatchError, uploadMediaBatch, type BatchResult } from "@/lib/media";
-import { transcribeFlags } from "@/lib/transcript/uploadChoice";
+import { setSpokenLanguages, spokenLanguagesOf, transcribeFlags } from "@/lib/transcript/uploadChoice";
+import { writeBody } from "@/lib/writeBody";
 
 const DB_NAME = "field-repo-outbox";
 const DB_VERSION = 1;
@@ -29,11 +30,20 @@ export type OutboxMediaBatch = {
   transcribeAudio?: boolean;
   alwaysTranscribe?: boolean;
   transcribe?: boolean[];
+  spokenLanguages?: (string | null)[];
   stepIndex?: number;
 };
 
 export function withTranscribeFlags(batch: OutboxMediaBatch): OutboxMediaBatch {
-  return batch.transcribe ? batch : { ...batch, transcribe: transcribeFlags(batch.files) };
+  const flagged = batch.transcribe ? batch : { ...batch, transcribe: transcribeFlags(batch.files) };
+  return flagged.spokenLanguages ? flagged : { ...flagged, spokenLanguages: spokenLanguagesOf(batch.files) };
+}
+
+export function restoreSpokenLanguages(batch: OutboxMediaBatch): void {
+  batch.files.forEach((file, position) => {
+    const chosen = batch.spokenLanguages?.[position];
+    if (chosen) setSpokenLanguages([file], chosen);
+  });
 }
 
 export function transcribeFlagsFor(batch: OutboxMediaBatch, subset: readonly File[]): boolean[] {
@@ -849,6 +859,7 @@ async function runSync(): Promise<SyncResult> {
           }
           let result: Awaited<ReturnType<typeof uploadMediaBatch>>;
           try {
+            restoreSpokenLanguages(batch);
             result = await uploadMediaBatch({
               files: sendable,
               linkedRecordType: batch.linkedRecordType,
@@ -982,7 +993,7 @@ export async function saveOrQueue<T extends { id: string }>({
   body: unknown;
   media?: OutboxMediaBatch[];
 }): Promise<SaveOutcome<T>> {
-  const payload = JSON.stringify(body);
+  const payload = JSON.stringify(writeBody(body, method));
   const idempotencyKey = outboxSendsIdempotencyHeader({ endpoint, method }) ? mintClientKey() : null;
   const queue = async () => {
     await queueOffline({

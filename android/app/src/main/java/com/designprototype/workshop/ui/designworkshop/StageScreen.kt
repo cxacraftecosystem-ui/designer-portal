@@ -599,12 +599,20 @@ private fun StageScreenBody(
                         sha256 = descriptor.sha256,
                         remoteMediaId = descriptor.remoteMediaId,
                         transcribe = descriptor.transcribe,
+                        spokenLanguage = descriptor.spokenLanguage,
                     )
                 }
             },
             setTranscribe = { id, on ->
                 scope.launch {
                     WorkshopDraftStore.setTranscribe(appContext, workshopId, id, on)?.let { changed ->
+                        mediaIndex = mediaIndex + (id to changed)
+                    }
+                }
+            },
+            setSpokenLanguage = { id, code ->
+                scope.launch {
+                    WorkshopDraftStore.setSpokenLanguage(appContext, workshopId, id, code)?.let { changed ->
                         mediaIndex = mediaIndex + (id to changed)
                     }
                 }

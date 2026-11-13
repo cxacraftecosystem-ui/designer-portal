@@ -92,6 +92,7 @@ export function MediaCaptureField({
   allowDocuments = true,
   allowedTypes,
   transcribeChoice = true,
+  artisanIds,
   accept,
   attachedImages,
   stagingOwnerId,
@@ -104,6 +105,7 @@ export function MediaCaptureField({
   allowDocuments?: boolean;
   allowedTypes?: MediaType[];
   transcribeChoice?: boolean;
+  artisanIds?: readonly string[];
   accept?: string;
   stagingOwnerId?: string;
   attachedImages?: AttachedImage[];
@@ -399,7 +401,7 @@ export function MediaCaptureField({
       >
         {duplicateNotice}
       </p>
-      {transcribeChoice ? <TranscribeChoices files={files} /> : null}
+      {transcribeChoice ? <TranscribeChoices files={files} artisanIds={artisanIds} /> : null}
       {previewItems.length ? (
         <div className="grid gap-2">
           <div className="flex flex-wrap items-center justify-between gap-2">

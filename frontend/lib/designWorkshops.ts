@@ -1,4 +1,4 @@
-import { API_BASE, ApiError, apiFetch, assertApiConfigured, buildQuery, describeApiDetail } from "@/lib/api";
+import { API_BASE, ApiError, apiFetch, assertApiConfigured, buildQuery, describeApiBody, statusFallback } from "@/lib/api";
 import { prepareIdentityPhotograph } from "@/lib/identityCardImage";
 import { DW_PHOTO_RETENTION_DEFAULT, type DwPhotoRetention } from "@/lib/identityPhotoRetention";
 import type { CostFindingsPayload } from "@/lib/costIntegrity";
@@ -8,6 +8,10 @@ import { isStoredRichTextEmpty, richSummary, type StoredRichDoc } from "@/lib/ri
 import { listAllPages } from "@/lib/listAllPages";
 import type { PageResult } from "@/lib/types";
 import { exportFilename } from "@/lib/naming";
+import { designWorkshopCreateBody, stageSaveBody } from "@/lib/designWorkshopBodies";
+import { writeBody } from "@/lib/writeBody";
+
+export { MAX_NAMED_DESIGNERS, designWorkshopCreateBody, designerCreateFields, namedDesignerTeam, stageSaveBody } from "@/lib/designWorkshopBodies";
 
 export type DwFieldType =
   | "TEXT"
@@ -373,36 +377,6 @@ export type DwUpdateBody = Omit<Partial<DwCreateBody>, "designerUserId" | "desig
   status?: string;
 };
 
-export const MAX_NAMED_DESIGNERS = 100;
-
-export function namedDesignerTeam({ chosen, lead }: { chosen: readonly string[]; lead: string }): {
-  lead: string;
-  team: string[];
-} {
-  const ticked: string[] = [];
-  const seen = new Set<string>();
-  for (const raw of chosen) {
-    const id = (raw ?? "").trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    ticked.push(id);
-  }
-  const preferred = (lead ?? "").trim();
-  if (ticked.length === 0) return preferred ? { lead: preferred, team: [preferred] } : { lead: "", team: [] };
-  const resolved = preferred && seen.has(preferred) ? preferred : ticked[0];
-  return { lead: resolved, team: [resolved, ...ticked.filter((id) => id !== resolved)] };
-}
-
-export function designerCreateFields({ chosen, lead }: { chosen: readonly string[]; lead: string }): {
-  designerUserId?: string;
-  designerUserIds?: string[];
-} {
-  const resolved = namedDesignerTeam({ chosen, lead });
-  if (resolved.team.length === 0) return {};
-  if (resolved.team.length === 1) return { designerUserId: resolved.lead };
-  return { designerUserId: resolved.lead, designerUserIds: resolved.team };
-}
-
 export type DwSaveEntry = {
   entityKey: string;
   entryId?: string;
@@ -663,13 +637,9 @@ export function listDesignWorkshops(params: DwListParams) {
 }
 
 export function createDesignWorkshop(body: DwCreateBody) {
-  const { designerUserId, designerUserIds, ...rest } = body;
   return apiFetch<DwSummary>("/design-workshops", {
     method: "POST",
-    body: JSON.stringify({
-      ...rest,
-      ...designerCreateFields({ chosen: designerUserIds ?? [], lead: designerUserId ?? "" })
-    })
+    body: JSON.stringify(designWorkshopCreateBody(body))
   });
 }
 
@@ -678,7 +648,7 @@ export function getDesignWorkshop(id: string) {
 }
 
 export function patchDesignWorkshop(id: string, body: DwUpdateBody) {
-  return apiFetch<DwSummary>(`/design-workshops/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+  return apiFetch<DwSummary>(`/design-workshops/${id}`, { method: "PATCH", body: JSON.stringify(writeBody(body, "PATCH")) });
 }
 
 export type DwFeedbackBody = {
@@ -734,7 +704,7 @@ export function dwCostIntegrity(id: string) {
 export function saveDesignWorkshopStage(id: string, stageKey: string, body: DwSaveBody) {
   return apiFetch<DwSaveResult>(`/design-workshops/${id}/stages/${stageKey}`, {
     method: "PUT",
-    body: JSON.stringify({ replaceCollections: false, submit: false, ...body })
+    body: JSON.stringify(stageSaveBody(body))
   });
 }
 
@@ -1305,11 +1275,9 @@ export async function downloadDesignWorkshopReport(
   if (!response.ok) {
     const contentType = response.headers.get("content-type") ?? "";
     const payload = contentType.includes("application/json") ? await response.json() : await response.text();
-    const detail =
-      typeof payload === "object" && payload && "detail" in payload ? (payload as { detail: unknown }).detail : undefined;
     throw new ApiError(
       response.status,
-      describeApiDetail(detail, response.statusText || "Something went wrong. Please try again."),
+      describeApiBody(payload, statusFallback(response.status, response.statusText || "Something went wrong. Please try again.")),
       payload,
       response.headers
     );

@@ -1,5 +1,8 @@
 package com.designprototype.workshop.explorer.data
 
+import com.designprototype.workshop.data.errorBodyObject
+import com.designprototype.workshop.data.isBareReasonPhrase
+import com.designprototype.workshop.data.serverRefusalSentence
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -203,11 +206,6 @@ object ExplorerText {
     }
 
     fun errorDetail(body: String?, json: Json): String? = runCatching {
-        val detail = json.parseToJsonElement(body ?: return null).jsonObject["detail"]
-        when (detail) {
-            is JsonPrimitive -> detail.content
-            is JsonObject -> (detail["message"] as? JsonPrimitive)?.content
-            else -> null
-        }
+        serverRefusalSentence(errorBodyObject(body))?.takeUnless { it.isBareReasonPhrase() }
     }.getOrNull()?.takeIf { it.isNotBlank() }
 }

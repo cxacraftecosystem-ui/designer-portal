@@ -31,16 +31,16 @@ import { DictatedTextArea } from "@/components/richtext/DictatedTextArea";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
 import { RichTextField } from "@/components/richtext/RichTextField";
-import { appendStoredParagraph } from "@/components/richtext/storedRichText";
 import { FieldBlock } from "@/components/tasks/TaskPrimitives";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
-import { ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiErrorMessage, apiFetch } from "@/lib/api";
 import { CRAFT_NOT_IN_LIST, useCraftCatalogue } from "@/lib/craftCatalogue";
-import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useFocusField, useUnsavedChanges } from "@/lib/forms";
+import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, textValue, useFocusField, useUnsavedChanges } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, inferMediaType, uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
+import { artisanBody, PEHCHAN_NO } from "@/lib/recordPayloads";
 import {
   acknowledgedIds,
   checkDuplicates,
@@ -80,7 +80,6 @@ import { LiveCompleteness } from "@/components/records/LiveCompleteness";
 const genderOptions = GENDER_OPTIONS;
 
 const PEHCHAN_YES = "true";
-const PEHCHAN_NO = "false";
 
 const PEHCHAN_NUMBER_REQUIRED =
   "Enter the Pehchan number, or set the card to 'No'.";
@@ -93,21 +92,7 @@ function errorDetail(error: unknown): unknown {
 }
 
 function readableError(error: unknown, fallback: string): string {
-  const detail = errorDetail(error);
-  if (typeof detail === "string" && detail.trim()) return detail;
-  if (Array.isArray(detail)) {
-    const messages = detail
-      .map((entry) => (entry && typeof entry === "object" && "msg" in entry ? String((entry as { msg: unknown }).msg) : ""))
-      .map((message) => message.replace(/^Value error,\s*/, "").trim())
-      .filter(Boolean);
-    if (messages.length) return messages.join(" ");
-  }
-  if (detail && typeof detail === "object" && "message" in detail) {
-    const message = String((detail as { message: unknown }).message);
-    if (message.trim()) return message;
-  }
-  const message = error instanceof Error ? error.message : "";
-  return message && message !== "[object Object]" ? message : fallback;
+  return apiErrorMessage(error, fallback);
 }
 
 function identityConflict(error: unknown): ArtisanIdentityConflict | null {
@@ -593,43 +578,15 @@ export function ArtisanForm({
         setSaving(false);
         return;
       }
-      const pehchanAvailable = textValue(form, "pehchanCardAvailable") !== PEHCHAN_NO;
-      const pehchanNumber = textValue(form, "pehchanCardNumber");
-      const pehchanUnchanged = pehchanAvailable && isMaskedIdentityNumber(pehchanNumber);
-      const payload = {
-        name: requiredText(form, "name"),
-        localName: textValue(form, "localName"),
-        gender: textValue(form, "gender"),
-        dateOfBirth: textValue(form, "dateOfBirth") || null,
-        craftStartDate: textValue(form, "craftStartDate") || null,
-        experienceYears: textValue(form, "experienceYears")
-          ? Number(textValue(form, "experienceYears"))
-          : null,
-        experienceMonths: textValue(form, "experienceMonths")
-          ? Number(textValue(form, "experienceMonths"))
-          : null,
-        phone: textValue(form, "phone"),
-        phoneCountryCode: textValue(form, "phoneCountryCode"),
-        email: textValue(form, "email"),
-        place: requiredText(form, "place"),
-        address: textValue(form, "address"),
-        notes: appendStoredParagraph(textValue(form, "notes") as string | null, exifRemark, "paragraph"),
-        aadhaarNumber: textValue(form, "aadhaarNumber"),
-        pehchanCardAvailable: pehchanAvailable,
-        ...(pehchanUnchanged ? {} : { pehchanCardNumber: pehchanAvailable ? pehchanNumber : null }),
-        dos: requiredText(form, "dos"),
-        donts: requiredText(form, "donts"),
+      const payload = artisanBody(form, {
         craftId,
         workshopId: workshop.workshopId || null,
         designWorkshopId: workshop.designWorkshopId || null,
-        status: requiredText(form, "status") || initial?.status || "PENDING",
-        recordedAt,
-        recordedTimezone,
-        location,
-        extraMetadata: exifItems.length ? { mediaExif: exifItems } : {},
+        initialStatus: initial?.status,
         formContract: ARTISAN_FORM_CONTRACT,
-        ...(initial ? {} : { duplicateAcknowledged: acknowledgedIds(duplicateDismissed) })
-      };
+        ...(initial ? {} : { duplicateAcknowledged: acknowledgedIds(duplicateDismissed) }),
+        exif: { items: exifItems, remark: exifRemark }
+      });
       const outcome = await saveOrQueue<Artisan>({
         label: `Artisan · ${payload.name || "Untitled"}`,
         endpoint: initial ? `/artisans/${initial.id}` : "/artisans",
@@ -1067,6 +1024,7 @@ export function ArtisanForm({
             }}
             title="Artisan media"
             description="Photos, audio, video and documents."
+            artisanIds={initial?.id ? [initial.id] : undefined}
           />
         </div>
         <div data-field="location" className="min-w-0">

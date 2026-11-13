@@ -522,7 +522,7 @@ def create_app() -> FastAPI:
     expose_docs = settings.backend_expose_docs
     app = FastAPI(
         title="Design Prototype Workshop API",
-        version="0.0.3",
+        version="0.0.4",
         description="API-first backend for design & prototype workshop capture, review, media and report generation.",
         lifespan=lifespan,
         docs_url="/docs" if expose_docs else None,

@@ -19,7 +19,7 @@ import { CraftSelect } from "@/components/forms/CraftSelect";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
-import { ApiError, listResource } from "@/lib/api";
+import { ApiError, apiFieldErrors, listResource } from "@/lib/api";
 import {
   listDesignWorkshops,
   listReportTemplates,
@@ -72,17 +72,9 @@ function readRefusal(err: unknown): Refusal {
   const detail = (err.payload as { detail?: unknown } | null | undefined)?.detail;
 
   if (Array.isArray(detail)) {
-    for (const entry of detail) {
-      if (!entry || typeof entry !== "object") continue;
-      const record = entry as { msg?: unknown; loc?: unknown };
-      const named = Array.isArray(record.loc)
-        ? record.loc.filter((part): part is string => typeof part === "string").at(-1)
-        : undefined;
-      if (!named || !EDITABLE_KEY_SET.has(named)) continue;
-      const message = String(record.msg ?? "").replace(/^Value error,\s*/, "").trim();
-      if (message) return { field: named as EditableKey, message };
-    }
-    return { field: null, message: fallback };
+    const fields = apiFieldErrors(err);
+    const named = Object.keys(fields).find((key) => EDITABLE_KEY_SET.has(key));
+    return named ? { field: named as EditableKey, message: fields[named] } : { field: null, message: fallback };
   }
 
   if (typeof detail === "string" && detail.trim()) {

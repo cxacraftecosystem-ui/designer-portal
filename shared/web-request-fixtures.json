@@ -1,0 +1,1059 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/tools",
+    "variant": "filled",
+    "body": {
+      "craftName": "Zardozi",
+      "place": "Agra",
+      "artisanName": "Ramesh Kumar",
+      "toolkitName": "Zardozi adda frame",
+      "localName": "Adda",
+      "englishName": "Embroidery frame",
+      "processUsedIn": "Stretching the base cloth",
+      "material": "Sheesham wood",
+      "materialFamily": "WOOD",
+      "yearsInUse": 12,
+      "height": 30,
+      "width": 60,
+      "lengthInches": 36,
+      "breadthInches": 24,
+      "heightInches": 12,
+      "thickness": 2,
+      "weight": 3.5,
+      "radius": 1,
+      "maker": "CARPENTER",
+      "traditionType": "TRADITIONAL",
+      "replacementCost": 1800,
+      "suggestionsForToolImprovement": "Add a tilting stand for the shoulders.",
+      "remarks": "Shared by three artisans in the unit.",
+      "artisanId": "artisan-1",
+      "craftId": "craft-1",
+      "craftIds": [
+        "craft-1"
+      ],
+      "artisanIds": [
+        "artisan-1"
+      ],
+      "workshopId": "workshop-1",
+      "designWorkshopId": "design-workshop-1",
+      "status": "PENDING",
+      "recordedAt": "2026-11-10T05:30:00.000Z",
+      "recordedTimezone": "Asia/Kolkata",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "altitude": 171,
+        "accuracy": 6,
+        "address": "Tajganj, Agra, Uttar Pradesh 282001",
+        "placeName": "Tajganj",
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra",
+        "village": "Tajganj",
+        "pincode": "282001",
+        "subjectLatitude": 27.1749,
+        "subjectLongitude": 78.0418
+      },
+      "extraMetadata": {}
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/tools",
+    "variant": "blank-optionals",
+    "body": {
+      "toolkitName": "Zardozi adda frame",
+      "localName": null,
+      "englishName": null,
+      "processUsedIn": null,
+      "material": null,
+      "materialFamily": null,
+      "yearsInUse": null,
+      "height": null,
+      "width": null,
+      "lengthInches": null,
+      "breadthInches": null,
+      "heightInches": null,
+      "thickness": null,
+      "weight": null,
+      "radius": null,
+      "maker": "UNKNOWN",
+      "traditionType": "UNKNOWN",
+      "replacementCost": null,
+      "suggestionsForToolImprovement": null,
+      "remarks": null,
+      "artisanId": "artisan-1",
+      "craftId": "craft-1",
+      "craftIds": [
+        "craft-1"
+      ],
+      "artisanIds": [
+        "artisan-1"
+      ],
+      "workshopId": null,
+      "designWorkshopId": null,
+      "status": "PENDING",
+      "recordedAt": "2026-11-10T05:30:00.000Z",
+      "recordedTimezone": "Asia/Kolkata",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra"
+      },
+      "extraMetadata": {}
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/tools/{tool_id}",
+    "variant": "filled",
+    "body": {
+      "craftName": "Zardozi",
+      "place": "Agra",
+      "artisanName": "Ramesh Kumar",
+      "toolkitName": "Zardozi adda frame",
+      "localName": "Adda",
+      "englishName": "Embroidery frame",
+      "processUsedIn": "Stretching the base cloth",
+      "material": "Sheesham wood",
+      "materialFamily": "WOOD",
+      "yearsInUse": 12,
+      "height": 30,
+      "width": 60,
+      "lengthInches": 36,
+      "breadthInches": 24,
+      "heightInches": 12,
+      "thickness": 2,
+      "weight": 3.5,
+      "radius": 1,
+      "maker": "CARPENTER",
+      "traditionType": "TRADITIONAL",
+      "replacementCost": 1800,
+      "suggestionsForToolImprovement": "Add a tilting stand for the shoulders.",
+      "remarks": "Shared by three artisans in the unit.",
+      "artisanId": "artisan-1",
+      "craftId": "craft-1",
+      "craftIds": [
+        "craft-1"
+      ],
+      "artisanIds": [
+        "artisan-1"
+      ],
+      "workshopId": "workshop-1",
+      "designWorkshopId": "design-workshop-1",
+      "status": "PENDING",
+      "recordedAt": "2026-11-10T05:30:00.000Z",
+      "recordedTimezone": "Asia/Kolkata",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "altitude": 171,
+        "accuracy": 6,
+        "address": "Tajganj, Agra, Uttar Pradesh 282001",
+        "placeName": "Tajganj",
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra",
+        "village": "Tajganj",
+        "pincode": "282001",
+        "subjectLatitude": 27.1749,
+        "subjectLongitude": 78.0418
+      },
+      "extraMetadata": {}
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/tools/{tool_id}",
+    "variant": "blank-optionals",
+    "body": {
+      "toolkitName": "Zardozi adda frame",
+      "localName": null,
+      "englishName": null,
+      "processUsedIn": null,
+      "material": null,
+      "materialFamily": null,
+      "yearsInUse": null,
+      "height": null,
+      "width": null,
+      "lengthInches": null,
+      "breadthInches": null,
+      "heightInches": null,
+      "thickness": null,
+      "weight": null,
+      "radius": null,
+      "maker": "UNKNOWN",
+      "traditionType": "UNKNOWN",
+      "replacementCost": null,
+      "suggestionsForToolImprovement": null,
+      "remarks": null,
+      "artisanId": "artisan-1",
+      "craftId": "craft-1",
+      "craftIds": [
+        "craft-1"
+      ],
+      "artisanIds": [
+        "artisan-1"
+      ],
+      "workshopId": null,
+      "designWorkshopId": null,
+      "status": "PENDING",
+      "recordedAt": "2026-11-10T05:30:00.000Z",
+      "recordedTimezone": "Asia/Kolkata",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra"
+      },
+      "extraMetadata": {}
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/products",
+    "variant": "filled",
+    "body": {
+      "place": "Agra",
+      "artisanName": "Ramesh Kumar",
+      "productName": "Zardozi clutch",
+      "localName": "Batua",
+      "productType": "FINISHED_GOOD",
+      "timeTakenToCompleteProduct": "4 days",
+      "size": "Medium",
+      "lengthInches": 10,
+      "breadthInches": 2,
+      "heightInches": 7,
+      "costOfMaking": 650,
+      "sellingPrice": 1400,
+      "marketDemand": "HIGH",
+      "rawMaterialsUsed": "Velvet, zari thread, sequins",
+      "mainToolsUsed": "Adda frame, aari needle",
+      "productFunctionUse": "Evening bag",
+      "remarks": "Sold through the Agra cluster store.",
+      "artisanId": "artisan-1",
+      "craftId": "craft-1",
+      "workshopId": "workshop-1",
+      "designWorkshopId": "design-workshop-1",
+      "status": "PENDING",
+      "recordedAt": "2026-11-10T05:30:00.000Z",
+      "recordedTimezone": "Asia/Kolkata",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "altitude": 171,
+        "accuracy": 6,
+        "address": "Tajganj, Agra, Uttar Pradesh 282001",
+        "placeName": "Tajganj",
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra",
+        "village": "Tajganj",
+        "pincode": "282001",
+        "subjectLatitude": 27.1749,
+        "subjectLongitude": 78.0418
+      },
+      "extraMetadata": {}
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/products",
+    "variant": "blank-optionals",
+    "body": {
+      "productName": "Zardozi clutch",
+      "localName": null,
+      "productType": "OTHER",
+      "timeTakenToCompleteProduct": null,
+      "size": null,
+      "lengthInches": null,
+      "breadthInches": null,
+      "heightInches": null,
+      "costOfMaking": null,
+      "sellingPrice": null,
+      "marketDemand": "UNKNOWN",
+      "rawMaterialsUsed": null,
+      "mainToolsUsed": null,
+      "productFunctionUse": null,
+      "remarks": null,
+      "artisanId": "artisan-1",
+      "craftId": "craft-1",
+      "workshopId": null,
+      "designWorkshopId": null,
+      "status": "PENDING",
+      "recordedAt": "2026-11-10T05:30:00.000Z",
+      "recordedTimezone": "Asia/Kolkata",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra"
+      },
+      "extraMetadata": {}
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/products/{product_id}",
+    "variant": "filled",
+    "body": {
+      "place": "Agra",
+      "artisanName": "Ramesh Kumar",
+      "productName": "Zardozi clutch",
+      "localName": "Batua",
+      "productType": "FINISHED_GOOD",
+      "timeTakenToCompleteProduct": "4 days",
+      "size": "Medium",
+      "lengthInches": 10,
+      "breadthInches": 2,
+      "heightInches": 7,
+      "costOfMaking": 650,
+      "sellingPrice": 1400,
+      "marketDemand": "HIGH",
+      "rawMaterialsUsed": "Velvet, zari thread, sequins",
+      "mainToolsUsed": "Adda frame, aari needle",
+      "productFunctionUse": "Evening bag",
+      "remarks": "Sold through the Agra cluster store.",
+      "artisanId": "artisan-1",
+      "craftId": "craft-1",
+      "workshopId": "workshop-1",
+      "designWorkshopId": "design-workshop-1",
+      "status": "PENDING",
+      "recordedAt": "2026-11-10T05:30:00.000Z",
+      "recordedTimezone": "Asia/Kolkata",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "altitude": 171,
+        "accuracy": 6,
+        "address": "Tajganj, Agra, Uttar Pradesh 282001",
+        "placeName": "Tajganj",
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra",
+        "village": "Tajganj",
+        "pincode": "282001",
+        "subjectLatitude": 27.1749,
+        "subjectLongitude": 78.0418
+      },
+      "extraMetadata": {}
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/products/{product_id}",
+    "variant": "blank-optionals",
+    "body": {
+      "productName": "Zardozi clutch",
+      "localName": null,
+      "productType": "OTHER",
+      "timeTakenToCompleteProduct": null,
+      "size": null,
+      "lengthInches": null,
+      "breadthInches": null,
+      "heightInches": null,
+      "costOfMaking": null,
+      "sellingPrice": null,
+      "marketDemand": "UNKNOWN",
+      "rawMaterialsUsed": null,
+      "mainToolsUsed": null,
+      "productFunctionUse": null,
+      "remarks": null,
+      "artisanId": "artisan-1",
+      "craftId": "craft-1",
+      "workshopId": null,
+      "designWorkshopId": null,
+      "status": "PENDING",
+      "recordedAt": "2026-11-10T05:30:00.000Z",
+      "recordedTimezone": "Asia/Kolkata",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra"
+      },
+      "extraMetadata": {}
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/processes",
+    "variant": "filled",
+    "body": {
+      "name": "Zardozi on velvet",
+      "productId": "product-1",
+      "workshopId": "workshop-1",
+      "designWorkshopId": "design-workshop-1",
+      "preProcessAvailable": true,
+      "notes": "Traced from a paper stencil with chalk.",
+      "status": "PENDING",
+      "steps": [
+        {
+          "name": "Trace the motif",
+          "stepType": "MAIN",
+          "sortOrder": 1,
+          "notes": "Chalk and kerosene paste."
+        },
+        {
+          "name": "Fill with zari",
+          "stepType": "MAIN",
+          "sortOrder": 2,
+          "notes": null
+        }
+      ],
+      "recordedAt": "2026-11-10T05:30:00.000Z"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/processes",
+    "variant": "blank-optionals",
+    "body": {
+      "name": "Zardozi on velvet",
+      "productId": "product-1",
+      "workshopId": null,
+      "designWorkshopId": null,
+      "preProcessAvailable": false,
+      "notes": null,
+      "status": "PENDING",
+      "steps": [
+        {
+          "name": "Trace the motif",
+          "stepType": "MAIN",
+          "sortOrder": 1,
+          "notes": null
+        }
+      ],
+      "recordedAt": "2026-11-10T05:30:00.000Z"
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/processes/{process_id}",
+    "variant": "filled",
+    "body": {
+      "name": "Zardozi on velvet",
+      "productId": "product-1",
+      "workshopId": "workshop-1",
+      "designWorkshopId": "design-workshop-1",
+      "preProcessAvailable": true,
+      "notes": "Traced from a paper stencil with chalk.",
+      "status": "PENDING",
+      "steps": [
+        {
+          "id": "process-step-1",
+          "name": "Trace the motif",
+          "stepType": "MAIN",
+          "sortOrder": 1,
+          "notes": "Chalk and kerosene paste."
+        },
+        {
+          "name": "Fill with zari",
+          "stepType": "MAIN",
+          "sortOrder": 2,
+          "notes": null
+        }
+      ]
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/processes/{process_id}",
+    "variant": "blank-optionals",
+    "body": {
+      "name": "Zardozi on velvet",
+      "productId": "product-1",
+      "workshopId": null,
+      "designWorkshopId": null,
+      "preProcessAvailable": false,
+      "notes": null,
+      "status": "PENDING",
+      "steps": [
+        {
+          "name": "Trace the motif",
+          "stepType": "MAIN",
+          "sortOrder": 1,
+          "notes": null
+        }
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/artisans",
+    "variant": "filled",
+    "body": {
+      "name": "Ramesh Kumar",
+      "localName": "रमेश कुमार",
+      "gender": "Male",
+      "dateOfBirth": "1978-04-12",
+      "craftStartDate": "1994-06-01",
+      "experienceYears": 32,
+      "experienceMonths": 5,
+      "phone": "9876543210",
+      "phoneCountryCode": "+91",
+      "email": "ramesh.kumar@example.in",
+      "place": "Agra",
+      "address": "14 Tajganj Road, Agra",
+      "notes": "Master craftsman, trains apprentices.",
+      "aadhaarNumber": "234123412346",
+      "pehchanCardAvailable": true,
+      "pehchanCardNumber": "UPAGR1234567",
+      "dos": "1. Keep the thread dry",
+      "donts": "1. Do not wash in hot water",
+      "craftId": "craft-1",
+      "workshopId": "workshop-1",
+      "designWorkshopId": "design-workshop-1",
+      "status": "PENDING",
+      "recordedAt": "2026-11-10T05:30:00.000Z",
+      "recordedTimezone": "Asia/Kolkata",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "altitude": 171,
+        "accuracy": 6,
+        "address": "Tajganj, Agra, Uttar Pradesh 282001",
+        "placeName": "Tajganj",
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra",
+        "village": "Tajganj",
+        "pincode": "282001",
+        "subjectLatitude": 27.1749,
+        "subjectLongitude": 78.0418
+      },
+      "extraMetadata": {},
+      "formContract": 2,
+      "duplicateAcknowledged": [
+        "artisan-2"
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/artisans",
+    "variant": "blank-optionals",
+    "body": {
+      "name": "Ramesh Kumar",
+      "localName": null,
+      "gender": null,
+      "dateOfBirth": "1978-04-12",
+      "craftStartDate": "1994-06-01",
+      "experienceYears": null,
+      "experienceMonths": null,
+      "phone": null,
+      "phoneCountryCode": null,
+      "email": null,
+      "place": "Agra",
+      "address": null,
+      "notes": null,
+      "aadhaarNumber": null,
+      "pehchanCardAvailable": false,
+      "pehchanCardNumber": null,
+      "dos": "1. Keep the thread dry",
+      "donts": "1. Do not wash in hot water",
+      "craftId": "craft-1",
+      "workshopId": null,
+      "designWorkshopId": null,
+      "status": "PENDING",
+      "recordedAt": "2026-11-10T05:30:00.000Z",
+      "recordedTimezone": "Asia/Kolkata",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra"
+      },
+      "extraMetadata": {},
+      "formContract": 2,
+      "duplicateAcknowledged": []
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/artisans/{artisan_id}",
+    "variant": "filled",
+    "body": {
+      "name": "Ramesh Kumar",
+      "localName": "रमेश कुमार",
+      "gender": "Male",
+      "dateOfBirth": "1978-04-12",
+      "craftStartDate": "1994-06-01",
+      "experienceYears": 32,
+      "experienceMonths": 5,
+      "phone": "9876543210",
+      "phoneCountryCode": "+91",
+      "email": "ramesh.kumar@example.in",
+      "place": "Agra",
+      "address": "14 Tajganj Road, Agra",
+      "notes": "Master craftsman, trains apprentices.",
+      "aadhaarNumber": "234123412346",
+      "pehchanCardAvailable": true,
+      "pehchanCardNumber": "UPAGR1234567",
+      "dos": "1. Keep the thread dry",
+      "donts": "1. Do not wash in hot water",
+      "craftId": "craft-1",
+      "workshopId": "workshop-1",
+      "designWorkshopId": "design-workshop-1",
+      "status": "PENDING",
+      "recordedAt": "2026-11-10T05:30:00.000Z",
+      "recordedTimezone": "Asia/Kolkata",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "altitude": 171,
+        "accuracy": 6,
+        "address": "Tajganj, Agra, Uttar Pradesh 282001",
+        "placeName": "Tajganj",
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra",
+        "village": "Tajganj",
+        "pincode": "282001",
+        "subjectLatitude": 27.1749,
+        "subjectLongitude": 78.0418
+      },
+      "extraMetadata": {},
+      "formContract": 2
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/artisans/{artisan_id}",
+    "variant": "blank-optionals",
+    "body": {
+      "name": "Ramesh Kumar",
+      "localName": null,
+      "gender": null,
+      "dateOfBirth": "1978-04-12",
+      "craftStartDate": "1994-06-01",
+      "experienceYears": null,
+      "experienceMonths": null,
+      "phone": null,
+      "phoneCountryCode": null,
+      "email": null,
+      "place": "Agra",
+      "address": null,
+      "notes": null,
+      "aadhaarNumber": null,
+      "pehchanCardAvailable": false,
+      "pehchanCardNumber": null,
+      "dos": "1. Keep the thread dry",
+      "donts": "1. Do not wash in hot water",
+      "craftId": "craft-1",
+      "workshopId": null,
+      "designWorkshopId": null,
+      "status": "PENDING",
+      "recordedAt": "2026-11-10T05:30:00.000Z",
+      "recordedTimezone": "Asia/Kolkata",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra"
+      },
+      "extraMetadata": {},
+      "formContract": 2
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/crafts",
+    "variant": "filled",
+    "body": {
+      "name": "Zardozi",
+      "localName": "ज़रदोज़ी",
+      "subCategoryId": "craft-subcategory-1",
+      "stateOfOrigin": [
+        "Uttar Pradesh"
+      ],
+      "stateOfPractice": [
+        "Uttar Pradesh",
+        "Delhi"
+      ],
+      "giStatus": "GI",
+      "workshopId": "workshop-1",
+      "description": "Metal-thread embroidery on velvet and silk."
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/crafts",
+    "variant": "blank-optionals",
+    "body": {
+      "name": "Zardozi",
+      "localName": null,
+      "subCategoryId": "craft-subcategory-1",
+      "stateOfOrigin": [],
+      "stateOfPractice": [],
+      "giStatus": "NON_GI",
+      "workshopId": null,
+      "description": null
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/crafts/{craft_id}",
+    "variant": "filled",
+    "body": {
+      "name": "Zardozi",
+      "localName": "ज़रदोज़ी",
+      "subCategoryId": "craft-subcategory-1",
+      "stateOfOrigin": [
+        "Uttar Pradesh"
+      ],
+      "stateOfPractice": [
+        "Uttar Pradesh",
+        "Delhi"
+      ],
+      "giStatus": "GI",
+      "workshopId": "workshop-1",
+      "description": "Metal-thread embroidery on velvet and silk."
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/crafts/{craft_id}",
+    "variant": "blank-optionals",
+    "body": {
+      "name": "Zardozi",
+      "localName": null,
+      "subCategoryId": "craft-subcategory-1",
+      "stateOfOrigin": [],
+      "stateOfPractice": [],
+      "giStatus": "NON_GI",
+      "workshopId": null,
+      "description": null
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/workshops",
+    "variant": "filled",
+    "body": {
+      "title": "Agra Zardozi Cluster Workshop",
+      "workshopType": "DESIGN_PROTOTYPE",
+      "date": "2026-11-10",
+      "startDate": "2026-11-10",
+      "endDate": "2026-11-24",
+      "place": "Agra",
+      "description": "Fourteen-day design and prototype workshop.",
+      "notes": "Venue: Tajganj community hall.",
+      "status": "APPROVED",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "altitude": 171,
+        "accuracy": 6,
+        "address": "Tajganj, Agra, Uttar Pradesh 282001",
+        "placeName": "Tajganj",
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra",
+        "village": "Tajganj",
+        "pincode": "282001",
+        "subjectLatitude": 27.1749,
+        "subjectLongitude": 78.0418
+      },
+      "artisanIds": [
+        "artisan-1",
+        "artisan-2"
+      ],
+      "craftIds": [
+        "craft-1"
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/workshops",
+    "variant": "blank-optionals",
+    "body": {
+      "title": "Agra Zardozi Cluster Workshop",
+      "workshopType": "DESIGN_PROTOTYPE",
+      "place": "Agra",
+      "description": null,
+      "notes": null,
+      "status": "APPROVED",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra"
+      },
+      "artisanIds": [],
+      "craftIds": []
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/workshops/{workshop_id}",
+    "variant": "filled",
+    "body": {
+      "title": "Agra Zardozi Cluster Workshop",
+      "workshopType": "DESIGN_PROTOTYPE",
+      "date": "2026-11-10",
+      "startDate": "2026-11-10",
+      "endDate": "2026-11-24",
+      "place": "Agra",
+      "description": "Fourteen-day design and prototype workshop.",
+      "notes": "Venue: Tajganj community hall.",
+      "status": "APPROVED",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "altitude": 171,
+        "accuracy": 6,
+        "address": "Tajganj, Agra, Uttar Pradesh 282001",
+        "placeName": "Tajganj",
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra",
+        "village": "Tajganj",
+        "pincode": "282001",
+        "subjectLatitude": 27.1749,
+        "subjectLongitude": 78.0418
+      },
+      "artisanIds": [
+        "artisan-1",
+        "artisan-2"
+      ],
+      "craftIds": [
+        "craft-1"
+      ]
+    }
+  },
+  {
+    "method": "PATCH",
+    "path": "/api/workshops/{workshop_id}",
+    "variant": "blank-optionals",
+    "body": {
+      "title": "Agra Zardozi Cluster Workshop",
+      "workshopType": "DESIGN_PROTOTYPE",
+      "date": "",
+      "startDate": "",
+      "endDate": "",
+      "place": "Agra",
+      "description": null,
+      "notes": null,
+      "status": "APPROVED",
+      "location": {
+        "latitude": 27.1751,
+        "longitude": 78.0421,
+        "capturedAt": "2026-11-10T05:30:00.000Z",
+        "state": "Uttar Pradesh",
+        "district": "Agra"
+      },
+      "artisanIds": [],
+      "craftIds": []
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/questionnaires",
+    "variant": "filled",
+    "body": {
+      "title": "Zardozi baseline",
+      "description": "Stage 5 interview guide.",
+      "designWorkshopId": "design-workshop-1",
+      "kind": "WORKSHOP_INTERVIEW"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/questionnaires",
+    "variant": "blank-optionals",
+    "body": {
+      "title": "Zardozi baseline"
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/design-workshops",
+    "variant": "filled",
+    "body": {
+      "title": "Design & Prototype Development Workshop — Agra Zardozi",
+      "templateId": "DCH_STANDARD",
+      "workshopKind": "DESIGN_PROTOTYPE_DEVELOPMENT",
+      "craftName": "Zardozi",
+      "clusterName": "Agra Zardozi Cluster",
+      "state": "Uttar Pradesh",
+      "district": "Agra",
+      "startDate": "2026-11-10",
+      "endDate": "2026-11-24",
+      "workshopId": "workshop-1",
+      "notes": "Sanctioned under the NHDP.",
+      "designerUserId": "user-designer-1",
+      "designerUserIds": [
+        "user-designer-1",
+        "user-designer-2"
+      ]
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/design-workshops",
+    "variant": "blank-optionals",
+    "body": {
+      "title": "Design & Prototype Development Workshop — Agra Zardozi",
+      "templateId": "DCH_STANDARD",
+      "workshopKind": "DESIGN_PROTOTYPE_DEVELOPMENT"
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/design-workshops/{workshop_id}/stages/{stage_key}",
+    "variant": "filled",
+    "body": {
+      "replaceCollections": false,
+      "submit": false,
+      "entries": [
+        {
+          "entityKey": "workshopSetup",
+          "data": {
+            "workshopTitle": "Design & Prototype Development Workshop — Agra Zardozi",
+            "schemeName": "National Handicrafts Development Programme",
+            "craftName": "Zardozi",
+            "craftLocalName": "ज़रदोज़ी"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/design-workshops/{workshop_id}/stages/{stage_key}",
+    "variant": "blank-optionals",
+    "body": {
+      "replaceCollections": false,
+      "submit": false,
+      "entries": [
+        {
+          "entityKey": "workshopSetup",
+          "data": {
+            "workshopTitle": "Design & Prototype Development Workshop — Agra Zardozi",
+            "schemeName": "National Handicrafts Development Programme",
+            "craftName": "Zardozi",
+            "craftLocalName": ""
+          }
+        }
+      ]
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/designers/me/profile",
+    "variant": "filled",
+    "body": {
+      "displayName": "Anita Sharma",
+      "localName": "अनीता शर्मा",
+      "designation": "Textile designer",
+      "institution": "NIFT Delhi",
+      "department": "Textile Design",
+      "qualification": "M.Des",
+      "specialisation": "Surface ornamentation",
+      "experienceYears": 11,
+      "experienceMonths": 4,
+      "biography": "Works with embroidery clusters in Uttar Pradesh.",
+      "phone": "9811122233",
+      "email": "anita.sharma@example.in",
+      "website": "https://example.in/anita",
+      "addressLine": "22 Sanjay Place",
+      "city": "Agra",
+      "state": "Uttar Pradesh",
+      "pincode": "282002",
+      "photoMediaId": "media-photo-1",
+      "signatureMediaId": "media-signature-1",
+      "cvMediaId": "media-cv-1",
+      "empanelmentNo": "DC-H/2026/0142",
+      "empanelmentDate": "2026-01-15"
+    }
+  },
+  {
+    "method": "PUT",
+    "path": "/api/designers/me/profile",
+    "variant": "blank-optionals",
+    "body": {
+      "displayName": null,
+      "localName": null,
+      "designation": null,
+      "institution": null,
+      "department": null,
+      "qualification": null,
+      "specialisation": null,
+      "experienceYears": null,
+      "experienceMonths": null,
+      "biography": null,
+      "phone": null,
+      "email": null,
+      "website": null,
+      "addressLine": null,
+      "city": null,
+      "state": null,
+      "pincode": null,
+      "photoMediaId": null,
+      "signatureMediaId": null,
+      "cvMediaId": null,
+      "empanelmentNo": null,
+      "empanelmentDate": null
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/designers/roster",
+    "variant": "filled",
+    "body": {
+      "email": "anita.sharma@example.in",
+      "fullName": "Anita Sharma",
+      "institution": "NIFT Delhi",
+      "notes": "Empanelled 2026.",
+      "isActive": true
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/designers/roster",
+    "variant": "blank-optionals",
+    "body": {
+      "email": "anita.sharma@example.in",
+      "isActive": true
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/users",
+    "variant": "filled",
+    "body": {
+      "name": "Anita Sharma",
+      "email": "anita.sharma@example.in",
+      "role": "DESIGNER",
+      "passwordMode": "SET",
+      "password": "Agra@2026!",
+      "mustChangePassword": true,
+      "canManageQuestionnaire": false,
+      "canDownloadDataset": false
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/api/users",
+    "variant": "blank-optionals",
+    "body": {
+      "name": "Anita Sharma",
+      "email": "anita.sharma@example.in",
+      "role": "DESIGNER",
+      "passwordMode": "GENERATE",
+      "canManageQuestionnaire": false,
+      "canDownloadDataset": false
+    }
+  }
+]

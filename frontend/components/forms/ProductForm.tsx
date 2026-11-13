@@ -12,7 +12,6 @@ import type { CarryNode } from "@/lib/carryContext";
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import {
   forgetAcceptance,
-  measurementMethodsFor,
   NO_ACCEPTED_MEASUREMENTS,
   rememberAcceptance,
   type AcceptedMeasurements
@@ -34,14 +33,14 @@ import { UploadProgress } from "@/components/media/UploadProgress";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
 import { RichTextField } from "@/components/richtext/RichTextField";
-import { appendStoredParagraph } from "@/components/richtext/storedRichText";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { apiFetch } from "@/lib/api";
-import { locationFromForm, numericValue, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useFocusField, useUnsavedChanges } from "@/lib/forms";
+import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, useFocusField, useUnsavedChanges } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, inferMediaType, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
+import { productBody } from "@/lib/recordPayloads";
 import { hasRank } from "@/lib/permissions";
 import type { Artisan, ProductDocumentation, RecordStatus } from "@/lib/types";
 import { marketDemandOptions, productTypes } from "@/lib/types";
@@ -183,11 +182,6 @@ export function ProductForm({
     if (known.place) setPlace((current) => current || known.place);
   }, [artisans, artisanId, isEdit]);
 
-  const toNum = (value: string) => {
-    const n = Number(value);
-    return value.trim() && Number.isFinite(n) ? n : null;
-  };
-
   const typeInto =
     (set: (value: string) => void, key: string) => (event: React.ChangeEvent<HTMLInputElement>) => {
       set(event.target.value);
@@ -264,39 +258,16 @@ export function ProductForm({
       const recordedAt = recordedAtFromForm(form);
       const recordedTimezone = recordedTimezoneFromForm(form);
       const location = locationFromForm(form);
-      const payload = {
-        place: requiredText(form, "place"),
-        artisanName: requiredText(form, "artisanName"),
-        productName: requiredText(form, "productName"),
-        localName: textValue(form, "localName"),
-        productType: requiredText(form, "productType") || "OTHER",
-        timeTakenToCompleteProduct: textValue(form, "timeTakenToCompleteProduct"),
-        size: textValue(form, "size"),
-        lengthInches: toNum(length),
-        breadthInches: toNum(breadth),
-        heightInches: toNum(height),
-        measurementMethods: measurementMethodsFor(accepted, {
-          lengthInches: length,
-          breadthInches: breadth,
-          heightInches: height
-        }),
-        costOfMaking: numericValue(form, "costOfMaking"),
-        sellingPrice: numericValue(form, "sellingPrice"),
-        marketDemand: requiredText(form, "marketDemand") || "UNKNOWN",
-        rawMaterialsUsed: textValue(form, "rawMaterialsUsed"),
-        mainToolsUsed: textValue(form, "mainToolsUsed"),
-        productFunctionUse: textValue(form, "productFunctionUse"),
-        remarks: appendStoredParagraph(textValue(form, "remarks") as string | null, exifRemark),
-        artisanId: artisanId || null,
-        craftId: craftId || null,
+      const payload = productBody(form, {
+        artisanId,
+        craftId,
+        dimensions: { length, breadth, height },
+        accepted,
         workshopId: workshop.workshopId || null,
         designWorkshopId: workshop.designWorkshopId || null,
-        status: requiredText(form, "status") || initial?.status || "PENDING",
-        recordedAt,
-        recordedTimezone,
-        location,
-        extraMetadata: exifItems.length ? { mediaExif: exifItems } : {}
-      };
+        initialStatus: initial?.status,
+        exif: { items: exifItems, remark: exifRemark }
+      });
       const outcome = await saveOrQueue<ProductDocumentation>({
         label: `Product · ${payload.productName || "Untitled"}`,
         endpoint: initial ? `/products/${initial.id}` : "/products",

@@ -481,9 +481,9 @@ private fun FileItSheet(
 }
 
 internal fun Throwable.userSentence(): String {
-    (this as? retrofit2.HttpException)?.response()?.errorBody()?.string()?.let { body ->
-        runCatching { com.designprototype.workshop.questionnaire.portal.QuestionnairePortal.json.decodeFromString(com.designprototype.workshop.questionnaire.data.QErrorBody.serializer(), body).detail?.message }
-            .getOrNull()?.takeIf { it.isNotBlank() }?.let { return it }
+    (this as? retrofit2.HttpException)?.let { http ->
+        val body = runCatching { http.response()?.errorBody()?.string() }.getOrNull()
+        return com.designprototype.workshop.data.httpRefusalSentence(http.code(), body, QuestionnaireCopy.s("upload.waiting"))
     }
     if (this is java.io.IOException) return QuestionnaireCopy.s("error.needsSignal")
     return message?.takeIf { it.isNotBlank() && this is IllegalStateException } ?: QuestionnaireCopy.s("upload.waiting")

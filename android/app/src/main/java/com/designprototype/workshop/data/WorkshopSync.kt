@@ -819,6 +819,7 @@ object WorkshopSyncEngine {
                     workshopTitle = draft.title,
                     batchIndex = index + 1,
                     transcribe = descriptor.transcribe,
+                    spokenLanguage = descriptor.spokenLanguage,
                     onProgress = { sent, total ->
                         DwMediaUploadProgress.sending(descriptor.id, sent, total)
                     },

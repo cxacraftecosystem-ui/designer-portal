@@ -15,7 +15,6 @@ import { cmTextFromInches, inchesTextFromCm, propagate } from "@/components/form
 import { LocationFields, type LocationInitialValues } from "@/components/forms/LocationFields";
 import {
   forgetAcceptance,
-  measurementMethodsFor,
   NO_ACCEPTED_MEASUREMENTS,
   rememberAcceptance,
   type AcceptedMeasurements
@@ -41,15 +40,15 @@ import { UploadProgress } from "@/components/media/UploadProgress";
 import { DictatedTextInput } from "@/components/richtext/DictatedTextInput";
 import { DictationUnavailableNotice } from "@/components/richtext/DictationUnavailableNotice";
 import { RichTextField } from "@/components/richtext/RichTextField";
-import { appendStoredParagraph } from "@/components/richtext/storedRichText";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
 import { apiFetch } from "@/lib/api";
-import { locationFromForm, numericValue, recordedAtFromForm, recordedTimezoneFromForm, requiredText, textValue, useFocusField, useUnsavedChanges } from "@/lib/forms";
+import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, useFocusField, useUnsavedChanges } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, inferMediaType, mediaKindWord, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
 import { recordingFilename, splitExtension } from "@/lib/naming";
 import { saveOrQueue } from "@/lib/offline";
+import { toolBody } from "@/lib/recordPayloads";
 import { canManageCrafts, hasRank } from "@/lib/permissions";
 import type { Artisan, Craft, RecordStatus, ToolDocumentation } from "@/lib/types";
 import { CraftAddDraftBoundary } from "@/components/forms/CraftAddDraftBoundary";
@@ -255,11 +254,6 @@ export function ToolForm({
     setCraftName((current) => (joined && joined !== current ? joined : current));
   }, [craftIds, craftOptions, typedSinceMount]);
 
-  const toNum = (value: string) => {
-    const n = Number(value);
-    return value.trim() && Number.isFinite(n) ? n : null;
-  };
-
   const typeInches =
     (set: (value: string) => void, key: string, setPartner?: (value: string) => void) =>
     (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -408,47 +402,17 @@ export function ToolForm({
       const recordedAt = recordedAtFromForm(form);
       const recordedTimezone = recordedTimezoneFromForm(form);
       const location = locationFromForm(form);
-      const payload = {
+      const payload = toolBody(form, {
         craftName: craftName || joinCraftNames(craftIds, craftOptions),
-        place: requiredText(form, "place"),
-        artisanName: requiredText(form, "artisanName"),
-        toolkitName: requiredText(form, "toolkitName"),
-        localName: textValue(form, "localName"),
-        englishName: textValue(form, "englishName"),
-        processUsedIn: textValue(form, "processUsedIn"),
-        material: textValue(form, "material"),
-        materialFamily: textValue(form, "materialFamily"),
-        yearsInUse: numericValue(form, "yearsInUse"),
-        height: toNum(height),
-        width: toNum(width),
-        lengthInches: toNum(length),
-        breadthInches: toNum(breadth),
-        heightInches: toNum(heightInches),
-        measurementMethods: measurementMethodsFor(accepted, {
-          lengthInches: length,
-          breadthInches: breadth,
-          heightInches
-        }),
-        thickness: numericValue(form, "thickness"),
-        weight: numericValue(form, "weight"),
-        radius: numericValue(form, "radius"),
-        maker: requiredText(form, "maker") || "UNKNOWN",
-        traditionType: requiredText(form, "traditionType") || "UNKNOWN",
-        replacementCost: numericValue(form, "replacementCost"),
-        suggestionsForToolImprovement: textValue(form, "suggestionsForToolImprovement"),
-        remarks: appendStoredParagraph(textValue(form, "remarks") as string | null, exifRemark),
-        artisanId: artisanId || null,
-        craftId: craftId || null,
         craftIds,
         artisanIds,
+        dimensions: { height, width, length, breadth, heightInches },
+        accepted,
         workshopId: workshop.workshopId || null,
         designWorkshopId: workshop.designWorkshopId || null,
-        status: requiredText(form, "status") || initial?.status || "PENDING",
-        recordedAt,
-        recordedTimezone,
-        location,
-        extraMetadata: exifItems.length ? { mediaExif: exifItems } : {}
-      };
+        initialStatus: initial?.status,
+        exif: { items: exifItems, remark: exifRemark }
+      });
       const outcome = await saveOrQueue<ToolDocumentation>({
         label: `Tool · ${payload.toolkitName || "Untitled"}`,
         endpoint: initial ? `/tools/${initial.id}` : "/tools",

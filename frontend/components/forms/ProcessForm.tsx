@@ -42,6 +42,7 @@ import { countNoun, formatDate } from "@/lib/format";
 import { handleFormEnter } from "@/lib/formNav";
 import { describePreProcess, describeProcessStep, renameMediaFile, uploadMediaFile } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
+import { processBody } from "@/lib/recordPayloads";
 import { loadCachedRegister } from "@/lib/referenceCache";
 import {
   cachedListLine,
@@ -578,23 +579,18 @@ export function ProcessForm({
     setSaving(true);
     try {
       const trimmedName = name.trim();
-      const payload = {
-        name: trimmedName,
+      const payload = processBody({
+        name,
         productId,
         workshopId: workshop.workshopId || null,
         designWorkshopId: workshop.designWorkshopId || null,
         preProcessAvailable,
-        notes: notes.trim() || null,
+        notes,
         status,
-        steps: steps.map((step, index) => ({
-          id: step.serverId,
-          name: step.name.trim(),
-          stepType: step.stepType,
-          sortOrder: index + 1,
-          notes: step.recordAdditional ? step.notes.trim() || null : null
-        })),
-        ...(isEdit ? {} : { recordedAt: new Date().toISOString() })
-      };
+        steps,
+        isEdit,
+        now: new Date()
+      });
       const outcome = await saveOrQueue<ProcessRecord>({
         label: `Process · ${trimmedName || "Untitled"}`,
         endpoint: isEdit ? `/processes/${initial!.id}` : "/processes",

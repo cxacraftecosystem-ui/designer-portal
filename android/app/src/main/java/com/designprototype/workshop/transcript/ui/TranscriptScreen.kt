@@ -59,6 +59,7 @@ import com.designprototype.workshop.transcript.data.Transcript
 import com.designprototype.workshop.transcript.data.TranscriptEdit
 import com.designprototype.workshop.transcript.data.TranscriptFormat
 import com.designprototype.workshop.transcript.data.TranscriptNames
+import com.designprototype.workshop.transcript.data.SpokenLanguageMemory
 import com.designprototype.workshop.transcript.data.TranscriptRepository
 import com.designprototype.workshop.transcript.data.TranscriptStrings
 import com.designprototype.workshop.transcript.data.TranscriptSummary
@@ -234,6 +235,18 @@ private class RepositoryHost(
         TranscriptRepository.refusalSentence(e.code(), e.transcriptError(TranscriptPortal.json))
     } catch (e: java.io.IOException) {
         TranscriptUiText.englishNotSaved
+    }
+
+    override suspend fun retranscribe(spokenLanguage: String): String? = try {
+        val updated = server.retranscribe(view.mediaId, spokenLanguage)
+        repo.accept(updated)
+        SpokenLanguageMemory.remember(context, spokenLanguage)
+        onReload()
+        null
+    } catch (e: HttpException) {
+        TranscriptRepository.refusalSentence(e.code(), e.transcriptError(TranscriptPortal.json))
+    } catch (e: java.io.IOException) {
+        TranscriptStrings.retranscribeFailed
     }
 
     override suspend fun suggestions(): List<SpeakerSuggestion> =server.speakerSuggestions(view.mediaId)

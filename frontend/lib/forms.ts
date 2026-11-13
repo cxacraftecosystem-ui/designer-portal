@@ -9,6 +9,10 @@ export function textValue(form: FormData, key: string) {
   return trimmed.length ? trimmed : null;
 }
 
+export function isMaskedIdentityNumber(value: string | null | undefined): boolean {
+  return typeof value === "string" && /x/i.test(value);
+}
+
 export function requiredText(form: FormData, key: string) {
   const value = textValue(form, key);
   return typeof value === "string" ? value : "";

@@ -766,7 +766,7 @@ def dictation(monkeypatch):
     async def _workshop(workshop_id, user, **kwargs):
         return _workshop_row(id=workshop_id, dictationConsent=state.consent)
 
-    async def _transcribe(content, filename, mime, settings, *, user_id=None):
+    async def _transcribe(content, filename, mime, settings, *, user_id=None, spoken_language=None):
         seen.provider_calls.append((len(content), filename, mime))
         seen.transcribed_for.append(user_id)
         return dict(state.result)

@@ -1,5 +1,7 @@
 package com.designprototype.workshop.data
 
+import com.designprototype.workshop.transcript.data.SpokenLanguageChoices
+import com.designprototype.workshop.transcript.data.SpokenLanguages
 import com.designprototype.workshop.transcript.data.TranscribeChoices
 import com.designprototype.workshop.transcript.data.UploadTranscribe
 import android.content.ContentValues
@@ -128,17 +130,20 @@ private fun Throwable.isTransportFailure(): Boolean =
 fun Throwable.apiRefusal(fallback: String): ApiRefusal {
     if (isTransportFailure()) return ApiRefusal(CONNECTION_FAILED_SENTENCE, schemaSkew = false)
     if (this is SerializationException) return ApiRefusal(fallback, schemaSkew = false)
-    val plain = message?.takeIf { it.isNotBlank() } ?: fallback
+    val plain = message?.trim()?.takeIf { it.isNotEmpty() && !it.isBareReasonPhrase() } ?: fallback
     val http = this as? HttpException ?: return ApiRefusal(plain, schemaSkew = false)
+    val bare = if (http.code() == 413) TOO_LARGE_SENTENCE else fallback
     val raw = runCatching { http.response()?.errorBody()?.string() }.getOrNull()
-    if (raw.isNullOrBlank()) return ApiRefusal(fallback, schemaSkew = false)
-    val detail = (runCatching { errorBodyJson.parseToJsonElement(raw) }.getOrNull() as? JsonObject)
-        ?.get("detail")
-        ?: return ApiRefusal(fallback, schemaSkew = false)
+    val body = errorBodyObject(raw) ?: return ApiRefusal(bare, schemaSkew = false)
+    val detail = body["detail"]
     val skew = http.code() == 422 && (detail as? JsonArray)?.any { entry ->
         ((entry as? JsonObject)?.get("type") as? JsonPrimitive)?.contentOrNull == "extra_forbidden"
     } == true
-    return ApiRefusal(detailMessage(detail) ?: fallback, schemaSkew = skew, namedFields = detail.locFields())
+    return ApiRefusal(
+        serverRefusalSentence(body) ?: bare,
+        schemaSkew = skew,
+        namedFields = detail?.locFields().orEmpty(),
+    )
 }
 
 private fun JsonElement.locFields(): List<String> =
@@ -148,13 +153,8 @@ private fun JsonElement.locFields(): List<String> =
         }
     }.distinct()
 
-private fun HttpException.serverDetail(): String? {
-    val raw = runCatching { response()?.errorBody()?.string() }.getOrNull()
-    if (raw.isNullOrBlank()) return null
-    val body = runCatching { errorBodyJson.parseToJsonElement(raw) }.getOrNull() as? JsonObject
-    val detail = body?.get("detail") ?: return null
-    return detailMessage(detail)
-}
+private fun HttpException.serverDetail(): String? =
+    serverRefusalSentence(errorBodyObject(runCatching { response()?.errorBody()?.string() }.getOrNull()))
 
 private fun HttpException.dictationCapRefusal(): DwDictationCapRefused {
     val raw = runCatching { response()?.errorBody()?.string() }.getOrNull()
@@ -170,26 +170,9 @@ private fun HttpException.dictationCapRefusal(): DwDictationCapRefused {
     )
 }
 
-private fun errorBodyDetail(raw: String?): String? {
-    if (raw.isNullOrBlank()) return null
-    val body = runCatching { errorBodyJson.parseToJsonElement(raw) }.getOrNull() as? JsonObject
-    val detail = body?.get("detail") ?: return null
-    return detailMessage(detail)
-}
+private fun errorBodyDetail(raw: String?): String? = serverRefusalSentence(errorBodyObject(raw))
 
-private fun detailMessage(detail: JsonElement): String? = when (detail) {
-    is JsonPrimitive -> detail.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-    is JsonObject -> (detail["message"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-    is JsonArray -> detail
-        .mapNotNull { entry ->
-            ((entry as? JsonObject)?.get("msg") as? JsonPrimitive)?.contentOrNull
-                ?.removePrefix("Value error, ")?.trim()?.takeIf { it.isNotEmpty() }
-        }
-        .distinct()
-        .joinToString(" ")
-        .takeIf { it.isNotEmpty() }
-    else -> null
-}
+private fun detailMessage(detail: JsonElement): String? = detailSentence(detail)
 
 private const val UPLOAD_MISSING_CODE = 409
 
@@ -3466,7 +3449,7 @@ class WorkshopRepository(
             return
         }
         storageClient.newCall(Request.Builder().url(url).build()).execute().use { resp ->
-            if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+            if (!resp.isSuccessful) throw IllegalStateException("The file could not be downloaded. Try again.")
             resp.body?.byteStream()?.copyTo(sink)
         }
     }
@@ -3809,7 +3792,7 @@ class WorkshopRepository(
                             recordedAt = Instant.now().toString(),
                             location = location,
                             processingRequests = resolvedProcessing,
-                            extraMetadata = extraMetadata
+                            extraMetadata = SpokenLanguages.metadata(extraMetadata, SpokenLanguageChoices.forKey(uri.toString()), mediaType)
                         ),
                         target.checksum
                     )
@@ -4085,7 +4068,8 @@ class WorkshopRepository(
         customSegment: String? = null,
         processingRequests: List<String>? = null,
         overrideBaseName: String? = null,
-        extraMetadata: JsonObject? = null
+        extraMetadata: JsonObject? = null,
+        spokenLanguage: String? = null
     ): MediaFileDto {
         val filename = mediaFilename(
             recordType = linkedRecordType,
@@ -4114,7 +4098,7 @@ class WorkshopRepository(
                 recordedAt = Instant.now().toString(),
                 location = location,
                 processingRequests = resolvedProcessing,
-                extraMetadata = extraMetadata
+                extraMetadata = SpokenLanguages.metadata(extraMetadata, spokenLanguage, staged.mediaType)
             ),
             StagedJournal.checksumFor(staged.objectKey)
         )
@@ -5019,6 +5003,7 @@ class WorkshopRepository(
         batchIndex: Int = 1,
         transcribe: Boolean? = null,
         onProgress: ((sent: Long, total: Long) -> Unit)? = null,
+        spokenLanguage: String? = null,
     ): MediaFileDto {
         val filename = mediaFilename(
             recordType = DESIGN_WORKSHOP_MEDIA_TAG,
@@ -5057,7 +5042,8 @@ class WorkshopRepository(
                 } else {
                     null
                 },
-                processingRequests = UploadTranscribe.processingFor(transcribe, mediaType)
+                processingRequests = UploadTranscribe.processingFor(transcribe, mediaType),
+                extraMetadata = SpokenLanguages.metadata(null, spokenLanguage, mediaType)
             ),
             target.checksum
         )
@@ -5383,7 +5369,7 @@ internal fun pendingMediaCompleteRequest(
     linkedRecordId = linkedRecordId.blankToNull(),
     recordedAt = recordedAt,
     processingRequests = pm.processing ?: UploadTranscribe.legacy(pm.mediaType),
-    extraMetadata = mediaPurposeMetadata(pm.purpose),
+    extraMetadata = SpokenLanguages.metadata(mediaPurposeMetadata(pm.purpose), pm.spokenLanguage, pm.mediaType),
     designWorkshopId = pm.designWorkshopId.blankToNull(),
     location = pm.location,
 )

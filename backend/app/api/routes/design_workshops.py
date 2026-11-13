@@ -167,7 +167,8 @@ from app.services.stage_schema import (
 from app.services.uploads import read_upload_bounded
 from app.services.workshop_transcripts import load_transcript_items
 from app.transcription.schedule import PAUSED_MESSAGE
-from app.transcription import workdir
+from app.transcription import languages as spoken_languages, workdir
+from prisma import Json
 
 router = APIRouter(prefix="/design-workshops", tags=["design-workshops"])
 
@@ -598,6 +599,7 @@ async def _transcribe_one_dictation(
             (file.content_type or "audio/webm").split(";")[0].strip(),
             get_settings(),
             user_id=current_user.id,
+            spoken_language=spoken_languages.normalise(languageHint),
         )
     except BaseException:
         if counted is not None:
@@ -611,6 +613,7 @@ async def _transcribe_one_dictation(
             detail=str(result.get("message") or "Transcription is not configured."),
         )
 
+    result["spokenLanguage"] = spoken_languages.normalise(languageHint)
     media_id = await _keep_dictation(content, file, result, current_user, record) if record is not None else None
     return {
         "status": result.get("status"),
@@ -675,6 +678,7 @@ async def _keep_dictation(
                 "transcriptText": str(result.get("text") or ""),
                 "transcriptStatus": "COMPLETED",
                 "transcriptProvider": result.get("provider"),
+                "extraMetadata": Json({"spokenLanguage": result.get("spokenLanguage") or "auto"}),
             }
         )
         await transcript_pipeline.store_transcription(media, result)

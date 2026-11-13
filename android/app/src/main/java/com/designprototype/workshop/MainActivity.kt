@@ -2,6 +2,7 @@ package com.designprototype.workshop
 
 import com.designprototype.workshop.questionnaire.portal.sessionLocationCard
 import com.designprototype.workshop.questionnaire.ui.LocalSessionLocationCard
+import com.designprototype.workshop.transcript.data.SpokenLanguageChoices
 import com.designprototype.workshop.transcript.data.TranscribeChoices
 import com.designprototype.workshop.ui.FieldRadioButton
 import com.designprototype.workshop.transcript.ui.TranscribeChoiceItem
@@ -353,6 +354,11 @@ import com.designprototype.workshop.data.notificationWorkshopId
 import com.designprototype.workshop.ui.NotificationsScreen
 import com.designprototype.workshop.data.apiHostNeedsLocalNetwork
 import com.designprototype.workshop.data.ToolCreateRequest
+import com.designprototype.workshop.data.ToolFormFields
+import com.designprototype.workshop.data.ProductFormFields
+import com.designprototype.workshop.data.toolCreateBody
+import com.designprototype.workshop.data.productCreateBody
+import com.designprototype.workshop.data.linkedCraftName
 import com.designprototype.workshop.data.UserDto
 import com.designprototype.workshop.data.WorkshopCreateRequest
 import com.designprototype.workshop.data.AccessRefusal
@@ -4942,7 +4948,8 @@ private suspend fun uploadAttachments(
                     batchIndex = index + 1,
                     customSegment = customSegment,
                     processingRequests = TranscribeChoices.processingFor(uri.toString(), staged.mediaType),
-                    extraMetadata = purpose
+                    extraMetadata = purpose,
+                    spokenLanguage = SpokenLanguageChoices.forKey(uri.toString())
                 )
             } else {
                 repository.uploadMedia(
@@ -8275,30 +8282,34 @@ private fun ProductForm(
             if (!forceOffline && !link.confirmSubmission()) return@launch
             saving = true
             val createKey = retry?.key ?: java.util.UUID.randomUUID().toString()
-            val body = retry?.body ?: ProductCreateRequest(
-                productName = productName.trim(),
-                localName = localName.blankToNull(),
-                craftName = craftName.trim(),
-                artisanName = artisanName.trim(),
-                place = place.trim(),
-                productType = productType,
-                timeTakenToCompleteProduct = timeTaken.blankToNull(),
-                size = size.blankToNull(),
-                lengthInches = length.toDoubleOrNull(),
-                breadthInches = breadth.toDoubleOrNull(),
-                heightInches = height.toDoubleOrNull(),
+            val body = retry?.body ?: productCreateBody(
+                ProductFormFields(
+                    productName = productName,
+                    localName = localName,
+                    craftName = craftName,
+                    artisanName = artisanName,
+                    place = place,
+                    productType = productType,
+                    timeTaken = timeTaken,
+                    size = size,
+                    length = length,
+                    breadth = breadth,
+                    height = height,
+                    costOfMaking = costOfMaking,
+                    sellingPrice = sellingPrice,
+                    marketDemand = marketDemand,
+                    rawMaterials = rawMaterials,
+                    mainTools = mainTools,
+                    functionUse = functionUse,
+                    remarks = remarks,
+                    craftId = craftId,
+                    artisanId = artisanId
+                ),
+                crafts = crafts,
+                artisans = artisans,
                 measurementMethods = markers.body(
                     mapOf("lengthInches" to length, "breadthInches" to breadth, "heightInches" to height)
                 ),
-                costOfMaking = costOfMaking.toDoubleOrNull(),
-                sellingPrice = sellingPrice.toDoubleOrNull(),
-                marketDemand = marketDemand,
-                rawMaterialsUsed = rawMaterials.blankToNull(),
-                mainToolsUsed = mainTools.blankToNull(),
-                productFunctionUse = functionUse.blankToNull(),
-                remarks = remarks.blankToNull(),
-                artisanId = artisanId.ifBlank { null },
-                craftId = craftId.ifBlank { null },
                 workshopId = link.workshopId(),
                 designWorkshopId = link.designWorkshopId(),
                 status = status,
@@ -8307,10 +8318,10 @@ private fun ProductForm(
             )
             val sitting = CarryContext(
                 artisanId = artisanId.ifBlank { null },
-                artisanName = artisanName.trim(),
-                place = place.trim(),
+                artisanName = body.artisanName,
+                place = body.place,
                 craftId = craftId.ifBlank { null },
-                craftName = craftName.trim(),
+                craftName = body.craftName,
                 workshopId = link.workshopId(),
                 workshopName = link.field.workshops.firstOrNull { it.id == link.workshopId() }?.title
             )
@@ -8615,6 +8626,8 @@ private fun ToolForm(
         val listed = artisans.map { it.id }.toSet()
         editing?.artisanLinks.orEmpty().mapNotNull { it.artisan }.filter { it.id !in listed } + artisans
     }
+    fun toolCraftOptions(): List<CraftDto> =
+        crafts + editing?.craftLinks?.mapNotNull { it.craft }.orEmpty()
     fun joinCraftNames(ids: List<String>): String =
         ids.mapNotNull { knownCraftNames[it]?.takeIf { name -> name.isNotBlank() } }.joinToString(", ")
     fun adoptFirstArtisan(previousFirst: String?) {
@@ -8647,7 +8660,7 @@ private fun ToolForm(
                     artisanName = first.name,
                     place = first.place,
                     craftId = craftIds.firstOrNull(),
-                    craftName = craftIds.firstOrNull()?.let { knownCraftNames[it] } ?: craftName.blankToNull()
+                    craftName = linkedCraftName(craftIds, craftName, toolCraftOptions(), knownArtisans)
                 ),
                 explicit = true
             )
@@ -8730,37 +8743,39 @@ private fun ToolForm(
             if (!forceOffline && !link.confirmSubmission()) return@launch
             saving = true
             val createKey = retry?.key ?: java.util.UUID.randomUUID().toString()
-            val body = retry?.body ?: ToolCreateRequest(
-                toolkitName = toolkitName.trim(),
-                localName = localName.blankToNull(),
-                englishName = englishName.blankToNull(),
-                craftName = craftName.trim(),
-                artisanName = artisanName.trim(),
-                place = place.trim(),
-                processUsedIn = processUsedIn.blankToNull(),
-                material = material.blankToNull(),
-                materialFamily = materialFamily.blankToNull(),
-                yearsInUse = yearsInUse.toIntOrNull(),
-                height = height.toDoubleOrNull(),
-                width = width.toDoubleOrNull(),
-                lengthInches = length.toDoubleOrNull(),
-                breadthInches = breadth.toDoubleOrNull(),
-                heightInches = heightInches.toDoubleOrNull(),
+            val body = retry?.body ?: toolCreateBody(
+                ToolFormFields(
+                    toolkitName = toolkitName,
+                    localName = localName,
+                    englishName = englishName,
+                    craftName = craftName,
+                    artisanName = artisanName,
+                    place = place,
+                    processUsedIn = processUsedIn,
+                    material = material,
+                    materialFamily = materialFamily,
+                    yearsInUse = yearsInUse,
+                    height = height,
+                    width = width,
+                    heightInches = heightInches,
+                    length = length,
+                    breadth = breadth,
+                    thickness = thickness,
+                    weight = weight,
+                    radius = radius,
+                    maker = maker,
+                    traditionType = traditionType,
+                    replacementCost = replacementCost,
+                    suggestions = suggestions,
+                    remarks = remarks,
+                    craftIds = craftIds,
+                    artisanIds = artisanIds
+                ),
+                crafts = toolCraftOptions(),
+                artisans = knownArtisans,
                 measurementMethods = markers.body(
                     mapOf("lengthInches" to length, "breadthInches" to breadth, "heightInches" to heightInches)
                 ),
-                thickness = thickness.toDoubleOrNull(),
-                weight = weight.toDoubleOrNull(),
-                radius = radius.toDoubleOrNull(),
-                maker = maker,
-                traditionType = traditionType.ifBlank { StandardValues.TRADITION_UNANSWERED },
-                replacementCost = replacementCost.toDoubleOrNull(),
-                suggestionsForToolImprovement = suggestions.blankToNull(),
-                remarks = remarks.blankToNull(),
-                artisanId = artisanId.ifBlank { null },
-                craftId = craftId.ifBlank { null },
-                craftIds = craftIds,
-                artisanIds = artisanIds,
                 workshopId = link.workshopId(),
                 designWorkshopId = link.designWorkshopId(),
                 status = status,
@@ -8769,10 +8784,10 @@ private fun ToolForm(
             )
             val sitting = CarryContext(
                 artisanId = artisanId.ifBlank { null },
-                artisanName = artisanName.trim(),
-                place = place.trim(),
+                artisanName = body.artisanName,
+                place = body.place,
                 craftId = craftId.ifBlank { null },
-                craftName = craftIds.firstOrNull()?.let { knownCraftNames[it] } ?: craftName.trim(),
+                craftName = linkedCraftName(craftIds, craftName, toolCraftOptions(), knownArtisans),
                 workshopId = link.workshopId(),
                 workshopName = link.field.workshops.firstOrNull { it.id == link.workshopId() }?.title
             )
@@ -9433,7 +9448,8 @@ private fun ProcessForm(
                                 location = local.media.location,
                                 batchIndex = fileIndex + 1,
                                 customSegment = segment,
-                                processingRequests = TranscribeChoices.processingFor(uri.toString(), staged.mediaType)
+                                processingRequests = TranscribeChoices.processingFor(uri.toString(), staged.mediaType),
+                                spokenLanguage = SpokenLanguageChoices.forKey(uri.toString())
                             )
                         } else {
                             repository.uploadMedia(

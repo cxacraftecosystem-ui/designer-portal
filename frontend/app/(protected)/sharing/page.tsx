@@ -185,7 +185,6 @@ function BatchReport({ ledger, busy, onRetry, onDismiss }: { ledger: Ledger; bus
               <X className="mt-0.5 h-4 w-4 shrink-0 text-error-600 dark:text-red-400" aria-hidden />
               <span className="min-w-0">
                 <span className="font-medium text-ink-900">{row.label}</span> — {row.error}
-                {row.status ? <span className="text-ink-500"> (HTTP {row.status})</span> : null}
               </span>
             </li>
           ))}

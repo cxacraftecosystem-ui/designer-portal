@@ -137,8 +137,11 @@ test("the three forms that machine-append EXIF use the document-aware helper", (
     ["ToolForm", TOOL_FORM]
   ] as const) {
     expect(source, `${name} still concatenates onto a possibly-JSON column`).not.toMatch(/appendRemarksWithExif\(/);
-    expect(source, `${name} must append through appendStoredParagraph`).toMatch(/appendStoredParagraph\(/);
+    expect(source, `${name} must hand its EXIF remark to the record builder`).toContain("exif: { items: exifItems, remark: exifRemark }");
   }
+  const builders = read("lib", "recordPayloads.ts");
+  expect(builders, "the builders still concatenate onto a possibly-JSON column").not.toMatch(/appendRemarksWithExif\(/);
+  expect(builders.match(/appendStoredParagraph\(/g)?.length, "artisan, product and tool append through appendStoredParagraph").toBe(3);
 });
 
 test("the workshop dictation button still requires a workshop id and still has its server rung", () => {

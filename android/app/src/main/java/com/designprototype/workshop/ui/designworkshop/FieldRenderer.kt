@@ -108,6 +108,7 @@ data class DwMediaItem(
     val sha256: String? = null,
     val remoteMediaId: String? = null,
     val transcribe: Boolean? = null,
+    val spokenLanguage: String? = null,
 )
 
 @Immutable
@@ -119,6 +120,7 @@ class DwMediaBridge(
     val detach: (String) -> Unit,
     val newCaptureFile: (String) -> File,
     val setTranscribe: (String, Boolean) -> Unit = { _, _ -> },
+    val setSpokenLanguage: (String, String) -> Unit = { _, _ -> },
 )
 
 @Immutable

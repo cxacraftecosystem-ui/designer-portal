@@ -1,4 +1,4 @@
-import { API_BASE, ApiError, ApiUnconfiguredError, apiFetch, assertApiConfigured, describeApiDetail } from "@/lib/api";
+import { API_BASE, ApiError, ApiUnconfiguredError, apiFetch, assertApiConfigured, describeApiBody, statusFallback } from "@/lib/api";
 import { fileNameFromDisposition } from "@/lib/designWorkshops";
 import { blockText, orderedRange, sliceSpans, type DocRange, type RichDoc } from "@/lib/richText";
 import { isUnreachable } from "@/lib/offline";
@@ -178,11 +178,9 @@ export async function downloadDesignWorkshopSubtitles(
   if (!response.ok) {
     const contentType = response.headers.get("content-type") ?? "";
     const payload = contentType.includes("application/json") ? await response.json() : await response.text();
-    const detail =
-      typeof payload === "object" && payload && "detail" in payload ? (payload as { detail: unknown }).detail : undefined;
     throw new ApiError(
       response.status,
-      describeApiDetail(detail, response.statusText || "Something went wrong. Please try again."),
+      describeApiBody(payload, statusFallback(response.status, response.statusText || "Something went wrong. Please try again.")),
       payload,
       response.headers
     );

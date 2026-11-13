@@ -77,6 +77,9 @@ import com.designprototype.workshop.questionnaire.data.RespondentKind
 import com.designprototype.workshop.questionnaire.data.SessionOutbox
 import com.designprototype.workshop.questionnaire.data.SessionUnit
 import com.designprototype.workshop.questionnaire.data.StepKind
+import com.designprototype.workshop.transcript.data.SpokenLanguageMemory
+import com.designprototype.workshop.transcript.ui.SpokenLanguageField
+import com.designprototype.workshop.transcript.ui.rememberSpokenLanguageChoice
 import com.designprototype.workshop.questionnaire.data.SubjectRole
 import com.designprototype.workshop.questionnaire.data.outboxJson
 import com.designprototype.workshop.questionnaire.portal.QuestionnairePortal
@@ -273,6 +276,7 @@ fun SessionWorkspace(
         )
     }
     val roster = headerParticipants.filter { it.present }
+    val spoken = rememberSpokenLanguageChoice(participantIds.filterNot { QSubjects.isGuest(it) })
     val locked = detail?.state == "CLOSED"
     val sessionTakes = CoverageGridModel.takesOf(detail?.recordings.orEmpty())
     val known = CoverageGridModel.merge(snapshotTakes, sessionTakes)
@@ -310,8 +314,9 @@ fun SessionWorkspace(
                 targets = listOfNotNull(req.target), subjects = subjects, label = req.label,
                 contentType = picked.mime, extension = picked.ext, continuationOfId = continuationOf, replacesRecordingId = replaces,
                 ackedRecordingIds = acked, finished = true, m4aPath = picked.path, durationMs = picked.durationMs,
-                sha256 = picked.sha256, sizeBytes = picked.size
+                sha256 = picked.sha256, sizeBytes = picked.size, spokenLanguage = spoken.value
             )
+            SpokenLanguageMemory.remember(context, spoken.value)
             withUnit {
                 RecordingDrafts.write(v2.filesDir, draft)
                 v2.queueTake(draft)
@@ -324,8 +329,10 @@ fun SessionWorkspace(
                 adtsPath = File(RecordingDrafts.dir(v2.filesDir), "$key.aac").absolutePath,
                 deviceCapturedAt = Instant.now().toString(), clockOffsetMs = ClientClock.offsetMs(), clockOffsetMeasuredAt = ClientClock.measuredAt(),
                 capturedAtSource = ClientClock.captureSource(), targets = listOfNotNull(req.target), subjects = subjects,
-                label = req.label, continuationOfId = continuationOf, replacesRecordingId = replaces, ackedRecordingIds = acked
+                label = req.label, continuationOfId = continuationOf, replacesRecordingId = replaces, ackedRecordingIds = acked,
+                spokenLanguage = spoken.value
             )
+            SpokenLanguageMemory.remember(context, spoken.value)
             RecordingDrafts.write(v2.filesDir, draft)
             RecordingService.start(context, draft)
         }
@@ -439,6 +446,7 @@ fun SessionWorkspace(
             onFinish = { finishing = true },
             researchers = detail?.researchers.orEmpty().map { it.name }
         )
+        if (!locked) SpokenLanguageField(spoken)
         if (trayRows.isNotEmpty()) OutboxTray(
             rows = trayRows,
             onSendAgain = { row -> withUnit { key -> v2.outbox.retryStep(key, row.stepId) } },
@@ -840,8 +848,8 @@ fun SessionWorkspace(
                             response == null -> onError(QuestionnaireCopy.s("error.needsSignal"))
                             response.isSuccessful -> { v2.outbox.forget(clientKey); onBack() }
                             else -> {
-                                val detailBody = runCatching { QuestionnairePortal.json.decodeFromString(QErrorBody.serializer(), response.errorBody()?.string().orEmpty()).detail }.getOrNull()
-                                onError(detailBody?.message?.ifBlank { null } ?: QuestionnaireCopy.s("upload.waiting"))
+                                val raw = runCatching { response.errorBody()?.string() }.getOrNull()
+                                onError(com.designprototype.workshop.data.httpRefusalSentence(response.code(), raw, QuestionnaireCopy.s("upload.waiting")))
                             }
                         }
                     }

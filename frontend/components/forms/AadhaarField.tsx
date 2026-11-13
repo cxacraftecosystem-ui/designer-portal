@@ -6,6 +6,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { IdentityCardCapture } from "@/components/forms/IdentityCardCapture";
 import type { UseExistingArtisan } from "@/components/forms/inlineRecordHost";
 import { apiFetch } from "@/lib/api";
+import { isMaskedIdentityNumber } from "@/lib/forms";
 import type { AadhaarLookupResult, ArtisanIdentityMatch } from "@/lib/types";
 import { RequiredMark } from "@/components/ui/RequiredMark";
 
@@ -60,9 +61,7 @@ export function aadhaarValidationError(value: string | null | undefined): string
   return null;
 }
 
-export function isMaskedIdentityNumber(value: string | null | undefined): boolean {
-  return typeof value === "string" && /x/i.test(value);
-}
+export { isMaskedIdentityNumber };
 
 const AADHAAR_REQUIRED =
   "Enter the 12-digit Aadhaar number.";

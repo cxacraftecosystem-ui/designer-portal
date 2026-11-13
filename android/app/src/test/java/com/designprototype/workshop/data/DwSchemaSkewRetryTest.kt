@@ -30,14 +30,14 @@ class DwSchemaSkewRetryTest {
     fun `an unknown key is a schema refusal, and the server's own sentence is still surfaced`() {
         val refusal = http(422, extraForbidden).apiRefusal("fallback")
         assertTrue("extra_forbidden means the two builds disagree, not that a person typed something wrong", refusal.schemaSkew)
-        assertEquals("Extra inputs are not permitted", refusal.message)
+        assertEquals("Merge: Extra inputs are not permitted.", refusal.message)
     }
 
     @Test
     fun `a field the validator rejected is NOT a schema refusal`() {
         val refusal = http(422, fieldInvalid).apiRefusal("fallback")
         assertFalse(refusal.schemaSkew)
-        assertEquals("String should have at most 200 characters", refusal.message)
+        assertEquals("Title: String should have at most 200 characters.", refusal.message)
     }
 
     @Test
@@ -56,7 +56,7 @@ class DwSchemaSkewRetryTest {
 
     @Test
     fun `the message half is unchanged, because every screen in the app already renders it`() {
-        assertEquals("Extra inputs are not permitted", http(422, extraForbidden).apiErrorMessage("fallback"))
+        assertEquals("Merge: Extra inputs are not permitted.", http(422, extraForbidden).apiErrorMessage("fallback"))
         assertEquals("no such workshop", http(404, """{"detail":"no such workshop"}""").apiErrorMessage("x"))
         assertEquals(
             "Giriraj Prasad already holds that Aadhaar",
@@ -70,7 +70,7 @@ class DwSchemaSkewRetryTest {
         val error = http(422, extraForbidden)
         val once = error.apiRefusal("fallback")
         assertTrue(once.schemaSkew)
-        assertEquals("Extra inputs are not permitted", once.message)
+        assertEquals("Merge: Extra inputs are not permitted.", once.message)
         assertFalse(
             "a second read gets an empty buffer, which is exactly why there must only ever be one",
             error.apiRefusal("fallback").schemaSkew
