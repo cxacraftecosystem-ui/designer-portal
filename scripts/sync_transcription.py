@@ -58,6 +58,11 @@ SHARED_FILES_EXTRA = (
     "backend/tests/test_paid_ai_allowance.py",
     "backend/app/services/job_supersede.py",
     "backend/scripts/clear_superseded_failed_jobs.py",
+    "backend/app/core/odia_script.py",
+    "backend/scripts/odia_script_backfill.py",
+    "backend/tests/test_odia_script.py",
+    "backend/tests/test_odia_store.py",
+    "backend/tests/test_odia_script_backfill_db.py",
 )
 FIXTURE_DIR = "backend/tests/fixtures/transcript"
 EXPLORER_DIR = "backend/app/services/data_explorer"

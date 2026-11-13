@@ -24,6 +24,7 @@ from pydantic import model_validator
 from app.services import craft_master
 from app.services.text_format import by_count, count_noun
 from app.core.config import get_settings
+from app.core import odia_script
 from app.core.db import db
 from app.core.deps import (
     assert_can_create_design_workshops,
@@ -611,6 +612,7 @@ async def _transcribe_one_dictation(
             detail=str(result.get("message") or "Transcription is not configured."),
         )
 
+    odia_script.apply_to_result(result, languageHint)
     media_id = await _keep_dictation(content, file, result, current_user, record) if record is not None else None
     return {
         "status": result.get("status"),
