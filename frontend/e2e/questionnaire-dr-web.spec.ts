@@ -83,7 +83,7 @@ test("@qf:A11 @qf:B19 @qf:B20 @qf:A20 @qf:B21 someone else's answer is locked wi
   await a1.locator("[data-history]").click();
   await expect(page.locator("[data-answer-history]")).toContainText("Wooden blocks");
   await expect(page.locator("[data-answer-history]")).toContainText("Blocks");
-  await page.getByRole("button", { name: "OK" }).click();
+  await page.getByRole("button", { name: "OK", exact: true }).click();
   const a2 = page.locator("[data-answer-box='l2']");
   await a2.getByRole("button", { name: "Add a note" }).click();
   await a2.locator("[data-answer-note]").fill("Asked twice");

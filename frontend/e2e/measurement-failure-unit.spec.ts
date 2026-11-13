@@ -135,7 +135,7 @@ test("serverSentence is the guard, and it reads the body rather than the message
   const validation = new ApiError(422, "ignored", {
     detail: [{ type: "value_error", loc: ["query", "dimension"], msg: "Value error, Unknown dimension" }]
   });
-  expect(serverSentence(validation)).toBe("dimension: Unknown dimension");
+  expect(serverSentence(validation)).toBe("Dimension: Unknown dimension");
 });
 
 test("a 200 whose PROVIDER failed is not an unreadable grid", () => {
