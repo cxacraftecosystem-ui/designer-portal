@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Release-0.0.2-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Release: 0.0.2">
+  <img src="https://img.shields.io/badge/Release-0.0.3-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Release: 0.0.3">
   <img src="https://img.shields.io/badge/Web-Next.js_16-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Web: Next.js 16">
   <img src="https://img.shields.io/badge/API-FastAPI_·_Python_3.15-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="API: FastAPI on Python 3.15">
   <img src="https://img.shields.io/badge/Android-Kotlin_+_Compose-1E1B2E?style=for-the-badge&labelColor=762CB1" alt="Android: Kotlin and Compose">
@@ -310,7 +310,7 @@ stateDiagram-v2
 
 | Android | |
 |---|---|
-| Version | **0.0.2**, versionCode 44 (the line restarted at 0.0.1 on 9 Nov 2026, after 0.0.16; codes keep rising) |
+| Version | **0.0.3**, versionCode 45 (the line restarted at 0.0.1 on 9 Nov 2026, after 0.0.16; codes keep rising) |
 | Toolchain | AGP 9.5, Gradle 9.8.2, Kotlin 2.4, Compose, R8 with a 4 GB Gradle heap |
 | Network | CloudFront over HTTPS, dual-stack, so IPv6-only mobile networks work |
 | Updates | in-app release check against the published APK; `publish-android.yml` refuses a code at or below the live one |
@@ -441,6 +441,7 @@ One release per platform at a time: everything is batched, checked once and depl
 | 0.0.16 | 9 Nov 2026 | 41 | the questionnaire opens again on Android: the sessions screen asked for a battery-prompt label the app did not hold, so Take interview and Questionnaires closed the app on every phone and tablet that had not answered the prompt; the label is there, a release build shows words instead of stopping for any missing label, and a check reads every label a questionnaire screen asks for; the new-session and edit-session place is searched on MapTiler, filled in and pinned, with Pick on map, on web and Android in both portals, saved with the session and pre-filled when it is edited; Android Data gives a details.txt or any text file the whole row on a tablet, so its Save and three-dot actions sit at the card's end with a full touch target. No migration |
 | 0.0.1 | 9 Nov 2026 | 42 | the version line restarts at 0.0.1 (after 0.0.16; the earlier 0.0.17 branch was never released and is folded in), with versionCodes still rising (DR 42, FR 37) so every phone updates. Questionnaires: opening any form from Forms no longer closes the app (the form view no longer nests its own scroll inside the Forms tab); the sessions home fills the screen with one scroll, so New session and New form sit above the navigation; the filter sheet no longer jitters when swiped; a session's place uses the artisan record's location card, Captured at included, filled from this device on a new session and pre-filled on edit; the artisan picker lists the chosen workshop's or design workshop's artisans first, with Show from all records; a session carries its crafts, filled from its artisans and editable, shown on the session, its lists and the report (migration `session_crafts`, backfilled); the 4th Craft Toolkit Workshop form is shared with everyone; ticks are the one straight mark everywhere; earlier APKs and server slots are cleared at deploy. Migration `20261213100000_session_crafts` |
 | 0.0.2 | 11 Nov 2026 | 44 | the first Android 0.0.2 publish (code 43) was cut from an earlier commit without the cost, key-term and decoder changes, so code 44 republishes the full release; speech-to-text moves to ElevenLabs Scribe v3 (`scribe_v3`) on every surface, with `scribe_v2` as the retry when a request is refused; spend counts USD 0.25 an hour with key terms and USD 0.20 without, and a request carries up to 1,000 key terms; Android players fall back to another decoder when one fails; earlier transcripts keep their Scribe v2 badge, and Android shows the badge the server names |
+| 0.0.3 | 13 Nov 2026 | 45 | Android recording fixes: an unsaved clip is deleted only when the researcher discards it (leaving the screen used to delete every unsaved clip); a new take finalises the previous one before it starts, one microphone lock across the app, a microphone permission gate and specific start errors; a stale session edit is refetched and retried instead of a bare 409. Server (live 13 Nov): blank optional text is read as nothing and missing names come from the linked records, so the 0.0.2 app's tool saves no longer return 422; recordings no longer bump the session version; the chosen spoken language is sent to Scribe and the state guess is removed |
 
 ## <img src="docs/readme-kit/assets/icons/box.svg" width="32" align="top" alt="">&nbsp; Built with
 
