@@ -28,7 +28,7 @@ import com.designprototype.workshop.questionnaire.ui.HeaderParticipant
 import com.designprototype.workshop.questionnaire.ui.InstrumentQuestion
 import com.designprototype.workshop.questionnaire.ui.InstrumentSection
 import com.designprototype.workshop.questionnaire.ui.OutboxTray
-import com.designprototype.workshop.questionnaire.ui.QuestionBlock
+import com.designprototype.workshop.questionnaire.ui.AnswerEditor
 import com.designprototype.workshop.questionnaire.ui.SessionStartSheet
 import com.designprototype.workshop.questionnaire.ui.TakeRow
 import com.designprototype.workshop.questionnaire.ui.TakeSheet
@@ -78,12 +78,11 @@ class QuestionnaireSessionUiTest {
         val p15 = "Answered by Nandini. Only they or a lead can change it."
         compose.setContent {
             MaterialTheme {
-                QuestionBlock(
-                    question = question, roster = listOf(HeaderParticipant("a1", "Giriraj", true)), known = emptyList(), overlay = emptyList(),
-                    typed = setOf("a1" to "lin1"), locked = false, typeAnswers = true,
+                AnswerEditor(
+                    question = question, roster = listOf(HeaderParticipant("a1", "Giriraj", true)),
                     answerLines = listOf(AnswerLine("a1", "Teak", null, onPhone = false, lockedLine = p15, answerId = "ans1")),
                     currentText = { "Teak" }, lockedFor = { p15 }, nameOf = { "Giriraj" },
-                    onRecord = {}, onOpenTakes = {}, onSaveAnswer = { _, _, _, _ -> }, onHistory = {}
+                    onCancel = {}, onSaveAnswer = { _, _, _, _ -> }, onHistory = {}
                 )
             }
         }
@@ -98,11 +97,10 @@ class QuestionnaireSessionUiTest {
         var saved: String? = null
         compose.setContent {
             MaterialTheme {
-                QuestionBlock(
-                    question = question, roster = listOf(HeaderParticipant("a1", "Giriraj", true)), known = emptyList(), overlay = emptyList(),
-                    typed = emptySet(), locked = false, typeAnswers = true, answerLines = emptyList(),
+                AnswerEditor(
+                    question = question, roster = listOf(HeaderParticipant("a1", "Giriraj", true)), answerLines = emptyList(),
                     currentText = { "" }, lockedFor = { null }, nameOf = { "Giriraj" },
-                    onRecord = {}, onOpenTakes = {}, onSaveAnswer = { text, _, _, _ -> saved = text }, onHistory = {}
+                    onCancel = {}, onSaveAnswer = { text, _, _, _ -> saved = text }, onHistory = {}
                 )
             }
         }
