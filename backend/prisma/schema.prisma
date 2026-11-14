@@ -2207,6 +2207,7 @@ model QuestionnaireInterview {
   version         Int            @default(1)
   pendingChangesAt DateTime?
   source          SessionSource  @default(APP)
+  recordBy        RecordBy       @default(SECTION)
 
   createdBy User                             @relation("QuestionnaireCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
   location  Location?                        @relation(fields: [locationId], references: [id], onDelete: SetNull)
@@ -8181,6 +8182,11 @@ enum SessionSource {
   APP
   UPLOAD
   HANDOFF
+}
+
+enum RecordBy {
+  SECTION
+  QUESTION
 }
 
 /// QUESTIONNAIRE V2 (M1). Who was there on the research side. The creator and anyone who joins are
