@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 import { answerItems, answerLocked, sessionSubjects } from "@/components/questionnaire/AnswerBox";
 import { cellMark } from "@/components/questionnaire/CoverageGrid";
 import { requiredUnanswered } from "@/components/questionnaire/instrumentQuestions";
-import { formOptions, sessionCreateBody, startBlocked } from "@/components/questionnaire/SessionStartSheet";
+import { formOptions, sessionCreateBody, startBlocked, withGuest } from "@/components/questionnaire/SessionStartSheet";
 import { canOfferAnswers } from "@/components/questionnaire/TakeSheet";
 import { withRequired } from "@/components/questionnaire/SessionWorkspace";
 import { recordClockOffset, clockOffset } from "@/lib/api";
@@ -149,14 +149,14 @@ test("coverage marks: ● recorded, ✎ typed with Add a recording?, and the thr
   }
 });
 
-test("the start sheet: Someone else needs a name, sends a guest and no artisans, filed under a design workshop", () => {
+test("@qf:Q1 the start sheet: Someone else needs a name, sends a guest and no artisans, filed under a design workshop", () => {
   const base = {
     workshopId: "dw1",
     questionnaireId: "q1",
     sessionDate: "2026-10-22",
-    mode: "GUEST" as const,
-    guestName: "",
-    artisanIds: ["a1"],
+    mode: "INDIVIDUAL" as const,
+    artisanIds: [] as string[],
+    guests: [],
     purpose: "FIRST_SITTING" as const,
     place: "",
     languageCode: "",
@@ -164,11 +164,15 @@ test("the start sheet: Someone else needs a name, sends a guest and no artisans,
     note: ""
   };
   expect(startBlocked(base)).toBe(true);
-  expect(startBlocked({ ...base, guestName: "Shopper at Johari Bazaar" })).toBe(false);
-  const body = sessionCreateBody({ ...base, guestName: " Shopper at Johari Bazaar " }, "ck1", new Date("2026-10-22T05:00:00Z"));
-  expect(body).toMatchObject({ clientKey: "ck1", designWorkshopId: "dw1", workshopId: null, participants: [], respondents: [{ name: "Shopper at Johari Bazaar", kind: "GUEST" }] });
+  const guest = { localId: "g1", name: " Shopper at Johari Bazaar ", kind: "GUEST" as const, notes: "" };
+  expect(startBlocked({ ...base, guests: [{ ...guest, name: " " }] })).toBe(true);
+  const withShopper = withGuest({ ...base, artisanIds: ["a1"] }, guest);
+  expect(withShopper.artisanIds).toEqual([]);
+  expect(startBlocked(withShopper)).toBe(false);
+  const body = sessionCreateBody(withShopper, "ck1", new Date("2026-10-22T05:00:00Z"));
+  expect(body).toMatchObject({ clientKey: "ck1", designWorkshopId: "dw1", workshopId: null, participants: [], respondents: [{ name: "Shopper at Johari Bazaar", kind: "GUEST" }], recordBy: "SECTION" });
   expect(body).not.toHaveProperty("title");
-  expect(sessionCreateBody({ ...base, mode: "INDIVIDUAL" }, "ck2").participants).toEqual([{ artisanId: "a1" }]);
+  expect(sessionCreateBody({ ...base, artisanIds: ["a1"], recordBy: "QUESTION" }, "ck2")).toMatchObject({ participants: [{ artisanId: "a1" }], respondents: [], recordBy: "QUESTION" });
   expect(workshopScope(null)).toEqual({ workshopId: null, designWorkshopId: null });
 });
 

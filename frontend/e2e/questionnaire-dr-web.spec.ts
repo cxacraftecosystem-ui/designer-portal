@@ -13,14 +13,21 @@ async function open(page: Page, fake: QuestionnaireFake, path: string) {
 
 test.describe.configure({ mode: "serial" });
 
-test("@qf:B28 @qf:A14 the sessions list shows guests, and a content admin restores a deleted session", async ({ page }) => {
+test("@qf:B28 @qf:A14 @qf:Q7 the sessions list names artisans and guests, counts by status, and a content admin restores a deleted session", async ({ page }) => {
   const fake = new QuestionnaireFake();
   await open(page, fake, "/questionnaire");
   const list = page.locator("[data-sessions-list]");
-  await expect(list).toContainText("Interview_2026-10-22_Bagru-Jaipur_Hand-Block-Printing_s-1");
-  await expect(list.locator("[data-guest-chip]")).toContainText("Shopper at Johari Bazaar · Guest");
+  await expect(list.locator("[data-session-row='s-1']")).toContainText("Giriraj Prasad Chhipa and Shopper at Johari Bazaar");
+  await expect(page.locator("[data-session-status='ALL']")).toHaveText("All 2");
+  await expect(page.locator("[data-session-status='OPEN']")).toHaveText("Open 2");
+  await expect(page.locator("[data-session-status='FINISHED']")).toHaveText("Finished 0");
+  await page.locator("[data-session-status='FINISHED']").click();
+  await expect(list).toHaveCount(0);
+  await page.locator("[data-session-status='ALL']").click();
+  await expect(list.locator("[data-session-row]")).toHaveCount(2);
+  await page.locator("[data-sessions-more]").click();
   await page.locator("[data-deleted-toggle]").click();
-  await expect(list).toContainText("Interview_2026-10-20_Bagru_Deleted");
+  await expect(list.locator("[data-session-row='s-gone']")).toBeVisible();
   await page.locator("[data-restore-session='s-gone']").click();
   await expect.poll(() => fake.calledWith("POST", "/questionnaire/sessions/s-gone/restore").length).toBe(1);
 });
@@ -40,13 +47,17 @@ test("@qf:A18 @qf:A8 @qf:B1 @qf:B3 @qf:B30 @qf:B31 @qf:D2 @qf:D3 @qf:B38 a sessi
   await sheet.locator("[data-searchable-select]").nth(1).click();
   await expect(page.getByText("This workshop’s forms · Workshop interview")).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(sheet.getByRole("group", { name: "Mode" }).getByRole("button")).toHaveText(["Individual", "Group"]);
   await sheet.getByRole("button", { name: "Someone else" }).click();
-  await sheet.locator("[data-guest-name]").fill("Shopper at Johari Bazaar");
+  await page.getByRole("dialog").locator("[data-guest-name]").fill("Shopper at Johari Bazaar");
+  await page.getByRole("dialog").locator("[data-guest-save]").click();
+  await expect(sheet.locator("[data-start-guest='GUEST']")).toContainText("Shopper at Johari Bazaar");
+  await sheet.getByRole("group", { name: "Record by" }).getByRole("button", { name: "Question" }).click();
   await expect(sheet.locator("[data-title-preview]")).toContainText("Bagru");
   await sheet.getByRole("button", { name: "Start session" }).click();
   await expect.poll(() => fake.calledWith("POST", "/questionnaire/sessions").length, { timeout: 15_000 }).toBe(1);
   const body = fake.calledWith("POST", "/questionnaire/sessions")[0].body as Record<string, unknown>;
-  expect(body).toMatchObject({ questionnaireId: "f1", designWorkshopId: "dw1", participants: [], respondents: [{ name: "Shopper at Johari Bazaar", kind: "GUEST" }] });
+  expect(body).toMatchObject({ questionnaireId: "f1", designWorkshopId: "dw1", participants: [], respondents: [{ name: "Shopper at Johari Bazaar", kind: "GUEST" }], recordBy: "QUESTION" });
   expect(body).not.toHaveProperty("title");
   await expect(page).toHaveURL(/\/questionnaire\/sessions\/s-new/, { timeout: 15_000 });
 });
@@ -603,11 +614,11 @@ test("@qf:E3 @qf:E6 the sessions list searches and filters on the server and kee
   const fake = new QuestionnaireFake();
   await open(page, fake, "/questionnaire");
   const list = page.locator("[data-sessions-list]");
-  await expect(list).toContainText("Second-Sitting");
+  await expect(list.locator("[data-session-row='s-2']")).toBeVisible();
   await page.locator("[data-filter-bar]").getByRole("searchbox").fill("Second");
   await expect.poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("q") === "Second")).toBe(true);
   await expect(page).toHaveURL(/[?&]q=Second/);
-  await expect(list).not.toContainText("Hand-Block-Printing_s-1");
+  await expect(list.locator("[data-session-row='s-1']")).toHaveCount(0);
   await page.locator("[data-filters-toggle]").click();
   await page.locator("[data-filter-pill='source=UPLOAD']").click();
   await expect.poll(() => fake.calledWith("GET", "/questionnaire/sessions").some((c) => c.query.get("source") === "UPLOAD")).toBe(true);
@@ -628,6 +639,7 @@ test("@qf:E3 @qf:E6 the sessions list searches and filters on the server and kee
 test("@qf:E1 @qf:E2 @qf:E5 @qf:E6 the recordings list shows each take's chips, a tap filters by one, and Back keeps it", async ({ page }) => {
   const fake = new QuestionnaireFake();
   await open(page, fake, "/questionnaire");
+  await page.locator("[data-sessions-more]").click();
   await page.locator("[data-recordings-link]").click();
   await expect(page).toHaveURL(/\/questionnaire\/recordings$/);
   const row = page.locator("[data-recording-row='rec-1']");
