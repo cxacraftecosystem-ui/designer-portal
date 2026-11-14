@@ -34,6 +34,7 @@ import com.designprototype.workshop.questionnaire.ui.QuestionStatus
 import com.designprototype.workshop.questionnaire.ui.ScrollOpenSectionToTop
 import com.designprototype.workshop.questionnaire.ui.SectionCard
 import com.designprototype.workshop.questionnaire.ui.SectionStatus
+import com.designprototype.workshop.questionnaire.ui.accordionTail
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -79,6 +80,7 @@ class AccordionScrollUiTest {
                             }
                         }
                     }
+                    accordionTail(list, opened != null)
                 }
             }
         }
