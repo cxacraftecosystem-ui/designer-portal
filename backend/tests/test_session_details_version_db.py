@@ -108,3 +108,51 @@ def test_a_stale_edit_whose_every_field_already_matches_is_applied(monkeypatch: 
         assert again["version"] == first["version"] + 1
 
     _world(monkeypatch, body)
+
+
+def test_record_by_follows_the_session_and_a_stale_switch_is_refused_only_on_record_by(monkeypatch: pytest.MonkeyPatch, v2_on) -> None:
+    from app.questionnaire import schemas as S, sessions
+
+    async def body(client, ids, session, create) -> None:
+        lead = _user(ids["lead"])
+        loaded = session["version"]
+        assert session["recordBy"] == "SECTION"
+        noted = await sessions.patch_session(session["id"], S.SessionPatch(version=loaded, note="Second visit"), lead)
+        switched = await sessions.patch_session(session["id"], S.SessionPatch(version=loaded, recordBy="QUESTION"), lead)
+        assert switched["recordBy"] == "QUESTION" and switched["note"] == "Second visit"
+        assert switched["version"] == noted["version"] + 1
+        with pytest.raises(HTTPException) as stale:
+            await sessions.patch_session(session["id"], S.SessionPatch(version=loaded, recordBy="SECTION"), lead)
+        assert stale.value.detail["code"] == "STALE_VERSION"
+        assert stale.value.detail["diff"] == {"recordBy": {"current": "QUESTION", "yours": "SECTION"}}
+        by_question, created = await sessions.create_session(
+            create.model_copy(update={"clientKey": f"{create.clientKey}q", "recordBy": "QUESTION"}), lead
+        )
+        assert created and by_question["recordBy"] == "QUESTION"
+
+    _world(monkeypatch, body)
+
+
+def test_a_guest_typed_answer_counts_once_and_the_review_lists_what_is_left(monkeypatch: pytest.MonkeyPatch, v2_on) -> None:
+    from app.questionnaire import answers, schemas as S, sessions
+
+    async def body(client, ids, session, create) -> None:
+        lead = _user(ids["lead"])
+        guest = session["respondents"][0]["id"]
+        assert session["progress"]["answeredQuestions"] == 0 and session["progress"]["totalQuestions"] == 2
+        lineage = (await client.query_raw('SELECT "lineageId" FROM "QuestionnaireQuestion" WHERE "id" = $1', ids["q1"]))[0]["lineageId"]
+        item = S.AnswerItem(respondentId=guest, questionLineageId=lineage, sessionId=session["id"], text="Block prints sell best")
+        await answers.put_answers(S.AnswersPut(items=[item]), lead)
+        read = await sessions.session_payload(client, session["id"], lead)
+        assert read["progress"]["answeredQuestions"] == 1
+        assert read["progress"]["sections"] == [
+            {"sectionId": ids["sec"], "answeredQuestions": 1, "totalQuestions": 2, "inSectionTake": False}
+        ]
+        assert read["counts"]["answeredQuestions"] == 1 and read["counts"]["totalQuestions"] == 2
+        review = await sessions.review(session["id"], lead)
+        S.SessionReview.model_validate(review)
+        assert (review["answered"], review["total"], review["sectionsDone"], review["pendingUploads"]) == (1, 2, 0, 0)
+        assert [s["sectionId"] for s in review["stillToAsk"]] == [ids["sec"]]
+        assert lineage not in review["stillToAsk"][0]["lineages"] and len(review["stillToAsk"][0]["lineages"]) == 1
+
+    _world(monkeypatch, body)
