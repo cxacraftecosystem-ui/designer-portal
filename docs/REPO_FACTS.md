@@ -184,7 +184,7 @@ and this one asserted an absence it had never looked for.
 |---|---|---|---|---|
 | `backend/app` | 476 | 160,566 | 476 | 160,566 |
 | `frontend/app` | 140 | 36,936 | 140 | 36,936 |
-| `frontend/components` | 507 | 114,844 | 507 | 114,844 |
+| `frontend/components` | 507 | 114,848 | 507 | 114,848 |
 | `frontend/lib` | 275 | 63,348 | 275 | 63,348 |
 | `android/app/src/main/java` | 541 | 184,000 | 541 | 184,000 |
 
