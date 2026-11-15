@@ -185,8 +185,8 @@ and this one asserted an absence it had never looked for.
 | `backend/app` | 475 | 160,021 | 475 | 160,021 |
 | `frontend/app` | 140 | 36,885 | 140 | 36,885 |
 | `frontend/components` | 505 | 114,249 | 505 | 114,249 |
-| `frontend/lib` | 273 | 63,073 | 273 | 63,073 |
-| `android/app/src/main/java` | 539 | 183,525 | 539 | 183,525 |
+| `frontend/lib` | 273 | 63,074 | 273 | 63,074 |
+| `android/app/src/main/java` | 539 | 183,527 | 539 | 183,527 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is
