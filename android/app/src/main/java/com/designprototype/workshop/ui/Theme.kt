@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -494,9 +495,10 @@ fun DesignWorkshopTheme(
         MaterialTheme(
             colorScheme = colorScheme,
             typography = FieldTypography,
-            shapes = FieldShapes,
-            content = content
-        )
+            shapes = FieldShapes
+        ) {
+            CompositionLocalProvider(LocalContentColor provides colorScheme.onBackground, content = content)
+        }
     }
 }
 
