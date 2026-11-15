@@ -266,3 +266,38 @@ def test_legacy_answers_resend_unchanged_and_workshop_edit_may_change_them(monke
             await client.disconnect()
 
     asyncio.run(go())
+
+
+def test_workshop_edit_overrides_another_researchers_v2_answer_and_contribute_does_not(monkeypatch) -> None:
+    from app.api.routes import questionnaire
+    from app.questionnaire import answers, sessions
+    from app.questionnaire.schemas import AnswersPut
+
+    _v2(monkeypatch, True)
+
+    async def go() -> None:
+        client = await _connect(monkeypatch)
+        try:
+            ids, session = await _admins_interview(client)
+            a0 = ids.artisans[0]
+            lineage = ids.lineages[ids.questions[1]]
+            await answers.put_answers(AnswersPut.model_validate({"items": [
+                {"artisanId": a0, "questionLineageId": lineage, "text": "Teak", "sessionId": session["id"]}]}), ids.admin)
+            await _grant(client, ids, "CONTRIBUTE")
+            assert (await sessions.session_payload(client, session["id"], ids.other))["mayOverrideAnswers"] is False
+            await client.execute_raw('UPDATE "WorkshopAssignment" SET "accessLevel" = \'EDIT\' WHERE "userId" = $1', ids.other.id)
+            assert (await sessions.session_payload(client, session["id"], ids.other))["mayOverrideAnswers"] is True
+            current = await answers.current_answer(client, a0, lineage)
+            out = await answers.put_answers(AnswersPut.model_validate({"items": [
+                {"artisanId": a0, "questionLineageId": lineage, "text": "Rosewood", "sessionId": session["id"],
+                 "baseVersion": int(current["version"])}]}), ids.other)
+            assert out["results"][0]["status"] not in ("FORBIDDEN", "CONFLICT")
+            assert (await answers.current_answer(client, a0, lineage))["text"] == "Rosewood"
+            await questionnaire.update_interview(
+                session["id"], _update({"responses": [{"questionId": ids.questions[1], "answerText": "Sheesham"}]}), ids.other
+            )
+            assert (await answers.current_answer(client, a0, lineage))["text"] == "Sheesham"
+        finally:
+            await client.disconnect()
+
+    asyncio.run(go())

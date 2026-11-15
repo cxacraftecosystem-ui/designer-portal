@@ -936,16 +936,19 @@ export function ProcessForm({
                 <span className="text-sm font-semibold text-ink-900">
                   Step {index + 1} · {stepTypeLabel(step.stepType)}
                 </span>
-                <button
-                  type="button"
-                  className="text-sm font-semibold text-error-600"
-                  onClick={() => setSteps((current) => current.filter((s) => s.key !== step.key))}
-                >
-                  Remove
-                </button>
+                {fillsOnly(initial) && step.serverId ? null : (
+                  <button
+                    type="button"
+                    className="text-sm font-semibold text-error-600"
+                    onClick={() => setSteps((current) => current.filter((s) => s.key !== step.key))}
+                  >
+                    Remove
+                  </button>
+                )}
               </div>
               <div>
                 <DictatedTextInput
+                  disabled={fillsOnly(initial) && Boolean(step.serverId)}
                   id={`step-name-${step.key}`}
                   label="Name of the step"
                   required
@@ -959,6 +962,9 @@ export function ProcessForm({
                   <p id={`step-name-${step.key}-error`} className="mt-1 text-xs text-error-600">
                     {step.nameError}
                   </p>
+                ) : null}
+                {fillsOnly(initial) && step.serverId ? (
+                  <p data-testid="step-locked" className="mt-1 text-xs text-ink-500">{FILLED_FIELD_REASON}</p>
                 ) : null}
               </div>
               <SavedMediaList

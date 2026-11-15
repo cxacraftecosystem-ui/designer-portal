@@ -121,6 +121,7 @@ export type LocationPayload = {
 };
 
 export type Craft = {
+  editAccess?: EditAccess | null;
   id: string;
   name: string;
   localName?: string | null;
@@ -208,6 +209,7 @@ export const WORKSHOP_TYPE_LABELS: Record<WorkshopType, string> = {
 };
 
 export type Workshop = {
+  editAccess?: EditAccess | null;
   completeness?: CompletenessBlock | null;
   id: string;
   title: string;

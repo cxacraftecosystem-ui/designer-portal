@@ -41,7 +41,7 @@ import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, inferMediaType, uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { artisanBody, PEHCHAN_NO } from "@/lib/recordPayloads";
-import { FILL_EMPTY_NOTE, fillsOnly, isBlankValue, KEPT_AFTER_REFUSAL, VIEW_ONLY_NOTE, viewOnly, lockFilledFields, FILLED_FIELD_REASON } from "@/lib/recordDiff";
+import { FILL_EMPTY_NOTE, fillsOnly, isBlankValue, KEPT_AFTER_REFUSAL, VIEW_ONLY_NOTE, viewOnly, lockFilledFields, FILLED_FIELD_REASON, keepFilledFields } from "@/lib/recordDiff";
 import {
   acknowledgedIds,
   checkDuplicates,
@@ -462,7 +462,7 @@ export function ArtisanForm({
 
   function takeRefreshedArtisan(artisan: Artisan | null, changed: string[]) {
     if (!artisan) return;
-    const values = prefillFromRefreshedArtisan(artisan, changed);
+    const values = keepFilledFields(prefillFromRefreshedArtisan(artisan, changed), initial);
     if (values.name) setName(values.name);
     if (values.localName) setLocalName(values.localName);
     if (values.dateOfBirth) setDateOfBirth(values.dateOfBirth);

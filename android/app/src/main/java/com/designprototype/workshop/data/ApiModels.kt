@@ -204,6 +204,7 @@ data class CraftDto(
     val giStatus: String? = null,
     val isCatchAll: Boolean = false,
     val status: String? = null,
+    val editAccess: String? = null,
 )
 
 fun catalogueCraftDto(craft: CatalogueCraft): CraftDto = CraftDto(
@@ -1187,6 +1188,7 @@ data class WorkshopDetailDto(
     val createdBy: UserDto? = null,
     val extraMetadata: JsonObject? = null,
     val updatedAt: String? = null,
+    val editAccess: String? = null,
 )
 
 @Serializable

@@ -16,12 +16,14 @@ from app.core.db import db
 from app.core.deps import (
     get_current_user,
     get_value,
+    is_empty_value,
     require_record_creator,
 )
 from app.services import (
     artisan_card,
     artisan_card_store as card_store,
     cross_portal,
+    workshop_access,
 )
 from app.services.aadhaar import records as aadhaar_records
 from app.services.access import guard_record_edit, record_edit_privilege
@@ -477,7 +479,12 @@ async def refresh_artisan(
     link = await db.crossportalartisanlink.find_unique(where={"artisanId": artisan_id})
     if link is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This artisan isn't linked.")
-    await _assert_may_edit(artisan, current_user)
+    privileged = await record_edit_privilege(artisan, current_user, "artisan")
+    if privileged:
+        await _assert_may_edit(artisan, current_user)
+    else:
+        await assert_may_write_a_record_filed_under(getattr(artisan, "designWorkshopId", None), current_user)
+        await workshop_access.assert_workshop_access(current_user, getattr(artisan, "workshopId", None), "CONTRIBUTE")
     if link.remoteAcknowledgedAt is None:
         code, answer = await _tell_peer_about_link(
             settings, artisan_id, link.remoteArtisanId, link.matchedBy, current_user
@@ -537,6 +544,8 @@ async def refresh_artisan(
         if key == "name" and not value:
             continue
         current = getattr(artisan, key, None)
+        if not privileged and not is_empty_value(current):
+            continue
         if value != current:
             data[key] = value
     changed = sorted(k for k in data if k in cross_portal.IDENTITY_FIELDS)
