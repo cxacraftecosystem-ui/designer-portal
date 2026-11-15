@@ -282,6 +282,8 @@ async def test_a_stranger_cannot_record_an_artisans_consent(monkeypatch, ledger_
     monkeypatch.setattr(routes, "require_record", required)
     monkeypatch.setattr(routes, "assert_may_write_a_record_filed_under", nothing)
     monkeypatch.setattr(deps, "may_edit_lower_ranked_record", not_above)
+    monkeypatch.setattr("app.services.access.effective_tier_for_record", nothing)
+    monkeypatch.setattr("app.services.workshop_access.workshop_edit_privilege", not_above)
     with pytest.raises(HTTPException) as exc:
         await routes.record_artisan_consent("a1", routes.ArtisanConsentIn(state="GRANTED"), USER)
     assert exc.value.status_code == 403
