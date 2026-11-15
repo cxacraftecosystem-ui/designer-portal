@@ -123,6 +123,7 @@ export type WorkshopPickerState = {
   touched: boolean;
   setWorkshopId: (workshopId: string) => void;
   confirmSubmission: () => Promise<boolean>;
+  recheck: () => void;
   view: {
     types: readonly WorkshopTypeOption[];
     typesServed: boolean;
@@ -212,6 +213,7 @@ export function useWorkshopPicker({
     touched: field.touched || design.touched || chosenTypeKey !== null,
     setWorkshopId,
     confirmSubmission,
+    recheck: () => void field.recheck(),
     view: { types, typesServed: served !== null, setTypeKey, field, design, designInitial }
   };
 }

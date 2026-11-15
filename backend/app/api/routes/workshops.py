@@ -10,6 +10,7 @@ from app.core.deps import (
     get_current_user,
     get_value,
     has_rank,
+    removes_links,
     require_admin,
     require_content_admin,
     require_workshop_manager,
@@ -500,13 +501,25 @@ async def decide_workshop_access_request(
     return await _hydrate_assignment(row.id)
 
 
+async def _with_workshop_edit_access(payload: Any, workshop: Any, user: Any) -> Any:
+    from app.core.deps import can_manage_workshops
+    from app.services.access import record_edit_access
+
+    if isinstance(payload, dict):
+        payload["editAccess"] = (
+            await record_edit_access(workshop, user, "workshop") if can_manage_workshops(user) else "NONE"
+        )
+    return payload
+
+
 @router.get("/{workshop_id}")
 async def get_workshop(
     workshop_id: str, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
     workshop = await require_record(db.workshop, workshop_id)
     await hydrate_relations([workshop], RELATIONS)
-    return await attach_completeness("workshop", public_encode(workshop))
+    payload = await attach_completeness("workshop", public_encode(workshop))
+    return await _with_workshop_edit_access(payload, workshop, current_user)
 
 
 @router.patch("/{workshop_id}")
@@ -544,15 +557,23 @@ async def update_workshop(
         resubmit_status(workshop, current_user, data)
         updated = await tx.workshop.update(where={"id": workshop_id}, data=data)
         if artisan_ids is not None:
-            link_count = await tx.workshopartisan.count(where={"workshopId": workshop_id})
             if not privileged:
-                assert_can_contribute_relation(workshop, current_user, link_count > 0, "artisanIds")
+                linked = await tx.workshopartisan.find_many(where={"workshopId": workshop_id})
+                assert_can_contribute_relation(
+                    workshop,
+                    current_user,
+                    removes_links([row.artisanId for row in linked], artisan_ids),
+                    "artisanIds",
+                )
             await replace_workshop_artisans(workshop_id, artisan_ids, client=tx)
         if craft_ids is not None:
-            craft_link_count = await tx.workshopcraft.count(where={"workshopId": workshop_id})
             if not privileged:
+                linked = await tx.workshopcraft.find_many(where={"workshopId": workshop_id})
                 assert_can_contribute_relation(
-                    workshop, current_user, craft_link_count > 0, "craftIds"
+                    workshop,
+                    current_user,
+                    removes_links([row.craftId for row in linked], craft_ids),
+                    "craftIds",
                 )
             await replace_workshop_crafts(workshop_id, craft_ids, client=tx)
     await hydrate_relations([updated], RELATIONS)

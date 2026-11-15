@@ -473,13 +473,12 @@ def test_the_404_leaves_no_row_and_no_link_behind(monkeypatch):
 
 
 def test_a_non_owner_may_only_link_artisans_they_created(monkeypatch):
-    from app.api.routes import tools
 
     async def _no_tier(*_args, **_kwargs):
         return "VIEW"
 
-    monkeypatch.setattr(tools, "effective_tier_for_record", _no_tier)
-    monkeypatch.setattr(tools, "is_content_admin", lambda _user: False)
+    monkeypatch.setattr("app.services.access.effective_tier_for_record", _no_tier)
+    monkeypatch.setattr("app.core.deps.is_content_admin", lambda _user: False)
 
     with pytest.raises(HTTPException) as excinfo:
         _drive_patch(
@@ -778,7 +777,7 @@ def test_an_empty_list_from_a_non_owner_is_refused_and_deletes_nothing(monkeypat
             guard=_unprivileged,
         )
     assert excinfo.value.status_code == 403
-    assert "craftIds" in excinfo.value.detail
+    assert "crafts" in excinfo.value.detail
 
 
 def test_the_refused_wipe_leaves_the_link_rows_where_they_were(monkeypatch):
@@ -816,7 +815,7 @@ def test_the_second_door_on_the_craft_half_is_shut_too(monkeypatch):
             guard=_unprivileged,
         )
     assert excinfo.value.status_code == 403
-    assert "craftIds" in excinfo.value.detail
+    assert "crafts" in excinfo.value.detail
 
 
 def test_a_non_owner_restating_the_stored_selection_is_not_refused(monkeypatch):
@@ -874,7 +873,7 @@ def test_a_populated_craft_name_over_an_empty_join_is_a_populated_relation(monke
             guard=_unprivileged,
         )
     assert excinfo.value.status_code == 403
-    assert "craftIds" in excinfo.value.detail
+    assert "crafts" in excinfo.value.detail
 
 
 def test_the_refused_craft_rewrite_leaves_the_name_column_alone(monkeypatch):
@@ -915,7 +914,6 @@ def test_an_empty_craft_name_over_an_empty_join_is_still_an_empty_relation(monke
 
 
 def test_a_populated_artisan_name_does_not_lock_the_artisan_relation(monkeypatch):
-    from app.api.routes import tools
 
     async def _no_tier(*_args, **_kwargs):
         return "VIEW"
@@ -923,9 +921,9 @@ def test_a_populated_artisan_name_does_not_lock_the_artisan_relation(monkeypatch
     async def _no_rank(*_args, **_kwargs):
         return False
 
-    monkeypatch.setattr(tools, "effective_tier_for_record", _no_tier)
-    monkeypatch.setattr(tools, "may_edit_lower_ranked_record", _no_rank)
-    monkeypatch.setattr(tools, "is_content_admin", lambda _user: False)
+    monkeypatch.setattr("app.services.access.effective_tier_for_record", _no_tier)
+    monkeypatch.setattr("app.core.deps.may_edit_lower_ranked_record", _no_rank)
+    monkeypatch.setattr("app.core.deps.is_content_admin", lambda _user: False)
 
     client, _data = _drive_patch(
         monkeypatch,
@@ -1055,7 +1053,7 @@ def test_the_derived_name_is_withheld_from_the_contributor_guard_and_from_nothin
     with pytest.raises(HTTPException) as excinfo:
         asyncio.run(access.guard_record_edit(tool, _editor(), dict(body), "tool"))
     assert excinfo.value.status_code == 403
-    assert "craftName" in excinfo.value.detail
+    assert "craft name" in excinfo.value.detail
 
     privileged = asyncio.run(
         access.guard_record_edit(tool, _editor(), dict(body), "tool", derived={"craftName"})
@@ -1066,7 +1064,6 @@ def test_the_derived_name_is_withheld_from_the_contributor_guard_and_from_nothin
 
 
 def test_a_non_owner_may_resave_a_tool_linked_to_somebody_elses_artisan(monkeypatch):
-    from app.api.routes import tools
 
     async def _no_tier(*_args, **_kwargs):
         return "VIEW"
@@ -1074,9 +1071,9 @@ def test_a_non_owner_may_resave_a_tool_linked_to_somebody_elses_artisan(monkeypa
     async def _no_rank(*_args, **_kwargs):
         return False
 
-    monkeypatch.setattr(tools, "effective_tier_for_record", _no_tier)
-    monkeypatch.setattr(tools, "may_edit_lower_ranked_record", _no_rank)
-    monkeypatch.setattr(tools, "is_content_admin", lambda _user: False)
+    monkeypatch.setattr("app.services.access.effective_tier_for_record", _no_tier)
+    monkeypatch.setattr("app.core.deps.may_edit_lower_ranked_record", _no_rank)
+    monkeypatch.setattr("app.core.deps.is_content_admin", lambda _user: False)
 
     _client, data = _drive_patch(
         monkeypatch,
@@ -1091,7 +1088,6 @@ def test_a_non_owner_may_resave_a_tool_linked_to_somebody_elses_artisan(monkeypa
 
 
 def test_adding_somebody_elses_artisan_is_still_refused(monkeypatch):
-    from app.api.routes import tools
 
     async def _no_tier(*_args, **_kwargs):
         return "VIEW"
@@ -1099,9 +1095,9 @@ def test_adding_somebody_elses_artisan_is_still_refused(monkeypatch):
     async def _no_rank(*_args, **_kwargs):
         return False
 
-    monkeypatch.setattr(tools, "effective_tier_for_record", _no_tier)
-    monkeypatch.setattr(tools, "may_edit_lower_ranked_record", _no_rank)
-    monkeypatch.setattr(tools, "is_content_admin", lambda _user: False)
+    monkeypatch.setattr("app.services.access.effective_tier_for_record", _no_tier)
+    monkeypatch.setattr("app.core.deps.may_edit_lower_ranked_record", _no_rank)
+    monkeypatch.setattr("app.core.deps.is_content_admin", lambda _user: False)
 
     with pytest.raises(HTTPException) as excinfo:
         _drive_patch(
@@ -1121,7 +1117,6 @@ def test_adding_somebody_elses_artisan_is_still_refused(monkeypatch):
 
 
 def test_an_id_that_names_no_visible_artisan_is_a_404_even_when_it_is_already_linked(monkeypatch):
-    from app.api.routes import tools
 
     async def _no_tier(*_args, **_kwargs):
         return "VIEW"
@@ -1129,9 +1124,9 @@ def test_an_id_that_names_no_visible_artisan_is_a_404_even_when_it_is_already_li
     async def _no_rank(*_args, **_kwargs):
         return False
 
-    monkeypatch.setattr(tools, "effective_tier_for_record", _no_tier)
-    monkeypatch.setattr(tools, "may_edit_lower_ranked_record", _no_rank)
-    monkeypatch.setattr(tools, "is_content_admin", lambda _user: False)
+    monkeypatch.setattr("app.services.access.effective_tier_for_record", _no_tier)
+    monkeypatch.setattr("app.core.deps.may_edit_lower_ranked_record", _no_rank)
+    monkeypatch.setattr("app.core.deps.is_content_admin", lambda _user: False)
 
     with pytest.raises(HTTPException) as excinfo:
         _drive_patch(
@@ -1169,9 +1164,9 @@ def test_the_link_manager_gate_grants_an_outranking_professor(monkeypatch):
     async def _never(*_args, **_kwargs):
         raise AssertionError("the grant lookup must not be reached once the rank clause answers yes")
 
-    monkeypatch.setattr(tools, "may_edit_lower_ranked_record", _outranks)
-    monkeypatch.setattr(tools, "effective_tier_for_record", _never)
-    monkeypatch.setattr(tools, "is_content_admin", lambda _user: False)
+    monkeypatch.setattr("app.core.deps.may_edit_lower_ranked_record", _outranks)
+    monkeypatch.setattr("app.services.access.effective_tier_for_record", _never)
+    monkeypatch.setattr("app.core.deps.is_content_admin", lambda _user: False)
 
     allowed = asyncio.run(
         tools._may_manage_tool_links(

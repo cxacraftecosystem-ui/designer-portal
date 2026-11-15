@@ -830,33 +830,10 @@ fun isIdempotencyInProgress(error: retrofit2.HttpException): Boolean =
 data class CorrectionBase(val changedKeys: Set<String>, val baseUpdatedAt: String?)
 
 fun correctionChangedKeys(request: JsonObject, record: JsonObject): Set<String> =
-    request.keys.filterTo(LinkedHashSet()) { key ->
-        val mine = request[key]
-        if (key !in record) return@filterTo !isBlankJson(mine)
-        !sameJson(mine, record[key])
-    }
-
-private fun isBlankJson(value: kotlinx.serialization.json.JsonElement?): Boolean = when (value) {
-    null, kotlinx.serialization.json.JsonNull -> true
-    is JsonPrimitive -> value.isString && value.content.isBlank()
-    is kotlinx.serialization.json.JsonArray -> value.isEmpty()
-    else -> false
-}
-
-private fun sameJson(a: kotlinx.serialization.json.JsonElement?, b: kotlinx.serialization.json.JsonElement?): Boolean {
-    if (isBlankJson(a) && isBlankJson(b)) return true
-    if (a is JsonPrimitive && b is JsonPrimitive) {
-        if (a.isString != b.isString) {
-            return a.content.toDoubleOrNull()?.let { it == b.content.toDoubleOrNull() } ?: (a.content == b.content)
-        }
-        if (!a.isString) return a.content.toDoubleOrNull()?.let { it == b.content.toDoubleOrNull() } ?: (a.content == b.content)
-        return a.content == b.content
-    }
-    return a == b
-}
+    recordEditChangedKeys(request, record)
 
 fun restrictCorrectionBody(body: JsonObject, changed: Set<String>?, expectedUpdatedAt: String?): JsonObject {
-    val kept = if (changed == null) body else JsonObject(body.filterKeys { it in changed })
+    val kept = restrictEditBody(body, changed)
     if (expectedUpdatedAt.isNullOrBlank()) return kept
     return JsonObject(kept + ("expectedUpdatedAt" to JsonPrimitive(expectedUpdatedAt)))
 }

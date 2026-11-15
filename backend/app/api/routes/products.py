@@ -7,7 +7,7 @@ from app.core.db import db
 from app.core.deps import assert_can_delete, get_current_user, require_record_creator
 from app.schemas.records import ProductCreate, ProductUpdate
 from app.services import craft_master
-from app.services.access import guard_record_edit
+from app.services.access import guard_record_edit, with_edit_access
 from app.services.artisan_merge import redirect_payload
 from app.services.completeness import (
     attach as attach_completeness,
@@ -216,9 +216,14 @@ async def get_product(
 ) -> dict[str, Any]:
     product = await require_record(db.productdocumentation, product_id)
     await hydrate_relations([product], RELATIONS)
-    return await attach_completeness(
+    return await with_edit_access(
+        await attach_completeness(
+            "product",
+            public_encode(product, current_user, media_urls=await media_url_owners(current_user)),
+        ),
+        product,
+        current_user,
         "product",
-        public_encode(product, current_user, media_urls=await media_url_owners(current_user)),
     )
 
 

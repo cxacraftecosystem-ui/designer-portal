@@ -17,6 +17,7 @@ from app.core.deps import (
     get_value,
     is_content_admin,
     is_empty_value,
+    removes_links,
     require_content_admin,
     require_questionnaire_manager,
 )
@@ -33,7 +34,7 @@ from app.schemas.questionnaire import (
     QuestionnaireSectionUpdate,
 )
 from app.services import answer_drafts, cross_portal_codes, csv_safe, naming
-from app.services.access import guard_record_edit, owner_download_scope
+from app.services.access import guard_record_edit, may_change_others_answers, owner_download_scope
 from app.services.artisan_merge import redirect_ids
 from app.services.completeness import (
     attach as attach_completeness,
@@ -317,7 +318,12 @@ def answer_owned_by_other_detail(question_ids: list[str]) -> dict[str, Any]:
 
 
 async def upsert_responses(
-    interview_id: str, responses: list[Any], current_user: Any, *, client: Any = None
+    interview_id: str,
+    responses: list[Any],
+    current_user: Any,
+    *,
+    client: Any = None,
+    privileged: bool = False,
 ) -> None:
     if not responses:
         return
@@ -364,6 +370,7 @@ async def upsert_responses(
         if (
             existing.answerText
             and existing.answeredById != current_user.id
+            and not privileged
             and not is_content_admin(current_user)
         ):
             conflicts.append(response.questionId)
@@ -1095,11 +1102,9 @@ async def update_interview(
     if "workshopId" in data and data.get("workshopId") != interview.workshopId:
         check = await enforce_workshop_submission(current_user, data.get("workshopId"))
     await assert_payload_workshop(data, current_user, filed_under=interview.designWorkshopId)
-    if shims_dr.enabled() and getattr(interview, "clientKey", None):
+    shimmed = bool(shims_dr.enabled() and getattr(interview, "clientKey", None))
+    if shimmed:
         shims_dr.legacy_title_change(data)
-        await shims_dr.patch_global_interview(interview, payload, current_user)
-        payload.artisanIds = None
-        payload.responses = None
     data = await attach_location(data)
     async with db.tx() as tx:
         assert_expected_updated_at(interview, expected_updated_at)
@@ -1117,14 +1122,17 @@ async def update_interview(
             await tx.questionnaireinterview.update(where={"id": interview_id}, data=data)
         after_workshop_id = data.get("workshopId", interview.workshopId)
         after_design_workshop_id = data.get("designWorkshopId", interview.designWorkshopId)
-        if payload.artisanIds is not None:
-            link_count = await tx.questionnaireinterviewartisan.count(
+        if payload.artisanIds is not None and not privileged:
+            linked = await tx.questionnaireinterviewartisan.find_many(
                 where={"interviewId": interview_id}
             )
-            if not privileged:
-                assert_can_contribute_relation(
-                    interview, current_user, link_count > 0, "artisanIds"
-                )
+            assert_can_contribute_relation(
+                interview,
+                current_user,
+                removes_links([row.artisanId for row in linked], payload.artisanIds),
+                "artisanIds",
+            )
+        if payload.artisanIds is not None and not shimmed:
             await replace_interview_artisans(
                 interview_id,
                 payload.artisanIds,
@@ -1142,8 +1150,22 @@ async def update_interview(
                 design_workshop_id=after_design_workshop_id,
                 client=tx,
             )
-        if payload.responses is not None:
-            await upsert_responses(interview_id, payload.responses, current_user, client=tx)
+        if payload.responses is not None and not shimmed:
+            await upsert_responses(
+                interview_id,
+                payload.responses,
+                current_user,
+                client=tx,
+                privileged=await may_change_others_answers(interview, current_user, "questionnaire"),
+            )
+    if shimmed and (payload.artisanIds is not None or payload.responses is not None):
+        await shims_dr.patch_global_interview(interview, payload, current_user)
+        if payload.artisanIds is not None:
+            await resync_interview_set_key(
+                interview_id,
+                workshop_id=after_workshop_id,
+                design_workshop_id=after_design_workshop_id,
+            )
     updated = await db.questionnaireinterview.find_unique(where={"id": interview_id})
     await hydrate_relations([updated], RELATIONS)
     return await attach_completeness(

@@ -21,7 +21,7 @@ from app.services import (
     identity_probe,
 )
 from app.services.aadhaar import records as aadhaar_records
-from app.services.access import guard_record_edit
+from app.services.access import guard_record_edit, with_edit_access
 from app.services.artisan_form_contract import assert_form_contract, take_form_contract
 from app.services.artisan_identity import aadhaar_error, mask_aadhaar, normalize_aadhaar
 from app.services.completeness import (
@@ -475,7 +475,12 @@ async def get_artisan(
             )
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     await hydrate_relations([artisan], RELATIONS)
-    return await attach_completeness("artisan", public_encode(artisan, current_user))
+    return await with_edit_access(
+        await attach_completeness("artisan", public_encode(artisan, current_user)),
+        artisan,
+        current_user,
+        "artisan",
+    )
 
 
 @router.patch("/{artisan_id}")
@@ -694,17 +699,12 @@ async def get_artisan_consent(artisan_id: str, current_user: Any = Depends(get_c
 async def record_artisan_consent(
     artisan_id: str, payload: ArtisanConsentIn, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    from app.core.deps import is_content_admin, may_edit_lower_ranked_record
     from app.services import dictation_consent
+    from app.services.access import record_edit_privilege
 
     artisan = await require_record(db.artisan, artisan_id)
     await assert_may_write_a_record_filed_under(artisan.designWorkshopId, current_user)
-    owner_id = get_value(artisan, "createdById")
-    allowed = (
-        is_content_admin(current_user)
-        or (owner_id is not None and get_value(current_user, "id") == owner_id)
-        or await may_edit_lower_ranked_record(current_user, owner_id)
-    )
+    allowed = await record_edit_privilege(artisan, current_user, "artisan")
     if not allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

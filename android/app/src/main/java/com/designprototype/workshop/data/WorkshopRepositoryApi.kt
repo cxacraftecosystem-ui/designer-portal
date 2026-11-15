@@ -277,7 +277,10 @@ interface WorkshopRepositoryApi {
     suspend fun updateWorkshop(@Path("id") id: String, @Body body: JsonObject): WorkshopDetailDto
 
     @GET("workshops/{id}/submission-check")
-    suspend fun workshopSubmissionCheck(@Path("id") id: String): WorkshopSubmissionCheckDto
+    suspend fun workshopSubmissionCheck(
+        @Path("id") id: String,
+        @Header("Cache-Control") cacheControl: String? = null,
+    ): WorkshopSubmissionCheckDto
 
     @GET("workshops/unmapped")
     suspend fun unmappedRecords(): WorkshopMappingPlanDto

@@ -556,6 +556,8 @@ this table is that "grep `deps.py`" is no longer a complete way to check a row.
 | **Create** artisan / product / tool / process / interview | `require_record_creator` | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Edit **own** record¹⁷ | ownership | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Fill an **empty** field on someone else's record¹⁷ | `assert_can_contribute_fields` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Add to a **multi-value** field or link list (lists, notes/remarks/do's/don'ts appended, artisans, crafts, steps) on someone else's record¹⁷ | `assert_can_contribute_fields`, `assert_can_contribute_relation` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Change or clear any field on a record in a workshop where you hold **Edit** access | `record_edit_privilege` (`workshop_edit_privilege`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Change or clear a **populated** field on someone else's record¹⁷ | `assert_can_contribute_fields` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜¹ | ⬜¹ | ⬜¹ | ⬜¹ | ✅ | ✅ |
 | Edit a record created by someone **ranked below**¹⁷ | `can_edit_others_record` | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Open the **review queue** | `require_reviewer` | grant | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |

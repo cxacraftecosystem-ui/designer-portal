@@ -3064,8 +3064,8 @@ class WorkshopRepository(
     suspend fun workshopsIMaySubmitToPage(): PageResponse<WorkshopDetailDto> =
         readEveryPage { page -> api.workshops(page = page, pageSize = 100, accessibleOnly = true) }
 
-    suspend fun workshopSubmissionCheck(workshopId: String): WorkshopSubmissionCheckDto? =
-        runCatching { api.workshopSubmissionCheck(workshopId) }.getOrNull()
+    suspend fun workshopSubmissionCheck(workshopId: String, fresh: Boolean = false): WorkshopSubmissionCheckDto? =
+        runCatching { api.workshopSubmissionCheck(workshopId, if (fresh) "no-cache" else null) }.getOrNull()
 
     suspend fun unmappedRecords(): WorkshopMappingPlanDto = api.unmappedRecords()
 

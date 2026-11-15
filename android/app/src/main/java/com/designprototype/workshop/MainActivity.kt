@@ -294,6 +294,14 @@ import com.designprototype.workshop.data.DuplicateCandidateDto
 import com.designprototype.workshop.data.DuplicateCheckRequest
 import com.designprototype.workshop.data.PossibleDuplicates
 import com.designprototype.workshop.data.peekErrorBody
+import com.designprototype.workshop.data.refusalReason
+import com.designprototype.workshop.data.editAccessNote
+import com.designprototype.workshop.data.fieldLocked
+import com.designprototype.workshop.data.fillsOnly
+import com.designprototype.workshop.data.FILLED_FIELD_REASON
+import com.designprototype.workshop.data.viewOnly
+import com.designprototype.workshop.data.isEditRefusal
+import com.designprototype.workshop.data.KEPT_AFTER_REFUSAL
 import com.designprototype.workshop.ui.PossibleDuplicateSheet
 import com.designprototype.workshop.data.EXPERIENCE_MONTH_OPTIONS
 import com.designprototype.workshop.data.EXPERIENCE_NOT_STATED
@@ -5312,24 +5320,43 @@ private class WorkshopPickerState(private val repository: WorkshopRepository, in
         baselineId = selectedId
     }
 
-    private suspend fun answerFor(workshopId: String): WorkshopSubmissionCheckDto? {
+    var recheck by mutableStateOf(0)
+        private set
+
+    fun invalidate() {
+        answers.clear()
+        recheck++
+    }
+
+    fun select(id: String) {
+        if (id == selectedId) invalidate() else selectedId = id
+    }
+
+    private suspend fun answerFor(workshopId: String, fresh: Boolean = false): WorkshopSubmissionCheckDto? {
         if (workshopId.isBlank()) return null
-        answers[workshopId]?.let { return it }
-        return repository.workshopSubmissionCheck(workshopId)?.also { answers[workshopId] = it }
+        if (!fresh) answers[workshopId]?.let { return it }
+        val answer = repository.workshopSubmissionCheck(workshopId, fresh = fresh)
+        if (answer == null) answers.remove(workshopId) else answers[workshopId] = answer
+        return answer
     }
 
     suspend fun refreshCheck() {
         val asked = selectedId
-        check = null
-        if (asked.isBlank()) return
-        val answer = answerFor(asked)
+        if (asked.isBlank()) {
+            check = null
+            return
+        }
+        if (check?.workshopId != asked) check = null
+        val answer = answerFor(asked, fresh = true)
         if (selectedId == asked) check = answer
     }
 
     suspend fun confirmSubmission(): Boolean {
         val asked = selectedId
         if (asked.isBlank()) return true
-        val answer = answerFor(asked) ?: return true
+        val answer = answerFor(asked, fresh = true)
+        if (selectedId == asked && answer != null) check = answer
+        if (answer == null) return true
         if (!answer.outOfWindow && !answer.isOver) return true
         val gate = CompletableDeferred<Boolean>()
         awaitingConfirm = gate
@@ -5386,7 +5413,18 @@ private fun rememberWorkshopPicker(
             state.markFailed(transient = !half.load.online)
         }
     }
-    LaunchedEffect(state, state.selectedId) { state.refreshCheck() }
+    val lifecycleOwner = context as? androidx.lifecycle.LifecycleOwner
+    DisposableEffect(state, lifecycleOwner) {
+        var replayed = false
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                if (replayed) state.invalidate() else replayed = true
+            }
+        }
+        lifecycleOwner?.lifecycle?.addObserver(observer)
+        onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
+    }
+    LaunchedEffect(state, state.selectedId, state.recheck) { state.refreshCheck() }
     return state
 }
 
@@ -5428,7 +5466,7 @@ private fun WorkshopField(state: WorkshopPickerState, saving: Boolean = false) {
             enabled = listEnabled,
             searchable = false,
             emptyMessage = notice,
-            onSelect = { state.selectedId = it },
+            onSelect = { state.select(it) },
         )
         workshopCapLine(state.workshops.size, state.total, WorkshopListKind.FIELD)?.let { cap ->
             Text(cap, color = Muted, style = MaterialTheme.typography.bodySmall, lineHeight = 15.sp)
@@ -5442,7 +5480,7 @@ private fun WorkshopField(state: WorkshopPickerState, saving: Boolean = false) {
         }
         if (blocked) {
             Text(
-                "You're not assigned to this workshop. Ask an admin, or pick another.",
+                check?.refusalReason().orEmpty(),
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall
             )
@@ -5505,6 +5543,10 @@ private class RecordWorkshopLink(
 
     fun markSaved() {
         field.markSaved()
+    }
+
+    fun invalidateChecks() {
+        field.invalidate()
     }
 }
 
@@ -7018,6 +7060,11 @@ private fun CraftForm(
     var stateOfPractice by remember(editing) { mutableStateOf(editing?.stateOfPractice?.toSet() ?: emptySet()) }
     var giStatus by remember(editing) { mutableStateOf(editing?.giStatus ?: "NON_GI") }
     var description by remember(editing) { mutableStateOf(editing?.description ?: "") }
+    var access by remember(editing?.id) { mutableStateOf(editing?.editAccess) }
+    LaunchedEffect(editing?.id) {
+        val id = editing?.id ?: return@LaunchedEffect
+        if (access == null) access = runCatching { repository.craft(id).editAccess }.getOrNull()
+    }
     val craftCatalogue by CraftCatalogueCache.catalogue.collectAsState()
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) { CraftCatalogueCache.cached(context) }
@@ -7026,6 +7073,7 @@ private fun CraftForm(
     var subCategoryError by remember { mutableStateOf<String?>(null) }
     val workshop = rememberWorkshopPicker(repository, isEdit, editing?.workshopId, editing)
     var saving by remember { mutableStateOf(false) }
+    var refusal by remember(editing) { mutableStateOf<String?>(null) }
     var nameError by remember { mutableStateOf<String?>(null) }
     val nameFocus = remember { FocusRequester() }
     val draft = rememberFormDraft(
@@ -7099,7 +7147,14 @@ private fun CraftForm(
             var landed = false
             runCatching {
                 val craftId = if (isEdit) {
-                    repository.updateCraft(editing!!.id, body).id
+                    repository.updateCraft(
+                        editing!!.id,
+                        body,
+                        shape = onlineEditShape(
+                            offlineFormJson.encodeToString(body),
+                            recordBaseJson(CraftDto.serializer(), editing),
+                        ),
+                    ).id
                 } else {
                     repository.createCraft(body, createKey).id
                 }
@@ -7114,6 +7169,12 @@ private fun CraftForm(
                 if (!landed && repository.isTransient(it)) {
                     saving = false
                     submit(forceOffline = true, retry = OnlineAttempt(body, createKey))
+                    return@launch
+                }
+                if (!landed && it is HttpException && isEditRefusal(it.code())) {
+                    if (it.code() == 403) workshop.invalidate()
+                    refusal = it.userMessage("Unable to save craft")
+                    saving = false
                     return@launch
                 }
                 onError(it.userMessage("Unable to save craft"))
@@ -7136,9 +7197,12 @@ private fun CraftForm(
         if (adminView && editing != null) {
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
         }
+        EditAccessNote(access)
         WorkshopField(state = workshop, saving = saving)
-        RequiredInput("Craft name", name, nameError, nameFocus, titleCased = true) { name = it }
-        TextInput("Local name", localName) { localName = it }
+        if (fieldLocked(access, editing?.name)) LockedField("Craft name", name)
+        else RequiredInput("Craft name", name, nameError, nameFocus, titleCased = true) { name = it }
+        if (fieldLocked(access, editing?.localName)) LockedField("Local name", localName)
+        else TextInput("Local name", localName) { localName = it }
         val categories = craftCatalogue?.categories.orEmpty().sortedBy { it.sortOrder }
         val categoryId = craftCatalogue?.subCategoryParent(subCategoryId) ?: pickedCategoryId
         DropdownField(
@@ -7190,10 +7254,12 @@ private fun CraftForm(
             RecordMediaSection(repository = repository, context = context, linkedType = "craft", recordId = editing!!.id, onError = onError)
         }
         MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
+        SaveRefusalNote(refusal)
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
-            idleLabel = if (isEdit) "Update craft" else "Save craft"
-        ) { submit() }
+            idleLabel = if (isEdit) "Update craft" else "Save craft",
+            enabled = !viewOnly(access)
+        ) { refusal = null; submit() }
     }
 }
 
@@ -7216,6 +7282,8 @@ private fun ArtisanForm(
     val scope = rememberCoroutineScope()
     val media = rememberMediaCaptureState()
     val isEdit = editing != null
+    val access = editing?.editAccess
+    var refusal by remember(editing) { mutableStateOf<String?>(null) }
     val canReadIdentityCards = remember {
         repository.cachedUser()?.let { FieldPermissions.canRunDesignWorkshops(it) } == true
     }
@@ -7428,6 +7496,7 @@ private fun ArtisanForm(
         }
         pehchanError = null
         newRecordLocationError(isEdit, media.location)?.let { onError(it); return }
+        refusal = null
         scope.launch {
             if (!isEdit && !forceOffline && retry == null && repository.isOnline(context)) {
                 saving = true
@@ -7513,7 +7582,14 @@ private fun ArtisanForm(
             var landed = false
             runCatching {
                 val artisanId = if (isEdit) {
-                    repository.updateArtisan(editing!!.id, body).id
+                    repository.updateArtisan(
+                        editing!!.id,
+                        body,
+                        shape = onlineEditShape(
+                            offlineFormJson.encodeToString(body),
+                            recordBaseJson(ArtisanDetailDto.serializer(), editing),
+                        ),
+                    ).id
                 } else {
                     repository.createArtisan(body, createKey).id
                 }
@@ -7554,6 +7630,12 @@ private fun ArtisanForm(
                 }
                 if (held != null) {
                     duplicateShown = PossibleDuplicates.toShow(held, duplicateAcked).ifEmpty { held.take(PossibleDuplicates.SHOWN_MAX) }
+                    saving = false
+                    return@launch
+                }
+                if (!landed && it is HttpException && isEditRefusal(it.code())) {
+                    if (it.code() == 403) link.invalidateChecks()
+                    refusal = it.apiErrorMessage("Unable to save artisan")
                     saving = false
                     return@launch
                 }
@@ -7604,10 +7686,15 @@ private fun ArtisanForm(
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
         }
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
+        EditAccessNote(access)
         RecordWorkshopField(link = link, saving = saving)
-        RequiredInput("Name", name, nameError, nameFocus, titleCased = true) { name = it }
-        TextInput("Local name", localName) { localName = it }
-        CompletenessAnchor("craft", craftFocus) {
+        if (fieldLocked(access, editing?.name)) LockedField("Name", name)
+        else RequiredInput("Name", name, nameError, nameFocus, titleCased = true) { name = it }
+        if (fieldLocked(access, editing?.localName)) LockedField("Local name", localName)
+        else TextInput("Local name", localName) { localName = it }
+        if (fieldLocked(access, editing?.craftId)) {
+            LockedField("Craft", editing?.craft?.name ?: crafts.firstOrNull { it.id == craftId }?.name.orEmpty())
+        } else CompletenessAnchor("craft", craftFocus) {
             CraftPickerField(
                 label = "Craft",
                 required = true,
@@ -7626,15 +7713,19 @@ private fun ArtisanForm(
                 }
             )
         }
-        RequiredInput("Place", place, placeError, placeFocus, titleCased = true) { place = it }
-        DropdownField(
+        if (fieldLocked(access, editing?.place)) LockedField("Place", place)
+        else RequiredInput("Place", place, placeError, placeFocus, titleCased = true) { place = it }
+        if (fieldLocked(access, editing?.gender)) LockedField("Gender", gender)
+        else DropdownField(
             label = "Gender",
             options = genderOptions.map { it to it },
             selectedValue = gender,
             placeholder = "Select…",
             includeNone = true
         ) { gender = it }
-        CompletenessAnchor("dateOfBirth", dateOfBirthFocus) {
+        if (fieldLocked(access, editing?.dateOfBirth)) {
+            LockedField("Date of birth", dateOfBirth?.let { formatIsoDate(it.toString()) } ?: editing?.dateOfBirth.orEmpty())
+        } else CompletenessAnchor("dateOfBirth", dateOfBirthFocus) {
             CalendarField(
                 label = "Date of birth *",
                 modifier = Modifier.focusRequester(dateOfBirthFocus),
@@ -7645,7 +7736,9 @@ private fun ArtisanForm(
                 supportingText = dateOfBirthError ?: "Shown as an age."
             )
         }
-        CompletenessAnchor("craftStartDate", craftStartFocus) {
+        if (fieldLocked(access, editing?.craftStartDate)) {
+            LockedField("Craft start date", craftStartDate?.let { formatIsoDate(it.toString()) } ?: editing?.craftStartDate.orEmpty())
+        } else CompletenessAnchor("craftStartDate", craftStartFocus) {
             CalendarField(
                 label = "Craft start date *",
                 modifier = Modifier.focusRequester(craftStartFocus),
@@ -7656,7 +7749,8 @@ private fun ArtisanForm(
                 supportingText = craftStartDateError ?: "Shown as years of experience."
             )
         }
-        OutlinedTextField(
+        if (fieldLocked(access, editing?.experienceYears?.toString())) LockedField("Experience (years)", experienceYears)
+        else OutlinedTextField(
             value = experienceYears,
             onValueChange = { typed -> experienceYears = typed.filter { it.isDigit() }.take(2) },
             label = { Text("Experience (years)") },
@@ -7664,15 +7758,19 @@ private fun ArtisanForm(
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
-        DropdownField(
+        if (fieldLocked(access, editing?.experienceMonths?.toString())) {
+            LockedField("Experience (months)", experienceMonths.toIntOrNull()?.let { experienceMonthsLabel(it) } ?: experienceMonths)
+        } else DropdownField(
             label = "Experience (months)",
             options = EXPERIENCE_MONTH_OPTIONS.map { it.toString() to experienceMonthsLabel(it) },
             selectedValue = experienceMonths,
             placeholder = EXPERIENCE_NOT_STATED,
             includeNone = true
         ) { experienceMonths = it }
-        ArtisanPhoneField(value = phone, error = phoneError) { phone = it; phoneError = null }
-        OutlinedTextField(
+        if (fieldLocked(access, editing?.phone)) LockedField("Phone", phone)
+        else ArtisanPhoneField(value = phone, error = phoneError) { phone = it; phoneError = null }
+        if (fieldLocked(access, editing?.email)) LockedField("Email", email)
+        else OutlinedTextField(
             value = email,
             onValueChange = { email = it; emailError = null },
             label = { Text("Email") },
@@ -7684,7 +7782,8 @@ private fun ArtisanForm(
                 .fillMaxWidth()
                 .focusRequester(emailFocus)
         )
-        TextInput("Address", address, minLines = 2) { address = it }
+        if (fieldLocked(access, editing?.address)) LockedField("Address", address)
+        else TextInput("Address", address, minLines = 2) { address = it }
         MultiNoteInput(value = notes) { notes = it }
         Text("Identity", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
         Text(
@@ -7692,7 +7791,9 @@ private fun ArtisanForm(
             color = Muted,
             style = MaterialTheme.typography.bodySmall
         )
-        ArtisanAadhaarField(
+        val aadhaarLocked = fieldLocked(access, storedAadhaarMask)
+        if (aadhaarLocked) LockedField("Aadhaar number", storedAadhaarMask.orEmpty())
+        else ArtisanAadhaarField(
             value = aadhaar,
             error = aadhaarError,
             warning = aadhaarDuplicate,
@@ -7700,7 +7801,7 @@ private fun ArtisanForm(
             focusRequester = aadhaarFocus,
             onRecord = storedAadhaarMask?.takeIf { aadhaar.isBlank() }
         ) { aadhaar = it; aadhaarError = null }
-        if (canReadIdentityCards) {
+        if (canReadIdentityCards && !aadhaarLocked) {
             DwIdentityCardControl(
                 targetLabel = "the Aadhaar number",
                 kind = DwIdentityKind.AADHAAR,
@@ -7711,7 +7812,9 @@ private fun ArtisanForm(
                 onKeepPhotograph = keepIdentityPhotograph,
             )
         }
-        DropdownField(
+        if (fieldLocked(access, editing?.pehchanCardAvailable?.toString())) {
+            LockedField("Artisan Pehchan Card available", when (pehchanAvailable) { true -> "Yes"; false -> "No"; null -> "" })
+        } else DropdownField(
             label = "Artisan Pehchan Card available *",
             options = listOf("yes" to "Yes", "no" to "No"),
             selectedValue = when (pehchanAvailable) { true -> "yes"; false -> "no"; null -> "" },
@@ -7722,7 +7825,9 @@ private fun ArtisanForm(
             pehchanError = null
             if (pehchanAvailable == false) pehchanNumber = ""
         }
-        OutlinedTextField(
+        val pehchanLocked = fieldLocked(access, editing?.pehchanCardNumber)
+        if (pehchanLocked) LockedField("Artisan Pehchan Card number", pehchanNumber)
+        else OutlinedTextField(
             value = pehchanNumber,
             onValueChange = { pehchanNumber = it.uppercase(); pehchanError = null },
             label = {
@@ -7749,7 +7854,7 @@ private fun ArtisanForm(
                 .fillMaxWidth()
                 .focusRequester(pehchanFocus)
         )
-        if (canReadIdentityCards && pehchanAvailable == true) {
+        if (canReadIdentityCards && pehchanAvailable == true && !pehchanLocked) {
             DwIdentityCardControl(
                 targetLabel = "the Pehchan card number",
                 kind = DwIdentityKind.PEHCHAN,
@@ -7763,12 +7868,12 @@ private fun ArtisanForm(
         if (isEdit) {
             CrossPortalLinkCard(artisanId = editing!!.id) { artisan, changed ->
                 val values = CrossPortalPrefill.fromRefreshed(artisan, changed)
-                values.name?.let { name = it }
-                values.localName?.let { localName = it }
-                values.gender?.let { gender = it }
-                values.pehchanCardAvailable?.let { pehchanAvailable = it }
-                values.pehchanCardNumber?.let { pehchanNumber = it }
-                values.dateOfBirth?.let { parseFieldDate(it) }?.let { dateOfBirth = it }
+                if (!fieldLocked(access, editing?.name)) values.name?.let { name = it }
+                if (!fieldLocked(access, editing?.localName)) values.localName?.let { localName = it }
+                if (!fieldLocked(access, editing?.gender)) values.gender?.let { gender = it }
+                if (!fieldLocked(access, editing?.pehchanCardAvailable?.toString())) values.pehchanCardAvailable?.let { pehchanAvailable = it }
+                if (!fieldLocked(access, editing?.pehchanCardNumber)) values.pehchanCardNumber?.let { pehchanNumber = it }
+                if (!fieldLocked(access, editing?.dateOfBirth)) values.dateOfBirth?.let { parseFieldDate(it) }?.let { dateOfBirth = it }
             }
         } else {
             CrossPortalFindCard(
@@ -7827,9 +7932,11 @@ private fun ArtisanForm(
                 MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
             }
         }
+        SaveRefusalNote(refusal)
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
-            idleLabel = if (isEdit) "Update artisan" else "Save artisan"
+            idleLabel = if (isEdit) "Update artisan" else "Save artisan",
+            enabled = !viewOnly(access)
         ) { submit() }
     }
 }
@@ -7874,6 +7981,11 @@ private fun WorkshopForm(
     var place by remember(editing) { mutableStateOf(editing?.place ?: prefill?.place ?: "") }
     var description by remember(editing) { mutableStateOf(editing?.description ?: "") }
     var notes by remember(editing) { mutableStateOf(editing?.notes ?: "") }
+    var access by remember(editing?.id) { mutableStateOf(editing?.editAccess) }
+    LaunchedEffect(editing?.id) {
+        val id = editing?.id ?: return@LaunchedEffect
+        if (access == null) access = runCatching { repository.workshop(id).editAccess }.getOrNull()
+    }
     var startDate by remember(editing) { mutableStateOf(parseIsoToLocalDate(editing?.startDate)) }
     var endDate by remember(editing) { mutableStateOf(parseIsoToLocalDate(editing?.endDate)) }
     val canSetStatus = remember { canSetRecordStatus(repository.cachedUser()?.role) }
@@ -7890,6 +8002,7 @@ private fun WorkshopForm(
         mutableStateOf(editing?.crafts?.map { it.craftId }?.toSet() ?: emptySet())
     }
     var saving by remember { mutableStateOf(false) }
+    var workshopRefusal by remember(editing) { mutableStateOf<String?>(null) }
     var titleError by remember { mutableStateOf<String?>(null) }
     var placeError by remember { mutableStateOf<String?>(null) }
     val titleFocus = remember { FocusRequester() }
@@ -7972,13 +8085,17 @@ private fun WorkshopForm(
                 recordedAt = if (isEdit) null else Instant.now().toString(),
                 location = locationForBody(isEdit, media.location, editing?.location)
             )
+            val workshopEditBase = recordBaseJson(WorkshopDetailDto.serializer(), editing)?.withLinkIds(
+                "artisanIds" to editing?.artisans.orEmpty().map { it.artisanId },
+                "craftIds" to editing?.crafts.orEmpty().map { it.craftId },
+            )
             val queuedOffline = runCatching {
                 trySaveOffline(repository, context, isEdit, "workshop", offlineFormJson.encodeToString(body),
                     title.trim(), media, title.trim(), "Field media for ${title.trim()}",
                     editingId = editing?.id,
                     force = mustQueue,
                     idempotencyKey = createKey,
-                    base = recordBaseJson(WorkshopDetailDto.serializer(), editing))
+                    base = workshopEditBase)
             }.getOrNull()
             if (queuedOffline != null) {
                 draft.discard(); media.reset()
@@ -7995,7 +8112,11 @@ private fun WorkshopForm(
             var landed = false
             runCatching {
                 val workshopId = if (isEdit) {
-                    repository.updateWorkshop(editing!!.id, body).id
+                    repository.updateWorkshop(
+                        editing!!.id,
+                        body,
+                        shape = onlineEditShape(offlineFormJson.encodeToString(body), workshopEditBase),
+                    ).id
                 } else {
                     repository.createWorkshop(body, createKey).id
                 }
@@ -8008,6 +8129,11 @@ private fun WorkshopForm(
                 if (!landed && repository.isTransient(it)) {
                     saving = false
                     submit(forceOffline = true, retry = OnlineAttempt(body, createKey))
+                    return@launch
+                }
+                if (!landed && it is HttpException && isEditRefusal(it.code())) {
+                    workshopRefusal = it.userMessage("Unable to save workshop")
+                    saving = false
                     return@launch
                 }
                 onError(it.userMessage("Unable to save workshop"))
@@ -8057,8 +8183,11 @@ private fun WorkshopForm(
             color = Muted,
             style = MaterialTheme.typography.bodySmall
         )
-        RequiredInput("Workshop title", title, titleError, titleFocus, titleCased = true) { title = it }
-        RequiredInput("Place", place, placeError, placeFocus, titleCased = true) { place = it }
+        EditAccessNote(access)
+        if (fieldLocked(access, editing?.title)) LockedField("Workshop title", title)
+        else RequiredInput("Workshop title", title, titleError, titleFocus, titleCased = true) { title = it }
+        if (fieldLocked(access, editing?.place)) LockedField("Place", place)
+        else RequiredInput("Place", place, placeError, placeFocus, titleCased = true) { place = it }
         Text("Workshop duration", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
         CompletenessAnchor("startDate") {
             CompletenessAnchor("endDate") {
@@ -8103,10 +8232,12 @@ private fun WorkshopForm(
         CompletenessAnchor("photo") {
             MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
         }
+        SaveRefusalNote(workshopRefusal)
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
-            idleLabel = if (isEdit) "Update workshop" else "Save workshop"
-        ) { submit() }
+            idleLabel = if (isEdit) "Update workshop" else "Save workshop",
+            enabled = !viewOnly(access)
+        ) { workshopRefusal = null; submit() }
     }
 }
 
@@ -8127,6 +8258,8 @@ private fun ProductForm(
     val scope = rememberCoroutineScope()
     val media = rememberMediaCaptureState()
     val isEdit = editing != null
+    val access = editing?.editAccess
+    var refusal by remember(editing) { mutableStateOf<String?>(null) }
     var productName by remember(editing) { mutableStateOf(editing?.productName ?: "") }
     var localName by remember(editing) { mutableStateOf(editing?.localName ?: "") }
     var craftName by remember(editing) { mutableStateOf(editing?.craftName ?: prefill?.craftName ?: "") }
@@ -8317,7 +8450,14 @@ private fun ProductForm(
             var landed = false
             runCatching {
                 val productId = if (isEdit) {
-                    repository.updateProduct(editing!!.id, body).id
+                    repository.updateProduct(
+                        editing!!.id,
+                        body,
+                        shape = onlineEditShape(
+                            offlineFormJson.encodeToString(body),
+                            recordBaseJson(ProductDetailDto.serializer(), editing),
+                        ),
+                    ).id
                 } else {
                     repository.createProduct(body, createKey).id
                 }
@@ -8333,6 +8473,12 @@ private fun ProductForm(
                 if (!landed && repository.isTransient(it)) {
                     saving = false
                     submit(forceOffline = true, retry = OnlineAttempt(body, createKey))
+                    return@launch
+                }
+                if (!landed && it is HttpException && isEditRefusal(it.code())) {
+                    if (it.code() == 403) link.invalidateChecks()
+                    refusal = it.userMessage("Unable to save product")
+                    saving = false
                     return@launch
                 }
                 onError(it.userMessage("Unable to save product"))
@@ -8371,9 +8517,12 @@ private fun ProductForm(
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
         }
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
+        EditAccessNote(access)
         RecordWorkshopField(link = link, saving = saving)
-        RequiredInput("Product name", productName, productNameError, productNameFocus, titleCased = true) { productName = it }
-        TextInput("Local name", localName) { localName = it }
+        if (fieldLocked(access, editing?.productName)) LockedField("Product name", productName)
+        else RequiredInput("Product name", productName, productNameError, productNameFocus, titleCased = true) { productName = it }
+        if (fieldLocked(access, editing?.localName)) LockedField("Local name", localName)
+        else TextInput("Local name", localName) { localName = it }
         DropdownField("Product type", productTypeOptions.map { it to it }, productType, includeNone = false) { productType = it }
         CraftPickerField(
             label = "Craft",
@@ -8486,10 +8635,12 @@ private fun ProductForm(
         CompletenessAnchor("photo") {
             MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
         }
+        SaveRefusalNote(refusal)
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
-            idleLabel = if (isEdit) "Update product" else "Save product"
-        ) { submit() }
+            idleLabel = if (isEdit) "Update product" else "Save product",
+            enabled = !viewOnly(access)
+        ) { refusal = null; submit() }
     }
 }
 
@@ -8511,6 +8662,8 @@ private fun ToolForm(
     val media = rememberMediaCaptureState()
     val stages = rememberMediaCaptureState()
     val isEdit = editing != null
+    val access = editing?.editAccess
+    var refusal by remember(editing) { mutableStateOf<String?>(null) }
     var toolkitName by remember(editing) { mutableStateOf(editing?.toolkitName ?: "") }
     var localName by remember(editing) { mutableStateOf(editing?.localName ?: "") }
     var englishName by remember(editing) { mutableStateOf(editing?.englishName ?: "") }
@@ -8757,6 +8910,10 @@ private fun ToolForm(
                 workshopId = link.workshopId(),
                 workshopName = link.field.workshops.firstOrNull { it.id == link.workshopId() }?.title
             )
+            val toolEditBase = recordBaseJson(ToolDetailDto.serializer(), editing)?.withLinkIds(
+                "craftIds" to editing?.craftLinks.orEmpty().map { it.craftId },
+                "artisanIds" to editing?.artisanLinks.orEmpty().map { it.artisanId },
+            )
             if ((!isEdit || editing?.id != null) && (forceOffline || !repository.isOnline(context))) {
                 val queued = runCatching {
                     val items = media.uris.mapIndexed { i, uri ->
@@ -8770,7 +8927,7 @@ private fun ToolForm(
                         unfiled = link.unfiledReasons(),
                         idempotencyKey = if (isEdit) null else createKey,
                         correctionBase = if (isEdit) {
-                            correctionBaseFor(offlineFormJson.encodeToString(body), recordBaseJson(ToolDetailDto.serializer(), editing))
+                            correctionBaseFor(offlineFormJson.encodeToString(body), toolEditBase)
                         } else null,
                     )
                 }.getOrNull()
@@ -8790,7 +8947,11 @@ private fun ToolForm(
             var landed = false
             runCatching {
                 val toolId = if (isEdit) {
-                    repository.updateTool(editing!!.id, body).id
+                    repository.updateTool(
+                        editing!!.id,
+                        body,
+                        shape = onlineEditShape(offlineFormJson.encodeToString(body), toolEditBase),
+                    ).id
                 } else {
                     repository.createTool(body, createKey).id
                 }
@@ -8821,6 +8982,12 @@ private fun ToolForm(
                 if (!landed && repository.isTransient(it)) {
                     saving = false
                     submit(forceOffline = true, retry = OnlineAttempt(body, createKey))
+                    return@launch
+                }
+                if (!landed && it is HttpException && isEditRefusal(it.code())) {
+                    if (it.code() == 403) link.invalidateChecks()
+                    refusal = it.userMessage("Unable to save tool")
+                    saving = false
                     return@launch
                 }
                 onError(it.userMessage("Unable to save tool"))
@@ -8862,12 +9029,16 @@ private fun ToolForm(
             ProvenanceSection(meta = editing.extraMetadata, createdByName = editing.createdBy?.name)
         }
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
+        EditAccessNote(access)
         RecordWorkshopField(link = link, saving = saving)
-        RequiredInput("Toolkit name", toolkitName, toolkitNameError, toolkitNameFocus, titleCased = true) { applyToolkitName(it) }
-        CompletenessAnchor("localName") {
+        if (fieldLocked(access, editing?.toolkitName)) LockedField("Toolkit name", toolkitName)
+        else RequiredInput("Toolkit name", toolkitName, toolkitNameError, toolkitNameFocus, titleCased = true) { applyToolkitName(it) }
+        if (fieldLocked(access, editing?.localName)) LockedField("Local name", localName)
+        else CompletenessAnchor("localName") {
             TextInput("Local name", localName) { localName = it }
         }
-        TextInput("English name", englishName, titleCased = true) { englishName = it; mirrorArmed = false }
+        if (fieldLocked(access, editing?.englishName)) LockedField("English name", englishName)
+        else TextInput("English name", englishName, titleCased = true) { englishName = it; mirrorArmed = false }
         val craftOptions: List<SelectOption> =
             craftIds.filter { id -> crafts.none { it.id == id } }
                 .map { id -> offPageLinkRow(id, knownCraftNames[id], "craft") } +
@@ -8986,10 +9157,12 @@ private fun ToolForm(
         CompletenessAnchor("photo") {
             MediaCaptureSection(repository = repository, media = media, onMessage = LocalAppNotice.current, onError = onError)
         }
+        SaveRefusalNote(refusal)
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
-            idleLabel = if (isEdit) "Update tool" else "Save tool"
-        ) { submit() }
+            idleLabel = if (isEdit) "Update tool" else "Save tool",
+            enabled = !viewOnly(access)
+        ) { refusal = null; submit() }
     }
 }
 
@@ -9143,6 +9316,8 @@ private fun ProcessForm(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isEdit = editing != null
+    val access = editing?.editAccess
+    var refusal by remember(editing) { mutableStateOf<String?>(null) }
     val preMedia = rememberMediaCaptureState()
 
     var products by remember { mutableStateOf<List<ProductDetailDto>>(emptyList()) }
@@ -9394,7 +9569,18 @@ private fun ProcessForm(
             }
             var landed = false
             runCatching {
-                val detail = if (isEdit) repository.updateProcess(editing!!.id, body) else repository.createProcess(body, createKey)
+                val detail = if (isEdit) {
+                    repository.updateProcess(
+                        editing!!.id,
+                        body,
+                        shape = onlineEditShape(
+                            offlineFormJson.encodeToString(body),
+                            recordBaseJson(ProcessDetailDto.serializer(), editing),
+                        ),
+                    )
+                } else {
+                    repository.createProcess(body, createKey)
+                }
                 landed = true
                 if (preProcessAvailable) {
                     uploadAttachments(repository, context, preMedia, "process", detail.id, name, "Pre-process media for ${name.trim()}", customSegment = "PRE")
@@ -9453,6 +9639,12 @@ private fun ProcessForm(
                     submit(forceOffline = true, retry = OnlineAttempt(body, createKey))
                     return@launch
                 }
+                if (!landed && it is HttpException && isEditRefusal(it.code())) {
+                    if (it.code() == 403) link.invalidateChecks()
+                    refusal = it.userMessage("Unable to save process")
+                    saving = false
+                    return@launch
+                }
                 onError(it.userMessage("Unable to save process"))
             }
             saving = false
@@ -9482,8 +9674,10 @@ private fun ProcessForm(
             style = MaterialTheme.typography.bodySmall
         )
         CarryPrefillBanner(state = carry, onChange = { clearCarriedContext() })
+        EditAccessNote(access)
         RecordWorkshopField(link = link, saving = saving)
-        RequiredInput("Name of the process", name, nameError, nameFocus, titleCased = true) { name = it }
+        if (fieldLocked(access, editing?.name)) LockedField("Name of the process", name)
+        else RequiredInput("Name of the process", name, nameError, nameFocus, titleCased = true) { name = it }
         RegisterDropdownField(
             label = "Artisan *",
             noun = "artisans",
@@ -9593,9 +9787,14 @@ private fun ProcessForm(
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                         Text("Step ${index + 1} · ${step.stepTypeLabel()}", color = Body, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                        TextButton(onClick = { steps.removeAt(index) }) { Text("Remove") }
+                        if (!(fillsOnly(access) && step.serverId != null)) TextButton(onClick = { steps.removeAt(index) }) { Text("Remove") }
                     }
-                    RequiredInput("Name of the step", step.name, step.nameError, step.nameFocus) { step.name = it }
+                    if (fillsOnly(access) && step.serverId != null) {
+                        LockedField("Name of the step", step.name)
+                        Text(FILLED_FIELD_REASON, color = Muted, style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        RequiredInput("Name of the step", step.name, step.nameError, step.nameFocus) { step.name = it }
+                    }
                     if (step.existingMedia.isNotEmpty()) {
                         Text("Already attached:", color = Muted, style = MaterialTheme.typography.bodySmall)
                         step.existingMedia.forEach { saved ->
@@ -9667,10 +9866,12 @@ private fun ProcessForm(
             )
         }
 
+        SaveRefusalNote(refusal)
         SaveButton(
             state = if (saving) SaveState.SAVING else SaveState.IDLE,
-            idleLabel = if (isEdit) "Update process" else "Save process"
-        ) { submit() }
+            idleLabel = if (isEdit) "Update process" else "Save process",
+            enabled = !viewOnly(access)
+        ) { refusal = null; submit() }
     }
 }
 
@@ -15178,8 +15379,45 @@ internal fun correctionBaseFor(payloadJson: String, base: JsonObject?): com.desi
     )
 }
 
+internal fun JsonObject.withLinkIds(vararg lists: Pair<String, List<String>>): JsonObject =
+    JsonObject(this + lists.associate { (key, ids) ->
+        key to kotlinx.serialization.json.JsonArray(ids.map { kotlinx.serialization.json.JsonPrimitive(it) })
+    })
+
+internal fun onlineEditShape(payloadJson: String, base: JsonObject?): (JsonObject) -> JsonObject {
+    val changed = correctionBaseFor(payloadJson, base)?.changedKeys ?: return { it }
+    return { body -> com.designprototype.workshop.data.restrictEditBody(body, changed) }
+}
+
 internal fun <T> recordBaseJson(serializer: kotlinx.serialization.KSerializer<T>, record: T?): JsonObject? =
     record?.let { runCatching { offlineFormJson.encodeToJsonElement(serializer, it) as JsonObject }.getOrNull() }
+
+@Composable
+private fun EditAccessNote(editAccess: String?) {
+    val note = editAccessNote(editAccess) ?: return
+    Text(note, color = Muted, style = MaterialTheme.typography.bodySmall)
+}
+
+@Composable
+private fun LockedField(label: String, value: String) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = {},
+        label = { Text(label) },
+        readOnly = true,
+        enabled = false,
+        modifier = Modifier.fillMaxWidth()
+    )
+}
+
+@Composable
+private fun SaveRefusalNote(message: String?) {
+    if (message.isNullOrBlank()) return
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        Text(KEPT_AFTER_REFUSAL, color = Muted, style = MaterialTheme.typography.bodySmall)
+    }
+}
 
 private enum class SaveState { IDLE, SAVING, SAVED }
 

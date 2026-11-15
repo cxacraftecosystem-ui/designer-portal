@@ -331,8 +331,8 @@ async def test_a_stranger_may_not_link(world, monkeypatch):
     async def tier(*_a, **_k):
         return None
 
-    monkeypatch.setattr(routes, "may_edit_lower_ranked_record", no)
-    monkeypatch.setattr(routes, "effective_tier_for_record", tier)
+    monkeypatch.setattr("app.core.deps.may_edit_lower_ranked_record", no)
+    monkeypatch.setattr("app.services.access.effective_tier_for_record", tier)
     with pytest.raises(HTTPException) as exc:
         await routes.link_artisan("dp1", routes.LinkIn(consent=True), SimpleNamespace(id="u9", role="RESEARCHER"))
     assert exc.value.status_code == 403
@@ -488,3 +488,38 @@ def test_the_shared_module_is_the_same_bytes_in_both_portals():
             assert mine.replace("\r\n", "\n") == other.read_text(encoding="utf-8").replace("\r\n", "\n")
             return
     pytest.skip("no sibling checkout")
+
+
+async def test_a_refresh_without_edit_access_fills_only_empty_fields(world, monkeypatch):
+    async def not_privileged(*_a, **_k):
+        return False
+
+    async def contributes(*_a, **_k):
+        return None
+
+    await routes.link_artisan("dp1", routes.LinkIn(consent=True), OWNER)
+    row = world.db.artisan.rows[0]
+    row["pehchanCardAvailable"] = True
+    monkeypatch.setattr(routes, "record_edit_privilege", not_privileged)
+    monkeypatch.setattr(routes.workshop_access, "assert_workshop_access", contributes)
+    out = await routes.refresh_artisan("dp1", SimpleNamespace(id="u7", role="RESEARCHER"))
+    assert row["name"] == "Meena", "a filled name is never replaced from the other portal"
+    assert row["gender"] == "Female" and row["localName"] == "मीना देवी"
+    assert row["pehchanCardNumber"] == "PEH12345"
+    assert "name" not in out["changed"]
+
+
+async def test_a_refresh_by_someone_without_contribute_access_is_refused(world, monkeypatch):
+    async def not_privileged(*_a, **_k):
+        return False
+
+    async def refuses(*_a, **_k):
+        raise HTTPException(status_code=403, detail="View only")
+
+    await routes.link_artisan("dp1", routes.LinkIn(consent=True), OWNER)
+    monkeypatch.setattr(routes, "record_edit_privilege", not_privileged)
+    monkeypatch.setattr(routes.workshop_access, "assert_workshop_access", refuses)
+    with pytest.raises(HTTPException) as exc:
+        await routes.refresh_artisan("dp1", SimpleNamespace(id="u7", role="RESEARCHER"))
+    assert exc.value.status_code == 403
+    assert world.db.artisan.rows[0]["gender"] is None

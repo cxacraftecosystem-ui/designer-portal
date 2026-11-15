@@ -29,7 +29,7 @@ from app.schemas.records import (
     drop_masked_identity_numbers,
 )
 from app.services import aadhaar_fingerprint, design_workshop_posts
-from app.services.access import record_revision
+from app.services.access import record_revision, record_workshop_id
 from app.services.concurrency import gather_reads
 from app.services.record_design_workshop import (
     DESIGN_WORKSHOP_KEY,
@@ -44,7 +44,11 @@ from app.services.records import (
     review_update,
 )
 from app.services.review_queue import reviewable_creator_roles
-from app.services.workshop_access import record_needs_admin_approval, stamp_workshop_submission
+from app.services.workshop_access import (
+    edit_workshop_ids,
+    record_needs_admin_approval,
+    stamp_workshop_submission,
+)
 from prisma import Json
 
 router = APIRouter(prefix="/review", tags=["review"])
@@ -150,7 +154,24 @@ def _queue_item(record_type: str, row: Any, label_fields: tuple[str, ...]) -> di
         "createdAt": jsonable_encoder(get_value(row, "createdAt")),
         "createdBy": _creator_summary(creator),
         "needsAdminApproval": record_needs_admin_approval(row),
+        "workshopId": get_value(row, "id") if record_type == "workshop" else get_value(row, "workshopId"),
     }
+
+
+async def _holds_workshop_edit(reviewer: Any, workshop_id: str | None) -> bool:
+    return bool(workshop_id) and workshop_id in await edit_workshop_ids(reviewer)
+
+
+async def _mark_editable(reviewer: Any, items: list[dict[str, Any]]) -> None:
+    editable: set[str] | None = None
+    for item in items:
+        creator = item.get("createdBy") or {}
+        item["canEdit"] = can_edit_others_record(reviewer, creator.get("role"))
+        if item["canEdit"] or not item.get("workshopId"):
+            continue
+        if editable is None:
+            editable = await edit_workshop_ids(reviewer)
+        item["canEdit"] = item["workshopId"] in editable
 
 
 async def _pending_page(where: dict[str, Any], page_size: int, before: str | None) -> dict[str, Any]:
@@ -214,7 +235,9 @@ async def list_pending_reviews(
         where["createdBy"] = {"is": {"role": {"in": roles}}}
 
     if pageSize is not None:
-        return await _pending_page(where, pageSize, before)
+        page = await _pending_page(where, pageSize, before)
+        await _mark_editable(reviewer, page["items"])
+        return page
 
     items: list[dict[str, Any]] = []
     total = 0
@@ -252,6 +275,7 @@ async def list_pending_reviews(
             total += len(rows)
         items.extend(_queue_item(record_type, row, label_fields) for row in rows)
     items.sort(key=lambda item: item.get("createdAt") or "", reverse=True)
+    await _mark_editable(reviewer, items)
     return {
         "items": items,
         "shown": len(items),
@@ -474,13 +498,15 @@ async def edit_reviewed_record(
     if not record:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     creator = get_value(record, creator_relation)
-    if not can_edit_others_record(reviewer, get_value(creator, "role") if creator else None):
+    if not can_edit_others_record(
+        reviewer, get_value(creator, "role") if creator else None
+    ) and not await _holds_workshop_edit(reviewer, record_workshop_id(record, key)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Editing someone else's record needs Professor access or above, and only for a "
-                "record created by someone with a role below your own. Approve, reject, or send it "
-                "back for revision with your comments instead."
+                "Editing someone else's record needs Professor access or above over a record created "
+                "by someone with a role below your own, or Edit access to its workshop. Approve, "
+                "reject, or send it back for revision with your comments instead."
             ),
         )
     if record_needs_admin_approval(record) and not is_admin(reviewer):
