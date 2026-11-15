@@ -329,6 +329,14 @@ async def create_multipart_route(
     return await create_multipart(_old_shape(MultipartCreateRequest, body), current_user)
 
 
+@router.post("/sha-lookup")
+async def sha_lookup(request: Request, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
+    from app.questionnaire import recordings as v2_recordings
+    from app.questionnaire.schemas import ShaLookupRequest
+
+    return await v2_recordings.sha_lookup(await _v2_shape(ShaLookupRequest, await _json_body(request)), current_user)
+
+
 @router.get("/uploads/{client_clip_key}")
 async def upload_state(client_clip_key: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
     from app.api.routes.questionnaire_v2 import require_v2
