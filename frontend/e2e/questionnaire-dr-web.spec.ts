@@ -116,7 +116,7 @@ test("@qf:A11 @qf:B19 @qf:B20 @qf:A20 @qf:B21 someone else's answer is locked wi
   await expect(page.locator("[data-answer-history]")).toContainText("Blocks");
   await page.getByRole("button", { name: "OK", exact: true }).click();
   const a2 = page.locator("[data-answer-box='l2']");
-  await a2.getByRole("button", { name: "Add a note" }).click();
+  await a2.getByRole("button", { name: "Add note" }).click();
   await a2.locator("[data-answer-note]").fill("Asked twice");
   await a2.locator("[role=textbox]").fill("Carved locally");
   await a2.locator("[role=textbox]").blur();

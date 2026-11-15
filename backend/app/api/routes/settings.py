@@ -15,7 +15,14 @@ from app.schemas.settings import (
     TranscriptionProviderOrderDto,
     TranscriptionProviderOrderUpdate,
 )
-from app.services import ai, mailer, managed_secrets, report_delivery
+from app.services import (
+    ai,
+    mailer,
+    managed_secrets,
+    report_delivery,
+    transcript_backfill,
+    transcript_pipeline,
+)
 from app.services.app_settings import (
     DEFAULT_TIMEZONE,
     SINGLETON_ID,
@@ -33,6 +40,8 @@ from app.services.app_settings import (
     recalled_key_verdict,
     remember_key_verdict,
     save_stt_provider_order,
+    transcription_mode,
+    translation_on,
 )
 
 logger = logging.getLogger(__name__)
@@ -90,7 +99,7 @@ async def update_app_settings(
     payload: AppSettingUpdate,
     current_user: Any = Depends(require_master_admin),
 ) -> Any:
-    await get_or_create_app_settings(current_user.id)
+    before = await get_or_create_app_settings(current_user.id)
     data = payload.model_dump(exclude_none=True)
     if "transcriptionMode" in data and data["transcriptionMode"] not in VALID_TRANSCRIPTION_MODES:
         raise HTTPException(
@@ -126,7 +135,25 @@ async def update_app_settings(
     if "dwAiVerbDailyCap" in payload.model_fields_set:
         data["dwAiVerbDailyCap"] = payload.dwAiVerbDailyCap
     data["updatedById"] = current_user.id
-    return await db.appsetting.update(where={"id": SINGLETON_ID}, data=data)
+    saved = await db.appsetting.update(where={"id": SINGLETON_ID}, data=data)
+    if "transcriptionMode" in data and transcription_mode(before) != transcription_mode(saved):
+        await _after_transcription_mode_change(before, saved, current_user)
+    return saved
+
+
+async def _after_transcription_mode_change(before: Any, saved: Any, current_user: Any) -> None:
+    transcript_backfill.forget_estimate()
+    stopped = 0
+    if not translation_on(saved):
+        stopped = await transcript_pipeline.stop_automatic_translation()
+    logger.warning(
+        "AUDIT transcription-settings: transcriptionMode=%s->%s transcribeOnly=%s stoppedTranslations=%s via=settings by=%s",
+        transcription_mode(before),
+        transcription_mode(saved),
+        not translation_on(saved),
+        stopped,
+        getattr(current_user, "email", None),
+    )
 
 
 
