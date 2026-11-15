@@ -78,6 +78,9 @@ async def main() -> dict:
             "VALUES ($1, '4th Craft Toolkit Workshop', $2, 'Puri', 'Puri', 'Odisha', 'Stone carving', 'BASELINE', now())",
             workshop, users["lead"]["id"],
         )
+        craft = f"ivc{tag}"
+        await db.execute_raw('INSERT INTO "Craft" ("id", "name", "createdById", "updatedAt") VALUES ($1, $2, $3, now())',
+                             craft, "Stone carving", users["admin"]["id"])
         form = f"ivf{tag}"
         await db.execute_raw(
             'INSERT INTO "Questionnaire" ("id", "title", "ownerId", "designWorkshopId", "kind", "updatedAt") '
@@ -105,8 +108,8 @@ async def main() -> dict:
         for n, name in enumerate(ARTISANS):
             aid = f"iva{n}{tag}"
             await db.execute_raw(
-                'INSERT INTO "Artisan" ("id", "name", "place", "designWorkshopId", "createdById", "updatedAt") VALUES ($1, $2, $3, $4, $5, now())',
-                aid, name, "Puri", workshop, users["lead"]["id"],
+                'INSERT INTO "Artisan" ("id", "name", "place", "designWorkshopId", "createdById", "craftId", "updatedAt") VALUES ($1, $2, $3, $4, $5, $6, now())',
+                aid, name, "Puri", workshop, users["lead"]["id"], craft,
             )
             artisans[name] = aid
         pool: dict[str, list[str]] = {}
@@ -114,9 +117,9 @@ async def main() -> dict:
         for n, name in enumerate(ARTISANS if size > 0 else ()):
             ids = [f"ivp{n}x{i}{tag}" for i in range(size)]
             await db.execute_raw(
-                'INSERT INTO "Artisan" ("id", "name", "place", "designWorkshopId", "createdById", "createdAt", "updatedAt") '
-                "SELECT x, $2, $3, $4, $5, now() - interval '1 day', now() FROM unnest($1::text[]) AS x",
-                ids, name, POOL_PLACE, workshop, users["lead"]["id"],
+                'INSERT INTO "Artisan" ("id", "name", "place", "designWorkshopId", "createdById", "craftId", "createdAt", "updatedAt") '
+                "SELECT x, $2, $3, $4, $5, $6, now() - interval '1 day', now() FROM unnest($1::text[]) AS x",
+                ids, name, POOL_PLACE, workshop, users["lead"]["id"], craft,
             )
             pool[name] = ids
         rows = await db.query_raw(
