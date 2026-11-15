@@ -118,13 +118,14 @@ def test_record_by_follows_the_session_and_a_stale_switch_is_refused_only_on_rec
         loaded = session["version"]
         assert session["recordBy"] == "SECTION"
         noted = await sessions.patch_session(session["id"], S.SessionPatch(version=loaded, note="Second visit"), lead)
-        switched = await sessions.patch_session(session["id"], S.SessionPatch(version=loaded, recordBy="QUESTION"), lead)
-        assert switched["recordBy"] == "QUESTION" and switched["note"] == "Second visit"
-        assert switched["version"] == noted["version"] + 1
         with pytest.raises(HTTPException) as stale:
-            await sessions.patch_session(session["id"], S.SessionPatch(version=loaded, recordBy="SECTION"), lead)
+            await sessions.patch_session(session["id"], S.SessionPatch(version=loaded, recordBy="QUESTION"), lead)
         assert stale.value.detail["code"] == "STALE_VERSION"
-        assert stale.value.detail["diff"] == {"recordBy": {"current": "QUESTION", "yours": "SECTION"}}
+        assert stale.value.detail["diff"] == {"recordBy": {"current": "SECTION", "yours": "QUESTION"}}
+        switched = await sessions.patch_session(session["id"], S.SessionPatch(version=noted["version"], recordBy="QUESTION"), lead)
+        assert switched["recordBy"] == "QUESTION" and switched["note"] == "Second visit"
+        again = await sessions.patch_session(session["id"], S.SessionPatch(version=loaded, recordBy="QUESTION"), lead)
+        assert again["recordBy"] == "QUESTION" and again["version"] == switched["version"] + 1
         by_question, created = await sessions.create_session(
             create.model_copy(update={"clientKey": f"{create.clientKey}q", "recordBy": "QUESTION"}), lead
         )
