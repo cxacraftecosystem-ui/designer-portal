@@ -147,7 +147,9 @@ export function ToolForm({
   const errorId = `${formId}-error`;
   const craftLimitId = `${formId}-craft-limit`;
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => lockFilledFields(formRef.current, initial, FILLED_TOOL_FIELDS, FILLED_FIELD_REASON), [initial]);
+  useEffect(() => {
+    return lockFilledFields(formRef.current, initial, FILLED_TOOL_FIELDS, FILLED_FIELD_REASON);
+  }, [initial]);
   const [keptAfterRefusal, setKeptAfterRefusal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<BatchProgress | null>(null);

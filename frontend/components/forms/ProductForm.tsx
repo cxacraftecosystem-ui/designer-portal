@@ -125,7 +125,9 @@ export function ProductForm({
   const formId = useId();
   const errorId = `${formId}-error`;
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => lockFilledFields(formRef.current, initial, FILLED_PRODUCT_FIELDS, FILLED_FIELD_REASON), [initial]);
+  useEffect(() => {
+    return lockFilledFields(formRef.current, initial, FILLED_PRODUCT_FIELDS, FILLED_FIELD_REASON);
+  }, [initial]);
   const [keptAfterRefusal, setKeptAfterRefusal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<BatchProgress | null>(null);

@@ -368,7 +368,9 @@ export function ArtisanForm({
     initial?.craftStartDate ? String(initial.craftStartDate).slice(0, 10) : ""
   );
   const [formKey, setFormKey] = useState(0);
-  useEffect(() => lockFilledFields(formRef.current, initial, FILLED_ARTISAN_FIELDS, FILLED_FIELD_REASON), [initial, formKey]);
+  useEffect(() => {
+    return lockFilledFields(formRef.current, initial, FILLED_ARTISAN_FIELDS, FILLED_FIELD_REASON);
+  }, [initial, formKey]);
   const [crossMatch, setCrossMatch] = useState<CrossPortalMatch | null>(null);
   const [prefill, setPrefill] = useState<ArtisanPrefill>({});
   const [prefillKey, setPrefillKey] = useState(0);

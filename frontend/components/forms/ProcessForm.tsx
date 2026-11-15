@@ -335,7 +335,9 @@ export function ProcessForm({
 
   const [error, setError] = useState<string | null>(null);
   const lockRef = useRef<HTMLFormElement>(null);
-  useEffect(() => lockFilledFields(lockRef.current, initial, FILLED_PROCESS_FIELDS, FILLED_FIELD_REASON), [initial]);
+  useEffect(() => {
+    return lockFilledFields(lockRef.current, initial, FILLED_PROCESS_FIELDS, FILLED_FIELD_REASON);
+  }, [initial]);
   const [keptAfterRefusal, setKeptAfterRefusal] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [artisanError, setArtisanError] = useState<string | null>(null);
