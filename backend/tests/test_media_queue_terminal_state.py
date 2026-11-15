@@ -103,7 +103,7 @@ def test_a_failure_to_write_the_clip_does_not_mask_the_jobs_own_failure(monkeypa
 RAW = "**Interviewer:** what dye is that?\n**Interviewee:** Indigo.\n"
 
 
-def _run_transcription(monkeypatch, refine: Any) -> dict[str, Any]:
+def _run_transcription(monkeypatch, refine: Any, mode: str = "REFINED_TRANSLATED") -> dict[str, Any]:
     applied: dict[str, Any] = {}
 
     async def _verdict(*_a: Any, **_k: Any) -> Any:
@@ -125,7 +125,7 @@ def _run_transcription(monkeypatch, refine: Any) -> dict[str, Any]:
     monkeypatch.setattr(media_queue, "get_object_bytes", lambda _key: b"audio")
     monkeypatch.setattr(media_queue, "transcribe_audio_bytes", _transcribe)
     monkeypatch.setattr(media_queue, "load_app_settings", _settings)
-    monkeypatch.setattr(media_queue, "transcription_mode", lambda _s: "REFINED")
+    monkeypatch.setattr(media_queue, "transcription_mode", lambda _s: mode)
     monkeypatch.setattr(media_queue, "refine_transcript_text", refine)
     monkeypatch.setattr(media_queue, "_apply_transcription_result", _apply)
 
@@ -157,6 +157,20 @@ def test_a_refinement_that_succeeds_is_still_used(monkeypatch):
 
     applied = _run_transcription(monkeypatch, _ok)
     assert applied["formattedTranscript"] == "**Interviewer:** ...refined..."
+
+
+@pytest.mark.parametrize("mode", ["RAW", "REFINED"])
+def test_transcribe_only_modes_never_pay_for_a_refinement(monkeypatch, mode):
+    calls: list[Any] = []
+
+    async def _refine(*a: Any, **_k: Any) -> dict[str, Any]:
+        calls.append(a)
+        return {"status": "COMPLETED", "refined": "refined"}
+
+    applied = _run_transcription(monkeypatch, _refine, mode)
+    assert calls == []
+    assert applied["text"] == RAW
+    assert "formattedTranscript" not in applied
 
 
 

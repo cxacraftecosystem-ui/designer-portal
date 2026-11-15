@@ -479,8 +479,11 @@ cooldown — they are lighter and hit a different provider.
 
 **Refinement is separate from transcription.** `OPENAI_API_KEY`'s primary job is rewriting a raw
 transcript into clean interviewer/interviewee dialogue and translating it, per the master-admin
-`transcriptionMode` setting (`RAW` / `REFINED` / `REFINED_TRANSLATED`). It only *transcribes* when it
-is reached as the third link in the chain.
+`transcriptionMode` setting. The admin hub shows it as two choices: "Transcribe and translate"
+(`REFINED_TRANSLATED`, the default) and "Transcribe only" (`RAW`, wire field `transcribeOnly` on
+`/settings/transcription`). Anything but `REFINED_TRANSLATED` skips the refinement pass and queues no
+automatic `TRANSCRIPT_INSIGHTS` job, so no Gemini money is spent until a person asks. It only
+*transcribes* when it is reached as the third link in the chain.
 
 ---
 
