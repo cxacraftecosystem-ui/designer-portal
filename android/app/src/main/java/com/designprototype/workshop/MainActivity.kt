@@ -3619,7 +3619,6 @@ private fun SettingsScreen(
     val scope = rememberCoroutineScope()
     var loading by remember { mutableStateOf(true) }
     var saving by remember { mutableStateOf(false) }
-    var mode by remember { mutableStateOf("REFINED_TRANSLATED") }
     var windowEnabled by remember { mutableStateOf(false) }
     var startTime by remember { mutableStateOf("02:00") }
     var endTime by remember { mutableStateOf("05:00") }
@@ -3631,7 +3630,6 @@ private fun SettingsScreen(
         loadError = null
         runCatching { repository.appSettings() }
             .onSuccess { s ->
-                mode = s.transcriptionMode
                 windowEnabled = s.batchWindowEnabled
                 startTime = s.batchWindowStart
                 endTime = s.batchWindowEnd
@@ -3655,19 +3653,6 @@ private fun SettingsScreen(
             )
             return@RecordCard
         }
-        Text("Transcription output", display = true, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
-        Text(
-            "How audio becomes text after upload. AI refinement always waits for your approval.",
-            color = Muted,
-            style = MaterialTheme.typography.bodySmall
-        )
-        Column(modifier = Modifier.selectableGroup()) {
-        SettingsRadioRow("Raw transcript only", "Fastest and cheapest.", mode == "RAW") { mode = "RAW" }
-        SettingsRadioRow("Refined transcript", "Cleaned into a readable dialogue.", mode == "REFINED") { mode = "REFINED" }
-        SettingsRadioRow("Refined + translated to English", "Refined, then translated to English (default).", mode == "REFINED_TRANSLATED") { mode = "REFINED_TRANSLATED" }
-        }
-
-        HorizontalDivider()
         AppToggle(
             label = "Process during an off-peak window",
             description = "When on, processing runs only in the window below (IST). When off, it runs immediately.",
@@ -3689,14 +3674,12 @@ private fun SettingsScreen(
                     runCatching {
                         repository.updateAppSettings(
                             AppSettingUpdateRequest(
-                                transcriptionMode = mode,
                                 batchWindowEnabled = windowEnabled,
                                 batchWindowStart = startTime,
                                 batchWindowEnd = endTime
                             )
                         )
                     }.onSuccess {
-                        mode = it.transcriptionMode
                         windowEnabled = it.batchWindowEnabled
                         startTime = it.batchWindowStart
                         endTime = it.batchWindowEnd
@@ -3709,23 +3692,6 @@ private fun SettingsScreen(
             modifier = Modifier.fillMaxWidth()
         ) {
             Text(if (saving) "Saving…" else "Save settings")
-        }
-    }
-}
-
-@Composable
-private fun SettingsRadioRow(title: String, subtitle: String, selected: Boolean, onSelect: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth()
-            .selectable(selected = selected, role = androidx.compose.ui.semantics.Role.RadioButton, onClick = onSelect)
-            .heightIn(min = 48.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        FieldRadioButton(selected = selected, onClick = null)
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
-            Text(subtitle, color = Muted, style = MaterialTheme.typography.bodySmall)
         }
     }
 }

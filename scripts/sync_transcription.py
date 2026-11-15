@@ -63,6 +63,7 @@ SHARED_FILES_EXTRA = (
     "backend/tests/test_odia_script.py",
     "backend/tests/test_odia_store.py",
     "backend/tests/test_odia_script_backfill_db.py",
+    "backend/tests/test_transcribe_only.py",
 )
 FIXTURE_DIR = "backend/tests/fixtures/transcript"
 EXPLORER_DIR = "backend/app/services/data_explorer"

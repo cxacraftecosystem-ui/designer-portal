@@ -960,7 +960,7 @@ under a 200 reading "Stage saved".
 
 | Model | Holds | Notes |
 |---|---|---|
-| `AppSetting` | repository-wide settings | includes `transcriptionMode` (`RAW`/`REFINED`/`REFINED_TRANSLATED`) and the STT provider order |
+| `AppSetting` | repository-wide settings | includes `transcriptionMode` (`REFINED_TRANSLATED` = transcribe and translate, the default; `RAW` = transcribe only; a legacy `REFINED` reads as transcribe only) and the STT provider order |
 | `ManagedSecret` | runtime-editable provider keys | value is **Fernet-encrypted at rest**; never returned in full, only a masked preview |
 | `SecretTestResult` | the last reachability check per key | so "is this key working" has an answer that is not a guess |
 | `AppRelease` | published Android APKs | the OTA channel; `versionCode` is what devices compare, and `sizeBytes` (`BigInt`, **nullable**) is what a phone compares a finished download against before handing the file to the installer |

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from app.services import transcript_export, transcript_insights, transcript_portal
+from app.services import app_settings, transcript_export, transcript_insights, transcript_portal
 from app.services.datareport import ai_cache, contract
 from app.services.datareport.contract import Link, ReportContext, ReportOptions
 from app.services.datareport.sheets import ai_glossary, ai_profiles, ai_quotes
@@ -351,6 +351,23 @@ async def test_missing_quotes_queue_only_with_the_flag_on_and_consent(
     monkeypatch.setattr(transcript_insights, "enabled", lambda: True)
     assert await ai_quotes._queue_missing(ctx, ["m1", "m2", "m3"]) == 1
     assert queued == ["m1"]
+
+
+async def test_a_report_queues_no_quotes_while_transcribe_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    queued: list[str] = []
+
+    async def enqueue(mid: str, *, requested_by_id: str | None = None, priority: int = 80) -> Any:
+        queued.append(mid)
+        return SimpleNamespace(id="job")
+
+    async def off() -> bool:
+        return False
+
+    monkeypatch.setattr(transcript_insights, "enabled", lambda: True)
+    monkeypatch.setattr(transcript_insights, "enqueue", enqueue)
+    monkeypatch.setattr(app_settings, "load_translation_on", off)
+    assert await ai_quotes._queue_missing(make_ctx({}), ["m1", "m2"]) == 0
+    assert queued == [], "a download never spends Gemini money while transcribe only"
 
 
 async def test_glossary_lists_every_sighting_with_its_link(monkeypatch: pytest.MonkeyPatch) -> None:
