@@ -473,7 +473,6 @@ def test_the_404_leaves_no_row_and_no_link_behind(monkeypatch):
 
 
 def test_a_non_owner_may_only_link_artisans_they_created(monkeypatch):
-    from app.api.routes import tools
 
     async def _no_tier(*_args, **_kwargs):
         return "VIEW"
@@ -915,7 +914,6 @@ def test_an_empty_craft_name_over_an_empty_join_is_still_an_empty_relation(monke
 
 
 def test_a_populated_artisan_name_does_not_lock_the_artisan_relation(monkeypatch):
-    from app.api.routes import tools
 
     async def _no_tier(*_args, **_kwargs):
         return "VIEW"
@@ -1066,7 +1064,6 @@ def test_the_derived_name_is_withheld_from_the_contributor_guard_and_from_nothin
 
 
 def test_a_non_owner_may_resave_a_tool_linked_to_somebody_elses_artisan(monkeypatch):
-    from app.api.routes import tools
 
     async def _no_tier(*_args, **_kwargs):
         return "VIEW"
@@ -1091,7 +1088,6 @@ def test_a_non_owner_may_resave_a_tool_linked_to_somebody_elses_artisan(monkeypa
 
 
 def test_adding_somebody_elses_artisan_is_still_refused(monkeypatch):
-    from app.api.routes import tools
 
     async def _no_tier(*_args, **_kwargs):
         return "VIEW"
@@ -1121,7 +1117,6 @@ def test_adding_somebody_elses_artisan_is_still_refused(monkeypatch):
 
 
 def test_an_id_that_names_no_visible_artisan_is_a_404_even_when_it_is_already_linked(monkeypatch):
-    from app.api.routes import tools
 
     async def _no_tier(*_args, **_kwargs):
         return "VIEW"
