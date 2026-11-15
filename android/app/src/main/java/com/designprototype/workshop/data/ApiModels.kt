@@ -993,6 +993,7 @@ data class ArtisanDetailDto(
     val createdBy: UserDto? = null,
     val extraMetadata: JsonObject? = null,
     val updatedAt: String? = null,
+    val editAccess: String? = null,
 )
 
 @Serializable
@@ -1094,6 +1095,7 @@ data class ProductDetailDto(
     val createdBy: UserDto? = null,
     val extraMetadata: JsonObject? = null,
     val updatedAt: String? = null,
+    val editAccess: String? = null,
 )
 
 @Serializable
@@ -1149,6 +1151,7 @@ data class ToolDetailDto(
     val createdBy: UserDto? = null,
     val extraMetadata: JsonObject? = null,
     val updatedAt: String? = null,
+    val editAccess: String? = null,
 )
 
 @Serializable
@@ -1309,6 +1312,7 @@ data class ProcessDetailDto(
     val createdBy: UserDto? = null,
     val extraMetadata: JsonObject? = null,
     val updatedAt: String? = null,
+    val editAccess: String? = null,
 )
 
 @Serializable
@@ -1591,7 +1595,9 @@ data class WorkshopSubmissionCheckDto(
     val outOfWindow: Boolean = false,
     val needsAdminApproval: Boolean = false,
     val assigned: Boolean = true,
-    val canSubmit: Boolean = true
+    val canSubmit: Boolean = true,
+    val accessLevel: String? = null,
+    val requestStatus: String? = null,
 )
 
 @Serializable
