@@ -16,8 +16,6 @@ from app.core.db import db
 from app.core.deps import (
     get_current_user,
     get_value,
-    is_content_admin,
-    may_edit_lower_ranked_record,
     require_record_creator,
 )
 from app.services import (
@@ -26,7 +24,7 @@ from app.services import (
     cross_portal,
 )
 from app.services.aadhaar import records as aadhaar_records
-from app.services.access import effective_tier_for_record, guard_record_edit
+from app.services.access import guard_record_edit, record_edit_privilege
 from app.services.artisan_identity import normalize_pehchan, validate_aadhaar
 from app.services.coverage import coverage_peer_active
 from app.services.cross_portal_client import PeerUnavailable, peer_call
@@ -175,12 +173,7 @@ async def _prefill(match: dict[str, Any]) -> dict[str, Any]:
 
 async def _assert_may_edit(artisan: Any, user: Any) -> None:
     await assert_may_write_a_record_filed_under(getattr(artisan, "designWorkshopId", None), user)
-    owner_id = get_value(artisan, "createdById")
-    if is_content_admin(user) or (owner_id is not None and get_value(user, "id") == owner_id):
-        return
-    if await may_edit_lower_ranked_record(user, owner_id):
-        return
-    if await effective_tier_for_record(user, owner_id, "artisan", artisan.id) == "EDIT":
+    if await record_edit_privilege(artisan, user, "artisan"):
         return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,

@@ -62,19 +62,14 @@ async def _self_row(user: Any) -> Any:
 
 
 async def _artisan_for_verification(artisan_id: str, user: Any) -> Any:
-    from app.core.deps import may_edit_lower_ranked_record
-    from app.services.access import effective_tier_for_record
+    from app.services.access import record_edit_privilege
     from app.services.record_design_workshop import assert_may_write_a_record_filed_under
 
     artisan = await db.artisan.find_unique(where={"id": artisan_id})
     if artisan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     allowed = can_create_records(user) and (
-        is_admin(user)
-        or artisan.createdById == user.id
-        or await may_edit_lower_ranked_record(user, artisan.createdById)
-        or await effective_tier_for_record(user, artisan.createdById, "artisan", artisan.id)
-        == "EDIT"
+        is_admin(user) or await record_edit_privilege(artisan, user, "artisan")
     )
     if not allowed:
         raise HTTPException(

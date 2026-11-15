@@ -331,8 +331,8 @@ async def test_a_stranger_may_not_link(world, monkeypatch):
     async def tier(*_a, **_k):
         return None
 
-    monkeypatch.setattr(routes, "may_edit_lower_ranked_record", no)
-    monkeypatch.setattr(routes, "effective_tier_for_record", tier)
+    monkeypatch.setattr("app.core.deps.may_edit_lower_ranked_record", no)
+    monkeypatch.setattr("app.services.access.effective_tier_for_record", tier)
     with pytest.raises(HTTPException) as exc:
         await routes.link_artisan("dp1", routes.LinkIn(consent=True), SimpleNamespace(id="u9", role="RESEARCHER"))
     assert exc.value.status_code == 403

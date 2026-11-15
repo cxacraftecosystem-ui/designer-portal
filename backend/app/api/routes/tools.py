@@ -9,9 +9,7 @@ from app.core.deps import (
     assert_can_delete,
     get_current_user,
     get_value,
-    is_content_admin,
     is_empty_value,
-    may_edit_lower_ranked_record,
     removes_links,
     require_record_creator,
 )
@@ -23,7 +21,6 @@ from app.schemas.records import (
 )
 from app.services import craft_master
 from app.services.access import (
-    effective_tier_for_record,
     guard_record_edit,
     record_revision,
     with_edit_access,
@@ -557,15 +554,9 @@ async def unassign_tool_artisan(
 
 
 async def _may_manage_tool_links(tool: Any, tool_id: str, current_user: Any) -> bool:
-    if is_content_admin(current_user) or getattr(tool, "createdById", None) == current_user.id:
-        return True
-    owner_id = getattr(tool, "createdById", None)
-    if not owner_id:
-        return False
-    if await may_edit_lower_ranked_record(current_user, owner_id):
-        return True
-    tier = await effective_tier_for_record(current_user, owner_id, "tool", tool_id)
-    return tier == "EDIT"
+    from app.services.access import record_edit_privilege
+
+    return await record_edit_privilege(tool, current_user, "tool")
 
 
 def _standardise(apply: Any, data: dict[str, Any], stored: Any = None) -> None:

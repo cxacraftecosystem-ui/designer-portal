@@ -699,17 +699,12 @@ async def get_artisan_consent(artisan_id: str, current_user: Any = Depends(get_c
 async def record_artisan_consent(
     artisan_id: str, payload: ArtisanConsentIn, current_user: Any = Depends(get_current_user)
 ) -> dict[str, Any]:
-    from app.core.deps import is_content_admin, may_edit_lower_ranked_record
     from app.services import dictation_consent
+    from app.services.access import record_edit_privilege
 
     artisan = await require_record(db.artisan, artisan_id)
     await assert_may_write_a_record_filed_under(artisan.designWorkshopId, current_user)
-    owner_id = get_value(artisan, "createdById")
-    allowed = (
-        is_content_admin(current_user)
-        or (owner_id is not None and get_value(current_user, "id") == owner_id)
-        or await may_edit_lower_ranked_record(current_user, owner_id)
-    )
+    allowed = await record_edit_privilege(artisan, current_user, "artisan")
     if not allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

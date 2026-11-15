@@ -970,7 +970,9 @@ def merge_field_provenance(
     )
     earlier_exif = previous_extra.get("mediaExif")
     added_exif = incoming_extra.get("mediaExif")
-    if isinstance(earlier_exif, list) and isinstance(added_exif, list):
+    if isinstance(earlier_exif, list) and not isinstance(added_exif, list):
+        base_extra["mediaExif"] = earlier_exif
+    elif isinstance(earlier_exif, list) and isinstance(added_exif, list):
         base_extra["mediaExif"] = earlier_exif + [
             entry for entry in added_exif if entry not in earlier_exif
         ]

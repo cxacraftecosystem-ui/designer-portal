@@ -15,6 +15,7 @@ _MODULES = {
     "transcription": "app.services.questionnaire_transcription",
     "workshop_access": "app.services.workshop_access",
     "codes": "app.services.cross_portal_codes",
+    "access": "app.services.access",
 }
 
 
