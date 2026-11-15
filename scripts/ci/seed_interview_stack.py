@@ -45,6 +45,7 @@ PROMPTS = {
 }
 
 ARTISANS = ("Meera Devi", "Ramesh Maharana", "Sushila Sahoo", "Bhagirathi Nayak", "Lalita Behera")
+POOL_PLACE = "Pipili"
 
 
 def _refuse_remote() -> None:
@@ -108,6 +109,16 @@ async def main() -> dict:
                 aid, name, "Puri", workshop, users["lead"]["id"],
             )
             artisans[name] = aid
+        pool: dict[str, list[str]] = {}
+        size = int(os.environ.get("INTERVIEW_POOL", "0") or 0)
+        for n, name in enumerate(ARTISANS if size > 0 else ()):
+            ids = [f"ivp{n}x{i}{tag}" for i in range(size)]
+            await db.execute_raw(
+                'INSERT INTO "Artisan" ("id", "name", "place", "designWorkshopId", "createdById", "createdAt", "updatedAt") '
+                "SELECT x, $2, $3, $4, $5, now() - interval '1 day', now() FROM unnest($1::text[]) AS x",
+                ids, name, POOL_PLACE, workshop, users["lead"]["id"],
+            )
+            pool[name] = ids
         rows = await db.query_raw(
             'SELECT "lineageId", "displayCode" FROM "QuestionnaireQuestion" WHERE "questionnaireId" = $1 ORDER BY "displayCode"', form
         )
@@ -121,6 +132,8 @@ async def main() -> dict:
             "sectionTitles": {code: title for code, title, _ in SECTIONS},
             "questions": {str(r["displayCode"]): str(r["lineageId"]) for r in rows},
             "artisans": artisans,
+            "pool": pool,
+            "poolPlace": POOL_PLACE,
             "users": users,
             "tokens": {key: create_access_token(u["id"]) for key, u in users.items()},
         }
