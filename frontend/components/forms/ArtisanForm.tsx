@@ -41,7 +41,7 @@ import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, inferMediaType, uploadMediaBatch, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
 import { artisanBody, PEHCHAN_NO } from "@/lib/recordPayloads";
-import { editedFields, FILL_EMPTY_NOTE, fillsOnly, isBlankValue, KEPT_AFTER_REFUSAL, VIEW_ONLY_NOTE, viewOnly, lockFilledFields, FILLED_FIELD_REASON } from "@/lib/recordDiff";
+import { FILL_EMPTY_NOTE, fillsOnly, isBlankValue, KEPT_AFTER_REFUSAL, VIEW_ONLY_NOTE, viewOnly, lockFilledFields, FILLED_FIELD_REASON } from "@/lib/recordDiff";
 import {
   acknowledgedIds,
   checkDuplicates,
@@ -566,7 +566,7 @@ export function ArtisanForm({
     setSaving(true);
     try {
       const exifItems = await collectExifMetadata(mediaFiles);
-      const exifRemark = exifMetadataToRemark(exifItems);
+      const exifRemark = fillsOnly(initial) && !isBlankValue(initial?.notes) ? "" : exifMetadataToRemark(exifItems);
       const recordedAt = recordedAtFromForm(form);
       const recordedTimezone = recordedTimezoneFromForm(form);
       const location = locationFromForm(form);
@@ -585,7 +585,6 @@ export function ArtisanForm({
         setSaving(false);
         return;
       }
-      const keepsNotes = fillsOnly(initial) && !isBlankValue(initial?.notes);
       const payload = artisanBody(form, {
         craftId,
         workshopId: workshop.workshopId || null,
@@ -593,13 +592,14 @@ export function ArtisanForm({
         initialStatus: initial?.status,
         formContract: ARTISAN_FORM_CONTRACT,
         ...(initial ? {} : { duplicateAcknowledged: acknowledgedIds(duplicateDismissed) }),
-        exif: { items: exifItems, remark: keepsNotes ? "" : exifRemark }
+        exif: { items: exifItems, remark: exifRemark }
       });
       const outcome = await saveOrQueue<Artisan>({
         label: `Artisan · ${payload.name || "Untitled"}`,
         endpoint: initial ? `/artisans/${initial.id}` : "/artisans",
         method: initial ? "PATCH" : "POST",
-        body: initial ? editedFields(payload, initial) : payload,
+        body: payload,
+        base: initial ?? null,
         media: [
           {
             files: mediaFiles,

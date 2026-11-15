@@ -48,7 +48,7 @@ import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, inferMediaType, mediaKindWord, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
 import { recordingFilename, splitExtension } from "@/lib/naming";
 import { saveOrQueue } from "@/lib/offline";
-import { editedFields, FILL_EMPTY_NOTE, fillsOnly, isBlankValue, KEPT_AFTER_REFUSAL, VIEW_ONLY_NOTE, viewOnly, lockFilledFields, FILLED_FIELD_REASON } from "@/lib/recordDiff";
+import { FILL_EMPTY_NOTE, fillsOnly, isBlankValue, KEPT_AFTER_REFUSAL, VIEW_ONLY_NOTE, viewOnly, lockFilledFields, FILLED_FIELD_REASON } from "@/lib/recordDiff";
 import { toolBody } from "@/lib/recordPayloads";
 import { canManageCrafts, hasRank } from "@/lib/permissions";
 import type { Artisan, Craft, RecordStatus, ToolDocumentation } from "@/lib/types";
@@ -405,7 +405,7 @@ export function ToolForm({
       const exifItems = await collectExifMetadata(
         [...Object.values(gridFiles), measurePhoto?.file, ...stageFiles, ...mediaFiles].filter(Boolean) as File[]
       );
-      const exifRemark = exifMetadataToRemark(exifItems);
+      const exifRemark = fillsOnly(initial) && !isBlankValue(initial?.remarks) ? "" : exifMetadataToRemark(exifItems);
       const recordedAt = recordedAtFromForm(form);
       const recordedTimezone = recordedTimezoneFromForm(form);
       const location = locationFromForm(form);
@@ -418,13 +418,14 @@ export function ToolForm({
         workshopId: workshop.workshopId || null,
         designWorkshopId: workshop.designWorkshopId || null,
         initialStatus: initial?.status,
-        exif: { items: exifItems, remark: fillsOnly(initial) && !isBlankValue(initial?.remarks) ? "" : exifRemark }
+        exif: { items: exifItems, remark: exifRemark }
       });
       const outcome = await saveOrQueue<ToolDocumentation>({
         label: `Tool · ${payload.toolkitName || "Untitled"}`,
         endpoint: initial ? `/tools/${initial.id}` : "/tools",
         method: initial ? "PATCH" : "POST",
-        body: initial ? editedFields(payload, initial) : payload,
+        body: payload,
+        base: initial ?? null,
         media: [
           ...(Object.entries(gridFiles) as [GridGroup, File][]).map(([group, file]) => ({
             files: [file],

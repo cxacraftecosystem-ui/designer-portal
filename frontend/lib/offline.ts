@@ -3,6 +3,7 @@
 import { byCount, countNoun } from "@/lib/format";
 import { ApiError, apiFetch, getSessionMarker, sessionOwesPasswordChange } from "@/lib/api";
 import { possibleDuplicateHold, type DuplicateCandidate } from "@/lib/duplicates";
+import { editedFields } from "@/lib/recordDiff";
 import {
   isCredentialExpiry,
   isPasswordChangeRefusal,
@@ -985,14 +986,17 @@ export async function saveOrQueue<T extends { id: string }>({
   endpoint,
   method,
   body,
-  media
+  media,
+  base
 }: {
   label: string;
   endpoint: string;
   method: "POST" | "PATCH";
   body: unknown;
   media?: OutboxMediaBatch[];
+  base?: object | null;
 }): Promise<SaveOutcome<T>> {
+  if (method === "PATCH" && base && body && typeof body === "object") body = editedFields(body as Record<string, unknown>, base);
   const payload = JSON.stringify(writeBody(body, method));
   const idempotencyKey = outboxSendsIdempotencyHeader({ endpoint, method }) ? mintClientKey() : null;
   const queue = async () => {

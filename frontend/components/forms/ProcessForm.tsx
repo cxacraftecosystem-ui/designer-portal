@@ -42,7 +42,7 @@ import { countNoun, formatDate } from "@/lib/format";
 import { handleFormEnter } from "@/lib/formNav";
 import { describePreProcess, describeProcessStep, renameMediaFile, uploadMediaFile } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
-import { editedFields, FILL_EMPTY_NOTE, fillsOnly, KEPT_AFTER_REFUSAL, VIEW_ONLY_NOTE, viewOnly, type EditAccess, lockFilledFields, FILLED_FIELD_REASON } from "@/lib/recordDiff";
+import { FILL_EMPTY_NOTE, fillsOnly, KEPT_AFTER_REFUSAL, VIEW_ONLY_NOTE, viewOnly, type EditAccess, lockFilledFields, FILLED_FIELD_REASON } from "@/lib/recordDiff";
 import { processBody } from "@/lib/recordPayloads";
 import { loadCachedRegister } from "@/lib/referenceCache";
 import {
@@ -604,7 +604,8 @@ export function ProcessForm({
         label: `Process · ${trimmedName || "Untitled"}`,
         endpoint: isEdit ? `/processes/${initial!.id}` : "/processes",
         method: isEdit ? "PATCH" : "POST",
-        body: isEdit ? editedFields(payload, initial) : payload,
+        body: payload,
+        base: isEdit ? initial : null,
         media: [
           {
             files: preProcessAvailable

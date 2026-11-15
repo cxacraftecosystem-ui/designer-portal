@@ -156,7 +156,7 @@ no key is skipped wherever it sits.
 |---|---|---|---|
 | Backend unit (`backend/tests/`) | 480 | 7381 `def test_` | `python -m pytest -rf --durations=15` from `backend/` |
 | Web end-to-end (`frontend/e2e/`) | 362 | 3879 `test(` | Playwright, `frontend/playwright.config.ts` |
-| Android unit (`android/app/src/test/`) | 458 | 4603 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
+| Android unit (`android/app/src/test/`) | 460 | 4618 `@Test` | `./gradlew :app:testDebugUnitTest` from `android/` |
 | Android instrumented (`android/app/src/androidTest/`) | 64 | 312 `@Test` | needs a device; on demand only (`.github/workflows/android-emulator.yml`), never a gate |
 
 The backend case count is `def test_` occurrences; pytest reports a larger number because
@@ -184,9 +184,9 @@ and this one asserted an absence it had never looked for.
 |---|---|---|---|---|
 | `backend/app` | 476 | 160,434 | 476 | 160,434 |
 | `frontend/app` | 140 | 36,886 | 140 | 36,886 |
-| `frontend/components` | 505 | 114,366 | 505 | 114,366 |
-| `frontend/lib` | 274 | 63,220 | 274 | 63,220 |
-| `android/app/src/main/java` | 538 | 183,176 | 539 | 183,286 |
+| `frontend/components` | 505 | 114,369 | 505 | 114,369 |
+| `frontend/lib` | 274 | 63,224 | 274 | 63,224 |
+| `android/app/src/main/java` | 538 | 183,344 | 540 | 183,498 |
 
 Two columns because the two numbers get quoted interchangeably and disagree by however much work is
 uncommitted. **Tracked** is `git ls-files`, which is the figure to use in a write-up — it is
