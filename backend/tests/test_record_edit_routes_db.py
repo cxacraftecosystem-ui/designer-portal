@@ -223,9 +223,12 @@ def test_workshop_edit_access_works_in_a_v2_session(monkeypatch) -> None:
         try:
             ids, session = await _admins_interview(client)
             row = await sessions.load_session_row(client, session["id"])
+            await _grant(client, ids, "VIEW")
             assert await sessions.can_work_in(client, ids.other, row) is False
             assert await sessions.can_add_answers_in(client, ids.other, row) is False
-            await _grant(client, ids, "EDIT")
+            await client.execute_raw(
+                'UPDATE "WorkshopAssignment" SET "accessLevel" = $2 WHERE "userId" = $1', ids.other.id, "EDIT"
+            )
             assert await sessions.can_work_in(client, ids.other, row) is True
         finally:
             await client.disconnect()

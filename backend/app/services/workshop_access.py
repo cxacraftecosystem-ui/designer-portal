@@ -75,8 +75,8 @@ def workshop_is_curated(rows: Any) -> bool:
     return any(enum_str(r.status) == "GRANTED" and get_value(r, "assignedById") for r in rows)
 
 
-async def resolve_workshop_access(user: Any, workshop_id: str) -> WorkshopAccess:
-    rows = await db.workshopassignment.find_many(where={"workshopId": workshop_id})
+async def resolve_workshop_access(user: Any, workshop_id: str, *, client: Any = None) -> WorkshopAccess:
+    rows = await (client or db).workshopassignment.find_many(where={"workshopId": workshop_id})
     uid = get_value(user, "id")
     mine = next((r for r in rows if r.userId == uid), None)
     row_status = enum_str(mine.status) if mine is not None else None
@@ -125,10 +125,10 @@ async def accessible_workshops_where(
     return {"id": {"not_in": blocked}} if blocked else None
 
 
-async def workshop_edit_privilege(user: Any, workshop_id: str | None) -> bool:
+async def workshop_edit_privilege(user: Any, workshop_id: str | None, *, client: Any = None) -> bool:
     if not workshop_id:
         return False
-    access = await resolve_workshop_access(user, workshop_id)
+    access = await (resolve_workshop_access(user, workshop_id, client=client) if client is not None else resolve_workshop_access(user, workshop_id))
     return access.at_least("EDIT")
 
 

@@ -34,7 +34,7 @@ from app.schemas.questionnaire import (
     QuestionnaireSectionUpdate,
 )
 from app.services import answer_drafts, cross_portal_codes, csv_safe, naming
-from app.services.access import guard_record_edit, owner_download_scope
+from app.services.access import guard_record_edit, may_change_others_answers, owner_download_scope
 from app.services.artisan_merge import redirect_ids
 from app.services.completeness import (
     attach as attach_completeness,
@@ -1152,7 +1152,11 @@ async def update_interview(
             )
         if payload.responses is not None and not shimmed:
             await upsert_responses(
-                interview_id, payload.responses, current_user, client=tx, privileged=privileged
+                interview_id,
+                payload.responses,
+                current_user,
+                client=tx,
+                privileged=await may_change_others_answers(interview, current_user, "questionnaire"),
             )
     if shimmed and (payload.artisanIds is not None or payload.responses is not None):
         await shims_dr.patch_global_interview(interview, payload, current_user)
