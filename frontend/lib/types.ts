@@ -1,6 +1,7 @@
 import type { TranscriptPreview } from "@/lib/transcript/contract";
 import type { RecordingChips } from "@/lib/questionnaire/chips";
 import type { CompletenessBlock } from "@/lib/completenessCore";
+import type { EditAccess } from "@/lib/recordDiff";
 
 export type UserRole =
   | "MASTER_ADMIN"
@@ -147,6 +148,7 @@ export type Craft = {
 };
 
 export type Artisan = {
+  editAccess?: EditAccess | null;
   completeness?: CompletenessBlock | null;
   id: string;
   name: string;
@@ -236,6 +238,9 @@ export type WorkshopSubmissionCheck = {
   needsAdminApproval: boolean;
   assigned: boolean;
   canSubmit: boolean;
+  accessLevel?: string | null;
+  requestStatus?: string | null;
+  canEdit?: boolean;
 };
 
 export type MediaFile = {
@@ -268,6 +273,7 @@ export type MediaFile = {
 };
 
 export type ProductDocumentation = {
+  editAccess?: EditAccess | null;
   completeness?: CompletenessBlock | null;
   id: string;
   craftName: string;
@@ -307,6 +313,7 @@ export type ProductDocumentation = {
 };
 
 export type ToolDocumentation = {
+  editAccess?: EditAccess | null;
   completeness?: CompletenessBlock | null;
   id: string;
   craftName: string;

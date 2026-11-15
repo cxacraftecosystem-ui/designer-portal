@@ -36,12 +36,13 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { Dropdown } from "@/components/ui/Dropdown";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
-import { apiFetch, listResource } from "@/lib/api";
+import { ApiError, apiFetch, listResource } from "@/lib/api";
 import { listAllPages } from "@/lib/listAllPages";
 import { countNoun, formatDate } from "@/lib/format";
 import { handleFormEnter } from "@/lib/formNav";
 import { describePreProcess, describeProcessStep, renameMediaFile, uploadMediaFile } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
+import { editedFields, FILL_EMPTY_NOTE, fillsOnly, KEPT_AFTER_REFUSAL, VIEW_ONLY_NOTE, viewOnly, type EditAccess, lockFilledFields, FILLED_FIELD_REASON } from "@/lib/recordDiff";
 import { processBody } from "@/lib/recordPayloads";
 import { loadCachedRegister } from "@/lib/referenceCache";
 import {
@@ -67,6 +68,7 @@ export type ProcessStepRecord = {
 };
 
 export type ProcessRecord = {
+  editAccess?: EditAccess | null;
   id: string;
   name: string;
   productId: string;
@@ -106,6 +108,9 @@ function stepTypeLabel(stepType: string): string {
 function makeKey(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
+
+
+const FILLED_PROCESS_FIELDS = ["name"] as const;
 
 export function hasUnsavedWork({
   saving,
@@ -329,6 +334,9 @@ export function ProcessForm({
   const [productCache, setProductCache] = useState<{ artisanId: string; cachedAt: string } | null>(null);
 
   const [error, setError] = useState<string | null>(null);
+  const lockRef = useRef<HTMLFormElement>(null);
+  useEffect(() => lockFilledFields(lockRef.current, initial, FILLED_PROCESS_FIELDS, FILLED_FIELD_REASON), [initial]);
+  const [keptAfterRefusal, setKeptAfterRefusal] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
   const [artisanError, setArtisanError] = useState<string | null>(null);
   const [productError, setProductError] = useState<string | null>(null);
@@ -526,6 +534,7 @@ export function ProcessForm({
     if (committed) return;
     if (filing.saveHeld) return;
     setError(null);
+    setKeptAfterRefusal(false);
     setNameError(null);
     setArtisanError(null);
     setProductError(null);
@@ -595,7 +604,7 @@ export function ProcessForm({
         label: `Process · ${trimmedName || "Untitled"}`,
         endpoint: isEdit ? `/processes/${initial!.id}` : "/processes",
         method: isEdit ? "PATCH" : "POST",
-        body: payload,
+        body: isEdit ? editedFields(payload, initial) : payload,
         media: [
           {
             files: preProcessAvailable
@@ -723,6 +732,8 @@ export function ProcessForm({
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to save process");
+      setKeptAfterRefusal(true);
+      if (err instanceof ApiError && err.status === 403) workshop.recheck();
       setGuardOpen(false);
     } finally {
       setSaving(false);
@@ -740,6 +751,7 @@ export function ProcessForm({
 
   return (
     <form
+      ref={lockRef}
       className="panel grid gap-4 p-5"
       onKeyDown={handleFormEnter}
       onSubmit={(event) => {
@@ -753,10 +765,15 @@ export function ProcessForm({
         </p>
       </div>
       {initial ? <FieldProvenance extraMetadata={initial.extraMetadata} /> : null}
-      {error ? (
+      {error && !keptAfterRefusal ? (
         <div id={errorId} role="alert" className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">
           {error}
         </div>
+      ) : null}
+      {viewOnly(initial) ? (
+        <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">{VIEW_ONLY_NOTE}</p>
+      ) : fillsOnly(initial) ? (
+        <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">{FILL_EMPTY_NOTE}</p>
       ) : null}
       <CarryContextBanner offer={carry.applied} onChange={clearCarriedContext} />
 
@@ -1025,6 +1042,13 @@ export function ProcessForm({
       {footerFields ? <div className="grid gap-3 border-t border-line-200 pt-4">{footerFields}</div> : null}
 
       <HeldPostNotice refusal={filing.notice} id={filingNoticeId} className="" sayPending />
+
+      {error && keptAfterRefusal ? (
+        <div id={errorId} role="alert" data-testid="save-refusal" className="rounded-md border border-red-200 bg-error-100 px-3 py-2 text-sm text-red-800">
+          <p>{error}</p>
+          <p className="mt-1 text-xs">{KEPT_AFTER_REFUSAL}</p>
+        </div>
+      ) : null}
 
       <div className="flex items-center justify-end gap-2">
         {uploadNote ? <span className="mr-auto text-xs text-ink-500">{uploadNote}</span> : null}

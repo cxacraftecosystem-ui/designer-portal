@@ -1,6 +1,7 @@
 import asyncio
 import time
 from collections import OrderedDict
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -666,11 +667,30 @@ def enum_or_raw(value: Any) -> Any:
     return getattr(value, "value", value)
 
 
+def as_instant(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day, tzinfo=UTC)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip())
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return None
+
+
 def values_match(current_value: Any, next_value: Any) -> bool:
     current_value = enum_or_raw(current_value)
     next_value = enum_or_raw(next_value)
     if current_value == next_value:
         return True
+    if isinstance(current_value, date) or isinstance(next_value, date):
+        current_instant = as_instant(current_value)
+        next_instant = as_instant(next_value)
+        if current_instant is not None and next_instant is not None:
+            return current_instant == next_instant
     try:
         return Decimal(str(current_value)) == Decimal(str(next_value))
     except (InvalidOperation, ValueError):
@@ -678,21 +698,22 @@ def values_match(current_value: Any, next_value: Any) -> bool:
 
 
 def assert_can_contribute_fields(
-    record: Any, user: Any, data: dict[str, Any], owner_field: str = "createdById"
+    record: Any,
+    user: Any,
+    data: dict[str, Any],
+    owner_field: str = "createdById",
+    *,
+    unchanged: Any = (),
 ) -> None:
     if is_content_admin(user) or get_value(record, owner_field) == get_value(user, "id"):
         return
+    from app.services.record_changes import locked_fields, locked_fields_sentence
 
-    locked_fields = [
-        field
-        for field, next_value in data.items()
-        if not is_empty_value(get_value(record, field))
-        and (is_empty_value(next_value) or not values_match(get_value(record, field), next_value))
-    ]
-    if locked_fields:
+    locked = locked_fields(record, data, unchanged=unchanged)
+    if locked:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Only the person who recorded it or an admin can change or clear these filled-in fields: {', '.join(sorted(locked_fields))}",
+            detail=locked_fields_sentence(locked),
         )
 
 
@@ -701,11 +722,21 @@ def assert_can_contribute_relation(
 ) -> None:
     if is_content_admin(user) or get_value(record, owner_field) == get_value(user, "id"):
         return
+    from app.services.record_changes import field_words
+
     if populated:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Only the person who recorded it or an admin can change this filled-in link: {field_name}",
+            detail=(
+                "Only the person who recorded this, an admin, or someone with Edit access to its "
+                f"workshop can change these filled-in links: {field_words(field_name)}."
+            ),
         )
+
+
+def removes_links(stored: Any, wanted: Any) -> bool:
+    kept = {str(value) for value in (wanted or []) if value}
+    return any(str(value) not in kept for value in (stored or []) if value)
 
 
 def assert_owner_or_admin(record: Any, user: Any, owner_field: str = "createdById") -> None:

@@ -12,6 +12,7 @@ from app.core.deps import (
     is_content_admin,
     is_empty_value,
     may_edit_lower_ranked_record,
+    removes_links,
     require_record_creator,
 )
 from app.schemas.records import (
@@ -21,7 +22,12 @@ from app.schemas.records import (
     ToolUpdate,
 )
 from app.services import craft_master
-from app.services.access import effective_tier_for_record, guard_record_edit, record_revision
+from app.services.access import (
+    effective_tier_for_record,
+    guard_record_edit,
+    record_revision,
+    with_edit_access,
+)
 from app.services.artisan_merge import redirect_ids, redirect_payload
 from app.services.completeness import (
     attach as attach_completeness,
@@ -386,11 +392,16 @@ async def create_tool(
 async def get_tool(tool_id: str, current_user: Any = Depends(get_current_user)) -> dict[str, Any]:
     tool = await require_record(db.tooldocumentation, tool_id)
     await hydrate_relations([tool], RELATIONS)
-    return await attach_completeness(
-        "tool",
-        _order_links(
-            public_encode(tool, current_user, media_urls=await media_url_owners(current_user))
+    return await with_edit_access(
+        await attach_completeness(
+            "tool",
+            _order_links(
+                public_encode(tool, current_user, media_urls=await media_url_owners(current_user))
+            ),
         ),
+        tool,
+        current_user,
+        "tool",
     )
 
 
@@ -453,8 +464,9 @@ async def update_tool(
             if stored == wanted:
                 continue
             if not privileged:
-                populated = bool(stored) or (
-                    denormalised is not None
+                populated = removes_links(stored, wanted) or (
+                    not stored
+                    and denormalised is not None
                     and not is_empty_value(get_value(tool, denormalised))
                 )
                 assert_can_contribute_relation(tool, current_user, populated, key)

@@ -24,6 +24,7 @@ import { reviewRecordViewHref } from "@/lib/recordView";
 import { ActionGroup } from "@/components/ui/ActionGroup";
 
 type PendingItem = {
+  canEdit?: boolean;
   recordType: string;
   id: string;
   label: string;
@@ -224,7 +225,7 @@ export default function ReviewPage() {
     return (
       !editLocked(item) &&
       reviewEditableFields(item.recordType).length > 0 &&
-      canEditOthersRecord(user, item.createdBy?.role)
+      (item.canEdit ?? canEditOthersRecord(user, item.createdBy?.role))
     );
   }
 

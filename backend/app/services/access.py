@@ -169,6 +169,51 @@ async def record_revision(
     )
 
 
+def record_workshop_id(record: Any, record_type: str) -> str | None:
+    from app.core.deps import get_value
+
+    if record_type.lower() == "workshop":
+        return get_value(record, "id")
+    return get_value(record, "workshopId")
+
+
+async def record_edit_privilege(record: Any, user: Any, record_type: str) -> bool:
+    from app.core.deps import get_value, is_content_admin, may_edit_lower_ranked_record
+    from app.services import workshop_access
+
+    owner_id = get_value(record, "createdById")
+    uid = get_value(user, "id")
+    if is_content_admin(user) or (owner_id is not None and uid == owner_id):
+        return True
+    if await may_edit_lower_ranked_record(user, owner_id):
+        return True
+    if (
+        await effective_tier_for_record(user, owner_id, record_type, get_value(record, "id"))
+        == "EDIT"
+    ):
+        return True
+    return await workshop_access.workshop_edit_privilege(user, record_workshop_id(record, record_type))
+
+
+async def record_edit_access(record: Any, user: Any, record_type: str) -> str:
+    from app.services import workshop_access
+
+    if await record_edit_privilege(record, user, record_type):
+        return "FULL"
+    workshop_id = record_workshop_id(record, record_type)
+    if workshop_id and not (
+        await workshop_access.resolve_workshop_access(user, workshop_id)
+    ).at_least("CONTRIBUTE"):
+        return "NONE"
+    return "FILL_EMPTY"
+
+
+async def with_edit_access(payload: Any, record: Any, user: Any, record_type: str) -> Any:
+    if isinstance(payload, dict):
+        payload["editAccess"] = await record_edit_access(record, user, record_type)
+    return payload
+
+
 async def guard_record_edit(
     record: Any,
     user: Any,
@@ -178,30 +223,23 @@ async def guard_record_edit(
     client: Any = None,
     derived: Collection[str] = (),
 ) -> bool:
-    from app.core.deps import (
-        assert_can_contribute_fields,
-        get_value,
-        is_content_admin,
-        may_edit_lower_ranked_record,
-    )
+    from app.core.deps import assert_can_contribute_fields
+    from app.services.record_changes import settle_location
 
-    owner_id = get_value(record, "createdById")
-    uid = get_value(user, "id")
-    privileged = is_content_admin(user) or (owner_id is not None and uid == owner_id)
+    privileged = await record_edit_privilege(record, user, record_type)
     if not privileged:
-        if await may_edit_lower_ranked_record(user, owner_id) or (
-            await effective_tier_for_record(user, owner_id, record_type, get_value(record, "id"))
-            == "EDIT"
-        ):
-            privileged = True
-        else:
-            assert_can_contribute_fields(
-                record,
-                user,
-                {key: value for key, value in data.items() if key not in derived}
-                if derived
-                else data,
-            )
+        from app.services import workshop_access
+
+        await workshop_access.assert_workshop_access(
+            user, record_workshop_id(record, record_type), "CONTRIBUTE"
+        )
+        unchanged = await settle_location(record, data, client=client)
+        assert_can_contribute_fields(
+            record,
+            user,
+            {key: value for key, value in data.items() if key not in derived} if derived else data,
+            unchanged=unchanged,
+        )
     await record_revision(record, user, data, record_type, client=client)
     return privileged
 

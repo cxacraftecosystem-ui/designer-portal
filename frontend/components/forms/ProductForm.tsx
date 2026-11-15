@@ -35,11 +35,12 @@ import { DictationUnavailableNotice } from "@/components/richtext/DictationUnava
 import { RichTextField } from "@/components/richtext/RichTextField";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { useLeaveGuard } from "@/components/UnsavedChangesGuard";
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
 import { locationFromForm, recordedAtFromForm, recordedTimezoneFromForm, useFocusField, useUnsavedChanges } from "@/lib/forms";
 import { handleFormEnter } from "@/lib/formNav";
 import { collectExifMetadata, exifMetadataToRemark, inferMediaType, uploadMediaBatch, uploadMediaFile, type BatchProgress } from "@/lib/media";
 import { saveOrQueue } from "@/lib/offline";
+import { editedFields, FILL_EMPTY_NOTE, fillsOnly, isBlankValue, KEPT_AFTER_REFUSAL, VIEW_ONLY_NOTE, viewOnly, lockFilledFields, FILLED_FIELD_REASON } from "@/lib/recordDiff";
 import { productBody } from "@/lib/recordPayloads";
 import { hasRank } from "@/lib/permissions";
 import type { Artisan, ProductDocumentation, RecordStatus } from "@/lib/types";
@@ -96,6 +97,9 @@ function StatusField({
   );
 }
 
+
+const FILLED_PRODUCT_FIELDS = ["place", "artisanName", "productName", "localName", "productType", "timeTakenToCompleteProduct", "size", "costOfMaking", "sellingPrice", "marketDemand"] as const;
+
 export function ProductForm({
   initial,
   seed,
@@ -121,6 +125,8 @@ export function ProductForm({
   const formId = useId();
   const errorId = `${formId}-error`;
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => lockFilledFields(formRef.current, initial, FILLED_PRODUCT_FIELDS, FILLED_FIELD_REASON), [initial]);
+  const [keptAfterRefusal, setKeptAfterRefusal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<BatchProgress | null>(null);
   const [craftId, setCraftId] = useState(initial?.craftId ?? searchParams.get("craftId") ?? "");
@@ -250,6 +256,7 @@ export function ProductForm({
     if (!(await workshop.confirmSubmission())) return;
     setSaving(true);
     setError(null);
+    setKeptAfterRefusal(false);
     try {
       const exifItems = await collectExifMetadata(
         [...Object.values(gridFiles), measurePhoto?.file, ...mediaFiles].filter(Boolean) as File[]
@@ -266,13 +273,13 @@ export function ProductForm({
         workshopId: workshop.workshopId || null,
         designWorkshopId: workshop.designWorkshopId || null,
         initialStatus: initial?.status,
-        exif: { items: exifItems, remark: exifRemark }
+        exif: { items: exifItems, remark: fillsOnly(initial) && !isBlankValue(initial?.remarks) ? "" : exifRemark }
       });
       const outcome = await saveOrQueue<ProductDocumentation>({
         label: `Product · ${payload.productName || "Untitled"}`,
         endpoint: initial ? `/products/${initial.id}` : "/products",
         method: initial ? "PATCH" : "POST",
-        body: payload,
+        body: initial ? editedFields(payload, initial) : payload,
         media: [
           ...(Object.entries(gridFiles) as [GridGroup, File][]).map(([group, file]) => ({
             files: [file],
@@ -389,6 +396,8 @@ export function ProductForm({
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to save product record");
+      setKeptAfterRefusal(true);
+      if (err instanceof ApiError && err.status === 403) workshop.recheck();
     } finally {
       setSaving(false);
       setUploadProgress(null);
@@ -398,10 +407,15 @@ export function ProductForm({
   return (
     <>
       <form ref={formRef} onSubmit={submit} onInput={markDirty} onKeyDown={handleFormEnter} className="panel grid gap-4 p-4">
-        {error ? (
+        {error && !keptAfterRefusal ? (
           <div id={errorId} role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {error}
           </div>
+        ) : null}
+        {viewOnly(initial) ? (
+          <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">{VIEW_ONLY_NOTE}</p>
+        ) : fillsOnly(initial) ? (
+          <p className="rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-sm text-ink-700">{FILL_EMPTY_NOTE}</p>
         ) : null}
         <CarryContextBanner offer={carry.applied} onChange={clearCarriedContext} />
         <LiveCompleteness
@@ -678,6 +692,12 @@ export function ProductForm({
         {uploadProgress ? <UploadProgress progress={uploadProgress} files={mediaFiles} /> : null}
         {footerFields ? <div className="grid gap-3 border-t border-line-200 pt-4">{footerFields}</div> : null}
         <HeldPostNotice refusal={filing.notice} id={filingNoticeId} className="" sayPending />
+        {error && keptAfterRefusal ? (
+          <div id={errorId} role="alert" data-testid="save-refusal" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            <p>{error}</p>
+            <p className="mt-1 text-xs">{KEPT_AFTER_REFUSAL}</p>
+          </div>
+        ) : null}
         <ActionGroup align="end">
           <button type="button" className="field-button-secondary" onClick={handleBack}>
             Cancel

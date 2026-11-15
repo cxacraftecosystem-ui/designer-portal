@@ -13,7 +13,7 @@ from app.core.deps import (
     require_record_creator,
 )
 from app.schemas.records import ProcessCreate, ProcessStepInput, ProcessUpdate
-from app.services.access import guard_record_edit, record_revision
+from app.services.access import guard_record_edit, record_revision, with_edit_access
 from app.services.pagination import normalize_pagination, page_payload
 from app.services.record_design_workshop import (
     assert_may_write_a_record_filed_under,
@@ -267,7 +267,9 @@ async def get_process(
 ) -> dict[str, Any]:
     process = await require_record(db.process, process_id)
     await hydrate_relations([process], RELATIONS)
-    return await _hydrate(process, current_user)
+    return await with_edit_access(
+        await _hydrate(process, current_user), process, current_user, "process"
+    )
 
 
 @router.patch("/{process_id}")

@@ -17,6 +17,7 @@ from app.core.deps import (
     get_value,
     is_content_admin,
     is_empty_value,
+    removes_links,
     require_content_admin,
     require_questionnaire_manager,
 )
@@ -1118,12 +1119,15 @@ async def update_interview(
         after_workshop_id = data.get("workshopId", interview.workshopId)
         after_design_workshop_id = data.get("designWorkshopId", interview.designWorkshopId)
         if payload.artisanIds is not None:
-            link_count = await tx.questionnaireinterviewartisan.count(
-                where={"interviewId": interview_id}
-            )
             if not privileged:
+                linked = await tx.questionnaireinterviewartisan.find_many(
+                    where={"interviewId": interview_id}
+                )
                 assert_can_contribute_relation(
-                    interview, current_user, link_count > 0, "artisanIds"
+                    interview,
+                    current_user,
+                    removes_links([row.artisanId for row in linked], payload.artisanIds),
+                    "artisanIds",
                 )
             await replace_interview_artisans(
                 interview_id,

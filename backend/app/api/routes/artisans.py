@@ -21,7 +21,7 @@ from app.services import (
     identity_probe,
 )
 from app.services.aadhaar import records as aadhaar_records
-from app.services.access import guard_record_edit
+from app.services.access import guard_record_edit, with_edit_access
 from app.services.artisan_form_contract import assert_form_contract, take_form_contract
 from app.services.artisan_identity import aadhaar_error, mask_aadhaar, normalize_aadhaar
 from app.services.completeness import (
@@ -475,7 +475,12 @@ async def get_artisan(
             )
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Record not found")
     await hydrate_relations([artisan], RELATIONS)
-    return await attach_completeness("artisan", public_encode(artisan, current_user))
+    return await with_edit_access(
+        await attach_completeness("artisan", public_encode(artisan, current_user)),
+        artisan,
+        current_user,
+        "artisan",
+    )
 
 
 @router.patch("/{artisan_id}")

@@ -778,7 +778,7 @@ def test_an_empty_list_from_a_non_owner_is_refused_and_deletes_nothing(monkeypat
             guard=_unprivileged,
         )
     assert excinfo.value.status_code == 403
-    assert "craftIds" in excinfo.value.detail
+    assert "crafts" in excinfo.value.detail
 
 
 def test_the_refused_wipe_leaves_the_link_rows_where_they_were(monkeypatch):
@@ -816,7 +816,7 @@ def test_the_second_door_on_the_craft_half_is_shut_too(monkeypatch):
             guard=_unprivileged,
         )
     assert excinfo.value.status_code == 403
-    assert "craftIds" in excinfo.value.detail
+    assert "crafts" in excinfo.value.detail
 
 
 def test_a_non_owner_restating_the_stored_selection_is_not_refused(monkeypatch):
@@ -874,7 +874,7 @@ def test_a_populated_craft_name_over_an_empty_join_is_a_populated_relation(monke
             guard=_unprivileged,
         )
     assert excinfo.value.status_code == 403
-    assert "craftIds" in excinfo.value.detail
+    assert "crafts" in excinfo.value.detail
 
 
 def test_the_refused_craft_rewrite_leaves_the_name_column_alone(monkeypatch):
@@ -1055,7 +1055,7 @@ def test_the_derived_name_is_withheld_from_the_contributor_guard_and_from_nothin
     with pytest.raises(HTTPException) as excinfo:
         asyncio.run(access.guard_record_edit(tool, _editor(), dict(body), "tool"))
     assert excinfo.value.status_code == 403
-    assert "craftName" in excinfo.value.detail
+    assert "craft name" in excinfo.value.detail
 
     privileged = asyncio.run(
         access.guard_record_edit(tool, _editor(), dict(body), "tool", derived={"craftName"})
