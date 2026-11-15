@@ -62,7 +62,7 @@ async def main() -> dict:
     await db.connect()
     tag = uuid.uuid4().hex[:8]
     try:
-        people = {"lead": ("RESEARCHER", "Nandini Rao"), "other": ("RESEARCHER", "Priya Shah"), "admin": ("ADMIN", "Ankit Kumar")}
+        people = {"lead": ("DESIGNER", "Nandini Rao"), "other": ("DESIGNER", "Priya Shah"), "admin": ("ADMIN", "Ankit Kumar")}
         users = {}
         for key, (role, name) in people.items():
             uid = f"iv{key}{tag}"
