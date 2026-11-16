@@ -16,6 +16,7 @@ object BackgroundSync {
     const val PERIODIC_JOB_ID = 0x5150_0001
 
     internal val soonPassRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+    internal val askedDuringPass = java.util.concurrent.atomic.AtomicBoolean(false)
     const val SOON_JOB_ID = 0x5150_0002
 
     private val PERIOD_MS = TimeUnit.MINUTES.toMillis(15)
@@ -38,7 +39,10 @@ object BackgroundSync {
     fun requestSoon(context: Context) {
         runCatching {
             val scheduler = scheduler(context) ?: return
-            if (soonPassRunning.get()) return
+            if (soonPassRunning.get()) {
+                askedDuringPass.set(true)
+                return
+            }
             scheduler.schedule(
                 JobInfo.Builder(SOON_JOB_ID, component(context))
                     .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
@@ -66,8 +70,8 @@ object BackgroundSync {
         ComponentName(context.applicationContext, OutboxSyncJobService::class.java)
 }
 
-internal fun backgroundSyncShouldRetry(signedIn: Boolean, waitingAfterPass: Int, online: Boolean): Boolean =
-    signedIn && online && waitingAfterPass > 0
+internal fun backgroundSyncShouldRetry(signedIn: Boolean, waitingAfterPass: Int, online: Boolean, askedDuringPass: Boolean = false): Boolean =
+    signedIn && (askedDuringPass || (online && waitingAfterPass > 0))
 
 class OutboxSyncJobService : JobService() {
     @Volatile
@@ -76,6 +80,7 @@ class OutboxSyncJobService : JobService() {
     override fun onStartJob(params: JobParameters): Boolean {
         val app = applicationContext
         BackgroundSync.soonPassRunning.set(true)
+        BackgroundSync.askedDuringPass.set(false)
         pass = AppScope.io.launch {
             var retry = false
             try {
@@ -90,10 +95,14 @@ class OutboxSyncJobService : JobService() {
                         runCatching { repository.syncNotifications(app) }
                     }
                     val waiting = runCatching { repository.outboxCounts(app).waiting }.getOrDefault(0)
+                    val takes = runCatching {
+                        com.designprototype.workshop.questionnaire.data.QuestionnaireV2.get(app).let { v2 -> v2.outbox.waiting(v2.meId()) }
+                    }.getOrDefault(0)
                     retry = backgroundSyncShouldRetry(
                         signedIn = true,
-                        waitingAfterPass = waiting,
+                        waitingAfterPass = waiting + takes,
                         online = ConnectivityObserver.isOnline(app),
+                        askedDuringPass = BackgroundSync.askedDuringPass.getAndSet(false),
                     )
                 }
             } catch (e: CancellationException) {

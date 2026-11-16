@@ -2966,7 +2966,8 @@ private fun HomeScreen(
                     onNewForm = { questionnaireNewForm++ },
                     onError = { showError(it) },
                     modifier = Modifier.fillMaxWidth().fillMaxHeight(),
-                    onLeaveSession = s.from?.let { origin -> { message = null; restoreScrollFor = origin; screen = origin } }
+                    onLeaveSession = s.from?.let { origin -> { message = null; restoreScrollFor = origin; screen = origin } },
+                    onNotice = { showMessage(it) }
                 ) }
                 EntryMode.TASKS -> MyTasksScreen(
                     repository = repository,
@@ -3279,7 +3280,8 @@ private fun HomeScreen(
                 },
                 onNewForm = { questionnaireNewForm++ },
                 onError = { showError(it) },
-                modifier = Modifier.fillMaxWidth().fillMaxHeight()
+                modifier = Modifier.fillMaxWidth().fillMaxHeight(),
+                onNotice = { showMessage(it) }
             ) }
 
             is Screen.QuestionnaireDetail -> QuestionnaireDetailScreen(
