@@ -568,6 +568,19 @@ Secrets go to the GitHub Actions secrets **and** the box `.env`.
 | `CROSS_PORTAL_COVERAGE_ENABLED` | No | **`false`** | No | Set on BOTH servers. Also needs `CROSS_PORTAL_TOKEN` (above) on both and `FIELD_REPOSITORY_API_URL` here. |
 | `FIELD_REPOSITORY_WEB_URL` | No | — | No | The documentation portal's web address, e.g. `https://<docs-domain>`, for the district panel's "Open in Field Repository" link. Unset: no link. |
 
+### Cross-portal craft feed for KalaVigyan — shipped OFF
+
+KalaVigyan reads every craft this portal holds from `GET /api/cross-portal/peer/crafts`: ACTIVE,
+LEGACY and MERGED crafts, the categories and sub-categories, the shared codes and the spellings. The
+call carries the shared bearer token and a nonce, the answer is signed, and each call is written to
+`CrossPortalAccessLog` as `CRAFT_FEED`. The feed holds no personal data, so it needs neither
+`CROSS_PORTAL_IDENTITY_ENABLED` nor `AADHAAR_FINGERPRINT_KEY`. Off, or the token missing or shorter
+than 32 characters: the route answers 404. What it sends: [CRAFTS.md](CRAFTS.md#the-peer-craft-feed).
+
+| Variable | Required | Default | Secret | Notes |
+|---|---|---|---|---|
+| `CROSS_PORTAL_CRAFT_FEED_ENABLED` | No | **`false`** | No | The switch. Also needs `CROSS_PORTAL_TOKEN` (above), the value KalaVigyan holds. Set it on BOTH portals; the Field Repository has the same switch. Deployed from the Actions **variable** of the same name by the "Pin the craft feed switch" step (`true`/`false`; unset leaves the value `BACKEND_ENV` gives, or the default). |
+
 ### AI-drafted interview answers (C28) — shipped OFF
 
 | Variable | Required | Default | Secret | Notes |
