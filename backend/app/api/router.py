@@ -19,6 +19,7 @@ from app.api.routes import (
     craft_codes,
     crafts,
     cross_portal,
+    cross_portal_crafts,
     cross_portal_explore,
     cross_portal_search,
     dashboard,
@@ -98,6 +99,7 @@ api_router.include_router(craft_categories.router)
 api_router.include_router(cross_portal.router)
 api_router.include_router(cross_portal_search.router)
 api_router.include_router(cross_portal_explore.router)
+api_router.include_router(cross_portal_crafts.router)
 api_router.include_router(workshops.router)
 api_router.include_router(workshop_types.router)
 api_router.include_router(products.router)

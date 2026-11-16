@@ -284,6 +284,9 @@ class Settings(BaseSettings):
     cross_portal_coverage_enabled: bool = Field(
         default=False, alias="CROSS_PORTAL_COVERAGE_ENABLED"
     )
+    cross_portal_craft_feed_enabled: bool = Field(
+        default=False, alias="CROSS_PORTAL_CRAFT_FEED_ENABLED"
+    )
     field_repository_web_url: str | None = Field(default=None, alias="FIELD_REPOSITORY_WEB_URL")
 
     model_config = SettingsConfigDict(

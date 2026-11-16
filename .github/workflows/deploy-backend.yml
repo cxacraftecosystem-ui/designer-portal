@@ -1038,6 +1038,26 @@ jobs:
             echo \"Monday summary switch pinned: \$(grep -E \"^WEEKLY_DIGEST_ENABLED=\" \"\$ENVFILE\")\"
           '"
 
+      - name: Pin the craft feed switch
+        env:
+          SHA: ${{ env.REL_ID }}
+          CROSS_PORTAL_CRAFT_FEED_ENABLED: ${{ vars.CROSS_PORTAL_CRAFT_FEED_ENABLED }}
+        run: |
+          flag="$(printf '%s' "$CROSS_PORTAL_CRAFT_FEED_ENABLED" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+          case "$flag" in
+            "") echo "CROSS_PORTAL_CRAFT_FEED_ENABLED is not set as an Actions variable; the release keeps BACKEND_ENV's value or the default (off)"; exit 0 ;;
+            true|false) ;;
+            *) echo "::error::CROSS_PORTAL_CRAFT_FEED_ENABLED must be true or false; nothing was deployed."; exit 1 ;;
+          esac
+          printf '%s\n' "CROSS_PORTAL_CRAFT_FEED_ENABLED=$flag" | ssh ubuntu@${{ secrets.EC2_HOST }} "ENVFILE='/home/ubuntu/app/releases/$SHA/backend/.env' bash -c '
+            set -euo pipefail
+            frag=\$(cat)
+            [ -s \"\$ENVFILE\" ] && [ -n \"\$(tail -c1 \"\$ENVFILE\")\" ] && printf \"\n\" >> \"\$ENVFILE\"
+            sed -i \"/^CROSS_PORTAL_CRAFT_FEED_ENABLED=/d\" \"\$ENVFILE\"
+            printf \"%s\n\" \"\$frag\" >> \"\$ENVFILE\"
+            echo \"Craft feed switch pinned: \$(grep -E \"^CROSS_PORTAL_CRAFT_FEED_ENABLED=\" \"\$ENVFILE\")\"
+          '"
+
       - name: Install the pinned CPython on the runner, at the box's path
         env:
           GH_API_TOKEN: ${{ github.token }}
