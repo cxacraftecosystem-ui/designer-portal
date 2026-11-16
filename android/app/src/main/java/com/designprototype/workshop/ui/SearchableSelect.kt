@@ -301,10 +301,11 @@ fun SearchableMultiSelectField(
     createAction: SelectCreateAction? = null,
     onQueryChange: ((String) -> Unit)? = null,
     labelVisible: Boolean = true,
+    chipOrder: List<String>? = null,
     onSelectedChange: (Set<String>) -> Unit
 ) {
     var sheetOpen by remember { mutableStateOf(false) }
-    val chosen = options.filter { it.value in selected }
+    val chosen = orderedChips(options.filter { it.value in selected }, chipOrder)
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (labelVisible) Text(
@@ -443,6 +444,9 @@ private fun SelectedTick() {
 }
 
 val LocalInputInert = compositionLocalOf { false }
+
+fun orderedChips(chosen: List<SelectOption>, order: List<String>?): List<SelectOption> =
+    if (order == null) chosen else order.mapNotNull { id -> chosen.firstOrNull { it.value == id } } + chosen.filter { it.value !in order }
 
 @Composable
 private fun SelectTrigger(

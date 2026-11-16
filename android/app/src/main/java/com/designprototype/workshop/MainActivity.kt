@@ -9,6 +9,10 @@ import com.designprototype.workshop.transcript.ui.TranscribeChoiceItem
 import com.designprototype.workshop.transcript.ui.TranscribeChoiceRows
 import com.designprototype.workshop.data.workshopDisplayTitle
 import com.designprototype.workshop.data.toolRowLabel
+import com.designprototype.workshop.data.toolArtisanNames
+import com.designprototype.workshop.data.toolArtisanLabel
+import com.designprototype.workshop.data.toolArtisanIds
+import com.designprototype.workshop.data.toolArtisanName
 import com.designprototype.workshop.data.plural
 import com.designprototype.workshop.data.interviewAnswersToSend
 import com.designprototype.workshop.ui.ActionRow
@@ -9062,7 +9066,7 @@ private fun ToolForm(
         val artisanPool = knownArtisans.filter { it.craftId in craftIds || it.id in artisanIds }
         val artisanOptions: List<SelectOption> =
             artisanIds.filter { id -> artisanPool.none { it.id == id } }
-                .map { id -> offPageLinkRow(id, null, "artisan") } +
+                .map { id -> offPageLinkRow(id, editing?.toolArtisanName(id), "artisan") } +
                 toolArtisanOptions(artisanPool, craftIds.mapNotNull { id -> knownCraftNames[id]?.let { id to it } }.toMap())
         CompletenessAnchor("artisan") {
             SearchableMultiSelectField(
@@ -9076,6 +9080,7 @@ private fun ToolForm(
                     "No artisans for these crafts."
                 },
                 enabled = craftIds.isNotEmpty(),
+                chipOrder = artisanIds,
             ) { next -> onArtisansChanged(mergeSelection(artisanIds, next, artisanOptions.map { it.value })) }
         }
         RequiredInput("Artisan name", artisanName, artisanNameError, artisanNameFocus, titleCased = true) { artisanName = it }
@@ -12541,7 +12546,7 @@ private fun ViewDataDetail(
             RecordCard(title = v.toolkitName.ifBlank { "Tool" }) {
                 if (showProvenance) ProvenanceSection(meta = v.extraMetadata, createdByName = v.createdBy?.name)
                 DetailRow("Craft", v.craftName)
-                DetailRow("Artisan", v.artisanName)
+                DetailRow(v.toolArtisanLabel(), v.toolArtisanNames() ?: v.artisanName)
                 DetailRow("Place", v.place)
                 DetailRow("Material", v.material)
                 DetailRow("Material type", StandardValues.materialFamilyLabel(v.materialFamily))

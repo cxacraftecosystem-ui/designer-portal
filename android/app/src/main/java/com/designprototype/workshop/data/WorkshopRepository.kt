@@ -3039,10 +3039,13 @@ class WorkshopRepository(
     suspend fun tools(createdBy: String? = null): List<ToolDetailDto> =
         api.tools(pageSize = 100, createdBy = createdBy?.blankToNull()).items
 
-    suspend fun toolArtisans(toolId: String): List<ArtisanDto> = api.toolArtisans(toolId)
+    suspend fun toolArtisans(toolId: String): List<ArtisanDto> = withToolHead(toolId, api.toolArtisans(toolId))
 
     suspend fun assignToolArtisans(toolId: String, artisanIds: List<String>): List<ArtisanDto> =
-        api.assignToolArtisans(toolId, ToolArtisanAssignRequest(artisanIds))
+        withToolHead(toolId, api.assignToolArtisans(toolId, ToolArtisanAssignRequest(artisanIds)))
+
+    private suspend fun withToolHead(toolId: String, linked: List<ArtisanDto>): List<ArtisanDto> =
+        toolArtisansHeadFirst(runCatching { api.tool(toolId) }.getOrNull(), linked)
 
     suspend fun unassignToolArtisan(toolId: String, artisanId: String) = api.unassignToolArtisan(toolId, artisanId)
 

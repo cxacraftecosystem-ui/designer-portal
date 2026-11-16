@@ -1,5 +1,6 @@
 package com.designprototype.workshop.ui
 
+import com.designprototype.workshop.data.toolArtisanNames
 import com.designprototype.workshop.data.occurrenceDate
 import com.designprototype.workshop.data.workshopDisplayTitle
 import com.designprototype.workshop.data.userMessage
@@ -610,7 +611,7 @@ internal fun SearchResultsDto.toSearchBuckets(
             recordType = SearchRecordTypes.TOOL,
             id = item.id,
             title = item.toolkitName.ifBlank { "Untitled toolkit" },
-            subtitle = listOf(item.craftName, item.artisanName, item.place)
+            subtitle = listOf(item.craftName, item.toolArtisanNames().orEmpty(), item.place)
                 .filter { it.isNotBlank() }
                 .joinToString(" · "),
             status = item.status,

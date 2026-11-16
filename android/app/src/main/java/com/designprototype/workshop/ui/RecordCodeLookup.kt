@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.designprototype.workshop.data.toolArtisanNames
 import com.designprototype.workshop.data.ArtisanCardCode
 import com.designprototype.workshop.data.CARD_REPLACED
 import com.designprototype.workshop.data.CardResolution
@@ -94,7 +95,7 @@ suspend fun fetchRecordCodeHit(repository: WorkshopRepository, ref: DwWorkshopCo
             repository.product(ref.id).let { RecordCodeHit(it.productName, line(it.craftName, it.artisanName, it.place)) }
         DwWorkshopRecordType.PROCESS -> repository.process(ref.id).let { RecordCodeHit(it.name, line(it.notes)) }
         DwWorkshopRecordType.TOOL ->
-            repository.tool(ref.id).let { RecordCodeHit(it.toolkitName, line(it.craftName, it.artisanName, it.place)) }
+            repository.tool(ref.id).let { RecordCodeHit(it.toolkitName, line(it.craftName, it.toolArtisanNames().orEmpty(), it.place)) }
         DwWorkshopRecordType.QUESTIONNAIRE ->
             repository.interview(ref.id).let { RecordCodeHit(it.title, line(it.place, it.language)) }
         DwWorkshopRecordType.MEDIA ->

@@ -10,6 +10,12 @@ import com.designprototype.workshop.data.ArtisanDto
 import com.designprototype.workshop.data.ToolArtisanLinkDto
 import com.designprototype.workshop.data.ToolDetailDto
 import com.designprototype.workshop.data.toolRowLabel
+import org.junit.Assert.assertTrue
+import com.designprototype.workshop.data.toolArtisanIds
+import com.designprototype.workshop.data.toolArtisanLabel
+import com.designprototype.workshop.data.toolArtisanNames
+import com.designprototype.workshop.ui.SearchableMultiSelectField
+import com.designprototype.workshop.ui.SelectOption
 import com.designprototype.workshop.ui.DesignWorkshopTheme
 import org.junit.Rule
 import org.junit.Test
@@ -45,5 +51,38 @@ class ToolRowLabelDeviceTest {
         }
         rule.onNodeWithText("Wooden block · Kamla Devi, Ramesh Chhipa").assertIsDisplayed()
         rule.onNodeWithText("Mallet · Kamla Devi").assertIsDisplayed()
+    }
+
+    @Test
+    fun aToolWithTwoLinkedArtisansShowsBothHeadFirstInItsRowDetailAndPicker() {
+        val fahim = artisan("a-fahim", "Fahim")
+        val moin = artisan("a-moin", "Moin Khan")
+        val grinder = ToolDetailDto(
+            id = "cmwekvo2d03omcbtag53r4g2x",
+            toolkitName = "Grinder",
+            artisanId = "a-fahim",
+            artisanName = "Fahim",
+            artisanLinks = listOf(ToolArtisanLinkDto("a-moin", moin), ToolArtisanLinkDto("a-fahim", fahim)),
+        )
+        rule.setContent {
+            DesignWorkshopTheme {
+                Column {
+                    Text(grinder.toolRowLabel())
+                    Text(grinder.toolArtisanLabel() + ": " + grinder.toolArtisanNames().orEmpty())
+                    SearchableMultiSelectField(
+                        label = "Artisans",
+                        options = listOf(SelectOption("a-moin", "Moin Khan"), SelectOption("a-fahim", "Fahim")),
+                        selected = setOf("a-moin", "a-fahim"),
+                        chipOrder = grinder.toolArtisanIds(),
+                        onSelectedChange = {}
+                    )
+                }
+            }
+        }
+        rule.onNodeWithText("Grinder · Fahim, Moin Khan").assertIsDisplayed()
+        rule.onNodeWithText("Artisans: Fahim, Moin Khan").assertIsDisplayed()
+        val head = rule.onNodeWithText("Fahim", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val other = rule.onNodeWithText("Moin Khan", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        assertTrue(head.top < other.top || (head.top == other.top && head.left < other.left))
     }
 }
