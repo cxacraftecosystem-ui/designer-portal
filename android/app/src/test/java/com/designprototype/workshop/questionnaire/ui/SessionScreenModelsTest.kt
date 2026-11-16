@@ -8,6 +8,7 @@ import com.designprototype.workshop.questionnaire.data.QCompleteSubject
 import com.designprototype.workshop.questionnaire.data.QPartDone
 import com.designprototype.workshop.questionnaire.data.QSnapshotTake
 import com.designprototype.workshop.questionnaire.data.QTargetRef
+import com.designprototype.workshop.questionnaire.data.QuestionnaireCopy
 import com.designprototype.workshop.questionnaire.data.SessionStep
 import com.designprototype.workshop.questionnaire.data.SessionUnit
 import com.designprototype.workshop.questionnaire.data.StepKind
@@ -109,6 +110,9 @@ class SessionScreenModelsTest {
         val uploading = SavePillModel.of(unit(SessionStep("1", StepKind.CLIP, "t", "i", clip = clip(true)), SessionStep("2", StepKind.CLIP, "t", "j", clip = clip(true))))
         assertEquals(SaveTone.UPLOADING, uploading.tone)
         assertEquals("2 takes uploading · 40%", uploading.text)
+        assertEquals("1 take uploading · 40%", SavePillModel.of(unit(SessionStep("1", StepKind.CLIP, "t", "i", clip = clip(true)))).text)
+        assertEquals("1 take uploading", QuestionnaireCopy.takesUploading(1))
+        assertEquals("3 takes uploading", QuestionnaireCopy.takesUploading(3))
         assertEquals("Waiting for signal", SavePillModel.of(unit(SessionStep("1", StepKind.CLIP, "t", "i", clip = clip(false)))).text)
         val failed = SavePillModel.of(unit(SessionStep("1", StepKind.CLIP, "t", "i", clip = clip(true), state = StepState.FAILED)))
         assertEquals(SaveTone.FAILED, failed.tone)
