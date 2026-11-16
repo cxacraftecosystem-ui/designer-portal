@@ -262,6 +262,7 @@ def _source_rows() -> dict[str, _SourceRow]:
             englishName="Throw-shuttle pit loom",
             craftName="Sambalpuri Ikat",
             place="Barpali",
+            artisanId="artisan-1",
             artisanName="Bhikari Meher",
             material="Sal wood and bamboo",
             processUsedIn="Weaving the tie-dyed warp and weft",
@@ -304,8 +305,8 @@ def _source_rows() -> dict[str, _SourceRow]:
                 _media("IMAGE", "grid-length.jpg", purpose="MEASUREMENT_GRID"),
             ),
             artisanLinks=(
-                _SourceRow(artisan=_SourceRow(name="Bhikari Meher")),
-                _SourceRow(artisan=_SourceRow(name="Sanjukta Meher")),
+                _SourceRow(artisanId="artisan-2", artisan=_SourceRow(id="artisan-2", name="Sanjukta Meher")),
+                _SourceRow(artisanId="artisan-1", artisan=_SourceRow(id="artisan-1", name="Bhikari Meher")),
             ),
         ),
         "Process": _SourceRow(
