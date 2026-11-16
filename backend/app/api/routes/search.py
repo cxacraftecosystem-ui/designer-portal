@@ -44,6 +44,7 @@ from app.services.records import (
     public_encode,
     with_id_tiebreak,
 )
+from app.services.tool_scope import head_first_links
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -153,7 +154,7 @@ async def global_search(
                 "tools_rows",
                 db.tooldocumentation.find_many(
                     where=tool_where,
-                    include={"media": True},
+                    include={"media": True, "artisan": True, "artisanLinks": {"include": {"artisan": True}}},
                     skip=skip,
                     take=page_size,
                     order=_ORDER,
@@ -216,6 +217,7 @@ async def global_search(
     workshops = results.get("workshops_rows", [])
     products = results.get("products_rows", [])
     tools = results.get("tools_rows", [])
+    head_first_links(tools)
     media = results.get("media_rows", [])
 
     return public_encode(

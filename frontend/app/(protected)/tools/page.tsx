@@ -30,6 +30,7 @@ import { formatDate } from "@/lib/format";
 import { RECORD_UPDATE_HREF, RECORD_VIEW_HREF } from "@/lib/recordView";
 import type { PageResult, ToolDocumentation } from "@/lib/types";
 import { exportFilename } from "@/lib/naming";
+import { toolArtisanNames } from "@/lib/toolArtisans";
 
 export default function ToolsPage() {
   const { user } = useAuth();
@@ -204,7 +205,7 @@ export default function ToolsPage() {
                       <div className="text-xs text-ink-500">{tool.englishName ?? tool.localName ?? tool.traditionType}</div>
                     </td>
                     <td className="px-4 py-3 text-ink-700">{tool.craftName}</td>
-                    <td className="px-4 py-3 text-ink-700">{tool.artisanName}</td>
+                    <td className="px-4 py-3 text-ink-700">{toolArtisanNames(tool)}</td>
                     <td className="px-4 py-3 text-ink-700">{tool.place}</td>
                     <td className="px-4 py-3 text-ink-700">{tool.material ?? "-"}</td>
                     <td className="px-4 py-3 text-ink-700">
