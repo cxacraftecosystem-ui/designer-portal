@@ -44,6 +44,7 @@ from app.services.records import (
     public_encode,
     with_id_tiebreak,
 )
+from app.services.tool_scope import head_first_links
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -216,6 +217,7 @@ async def global_search(
     workshops = results.get("workshops_rows", [])
     products = results.get("products_rows", [])
     tools = results.get("tools_rows", [])
+    head_first_links(tools)
     media = results.get("media_rows", [])
 
     return public_encode(

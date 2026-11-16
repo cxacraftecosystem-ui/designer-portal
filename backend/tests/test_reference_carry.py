@@ -576,9 +576,9 @@ RELATION_LEDGER = {
         "artisanLinks": (
             "read by the picker — every assigned artisan's name, newline-separated, into "
             "tool.usedByArtisans (report_role=BULLETS), via "
-            "include={'artisanLinks': {'include': {'artisan': True}}}. See _linked_artisan_names for "
-            "why it is ordered by name and de-duplicated, and why 'documented for' and 'used by' are "
-            "two boxes rather than one."
+            "include={'artisanLinks': {'include': {'artisan': True}}}. _linked_artisan_names puts the "
+            "head first, then the links in the order they were made, each name once; 'documented "
+            "for' and 'used by' stay two boxes rather than one."
         ),
         "craftLinks": (
             "carried by VALUE, not by relation: tool.craftName already holds every linked craft's "
@@ -2491,14 +2491,48 @@ async def test_the_measurement_grid_shot_is_not_the_records_photograph(monkeypat
 
 
 
+_GRINDER_LINKS = [
+    SimpleNamespace(artisanId="a-moin", artisan=SimpleNamespace(id="a-moin", name="Moin Khan")),
+    SimpleNamespace(artisanId="a-fahim", artisan=SimpleNamespace(id="a-fahim", name="Fahim")),
+]
+
+
 def test_a_tool_picked_on_a_stage_names_every_artisan_head_first():
     spec = dw.REFERENCE_MODELS["ToolDocumentation"]
-    links = [
-        SimpleNamespace(artisanId="a1", artisan=SimpleNamespace(id="a1", name="Fahim")),
-        SimpleNamespace(artisanId="a2", artisan=SimpleNamespace(id="a2", name="Moin Khan")),
-    ]
-    label = spec.sublabel(_tool_row(artisanId="a0", artisanName="Salim", artisanLinks=links))
-    assert "Salim, Fahim, Moin Khan" in label
+    grinder = _tool_row(artisanId="a-fahim", artisanName="Fahim", artisanLinks=_GRINDER_LINKS)
+    assert "Fahim, Moin Khan" in spec.sublabel(grinder)
+    assert spec.data(grinder, None)["usedByArtisans"] == "Fahim\nMoin Khan"
+    salim = _tool_row(artisanId="a-salim", artisanName="Salim", artisanLinks=_GRINDER_LINKS)
+    assert "Salim, Moin Khan, Fahim" in spec.sublabel(salim), "a head with no link row still leads"
+
+
+async def test_tool_references_filter_and_search_by_every_artisan_of_the_tool(monkeypatch):
+    seen: list[dict] = []
+
+    class _Tools:
+        async def find_many(self, where=None, **_kw):
+            seen.append(where)
+            return []
+
+    class _Entries:
+        async def find_unique(self, where=None):
+            return None
+
+    class _Db:
+        tooldocumentation = _Tools()
+        dwstageentry = _Entries()
+
+    async def _all_readable(_viewer):
+        return {}
+
+    monkeypatch.setattr(dw, "db", _Db())
+    monkeypatch.setattr(dw, "viewable_where", _all_readable)
+    record = SimpleNamespace(id="dw_1", workshopId=None)
+    await dw.reference_options(record, "ToolDocumentation", filter_by="a-moin", search="Moin")
+    clauses = seen[0]["AND"]
+    assert {"OR": [{"artisanId": {"in": ["a-moin"]}}, {"artisanLinks": {"some": {"artisanId": {"in": ["a-moin"]}}}}]} in clauses
+    searched = next(c for c in clauses if "OR" in c and any("toolkitName" in part for part in c["OR"]))
+    assert any("artisanLinks" in part for part in searched["OR"]), "a linked artisan's name finds the tool"
 
 def test_a_reviewers_verdict_is_visible_while_choosing_and_is_never_copied_onto_the_entry():
     spec = dw.REFERENCE_MODELS["ToolDocumentation"]

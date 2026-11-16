@@ -73,6 +73,7 @@ from app.services.standard_values import (
     apply_tool_values,
     retired_tradition_codes,
 )
+from app.services.tool_scope import head_first_links, tool_artisans_head_first
 from app.services.workshop_access import (
     enforce_workshop_submission,
     pin_pending_if_late,
@@ -117,12 +118,11 @@ _CLEARABLE_COLUMNS = (
 
 
 async def _assigned_artisans(tool_id: str, viewer: Any) -> list[dict[str, Any]]:
-    links = await db.toolartisan.find_many(
-        where={"toolId": tool_id},
-        include={"artisan": True},
-        order={"createdAt": "asc"},
-    )
-    return public_encode([link.artisan for link in links if link.artisan], viewer)
+    found = await tool_artisans_head_first(tool_id)
+    encoded = public_encode([artisan for artisan, _head in found], viewer)
+    for row, (_artisan, head) in zip(encoded, found, strict=True):
+        row["isHead"] = head
+    return encoded
 
 
 
@@ -252,9 +252,7 @@ def _order_links(encoded: Any) -> Any:
                     link.get("id") or "",
                 )
             )
-        artisan_links = row.get("artisanLinks")
-        if isinstance(artisan_links, list):
-            artisan_links.sort(key=lambda link: (link.get("createdAt") or "", link.get("id") or ""))
+    head_first_links(row for row in rows if isinstance(row, dict))
     return encoded
 
 

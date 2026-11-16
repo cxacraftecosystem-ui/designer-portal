@@ -363,14 +363,19 @@ def _tool_artisan_names(record: Any) -> str | None:
 
 
 def _linked_artisan_names(tool: Any) -> str | None:
-    links = getattr(tool, "artisanLinks", None) or []
-    names: list[str] = []
-    for link in links:
-        artisan = getattr(link, "artisan", None)
-        name = str(getattr(artisan, "name", "") or "").strip()
-        if name and name not in names:
-            names.append(name)
-    return "\n".join(sorted(names)) or None
+    from app.services.tool_scope import tool_artisan_name_list
+
+    return "\n".join(tool_artisan_name_list(tool)) or None
+
+
+def _tool_artisan_where(artisan_id: str) -> dict[str, Any]:
+    from app.services.record_filters import tool_artisan_clause
+
+    return tool_artisan_clause([artisan_id])
+
+
+def _tool_linked_name_where(term: str) -> list[dict[str, Any]]:
+    return [{"artisanLinks": {"some": {"artisan": {"is": {"name": contains(term)}}}}}]
 
 
 def _interview_artisan_count(interview: Any) -> int:
@@ -696,6 +701,8 @@ class ReferenceModel:
     artisan_field: str = ""
     filter_field: str = ""
     media_field: str = ""
+    artisan_where: Callable[[str], dict[str, Any]] | None = None
+    search_where: Callable[[str], list[dict[str, Any]]] | None = None
 
 
 def _artisan_workshop_where(workshop_id: str) -> dict[str, Any]:
@@ -807,6 +814,8 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         workshop_where=lambda wid: {"workshopId": wid},
         artisan_field="artisanId",
         media_field="toolId",
+        artisan_where=_tool_artisan_where,
+        search_where=_tool_linked_name_where,
         include={"location": True, "media": True, "artisanLinks": {"include": {"artisan": True}}},
         label=lambda r: str(r.toolkitName or ""),
         sublabel=lambda r: _joined(r.englishName, _tool_artisan_names(r), r.place, _review_flag(r)),
@@ -1100,12 +1109,16 @@ async def reference_options(
             parent_id = await _artisan_id_behind(str(record.id), str(filter_by))
         if parent_id is None:
             return _reference_payload(model, scope, scoped, True, [], truncated=False)
-        clauses.append({parent_column: parent_id})
+        if parent_column == spec.artisan_field and spec.artisan_where is not None:
+            clauses.append(spec.artisan_where(parent_id))
+        else:
+            clauses.append({parent_column: parent_id})
         filtered = True
 
     term = (search or "").strip()
     if term:
-        clauses.append({"OR": [{f: contains(term)} for f in spec.search_fields]})
+        extra = spec.search_where(term) if spec.search_where is not None else []
+        clauses.append({"OR": [*({f: contains(term)} for f in spec.search_fields), *extra]})
 
     if wanted_id:
         clauses.append({"id": wanted_id})
