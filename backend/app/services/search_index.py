@@ -9,7 +9,12 @@ from urllib.parse import quote
 
 from app.core.db import db
 from app.services import design_workshop_data as dw_data
-from app.services.tool_scope import tool_workshop_ids, with_tool_scope
+from app.services.tool_scope import (
+    tool_artisan_ids,
+    tool_artisan_names,
+    tool_workshop_ids,
+    with_tool_scope,
+)
 
 BODY_LIMIT = 100_000
 
@@ -346,8 +351,9 @@ async def _media_artisans(row: Any) -> tuple[list[str], bool]:
     if product is None and (product_id := _media_link(row, "product", "productId")):
         product = await db.productdocumentation.find_unique(where={"id": product_id})
     tool = getattr(row, "tool", None)
-    if tool is None and (tool_id := _media_link(row, "tool", "toolId")):
-        tool = await db.tooldocumentation.find_unique(where={"id": tool_id})
+    tool_id = getattr(tool, "id", None) or _media_link(row, "tool", "toolId")
+    if tool_id and (tool is None or getattr(tool, "artisanLinks", None) is None):
+        tool = await db.tooldocumentation.find_unique(where={"id": tool_id}, include={"artisanLinks": True})
     interview = getattr(row, "questionnaireInterview", None)
     interview_artisans: list[str] = []
     if interview is not None:
@@ -365,7 +371,7 @@ async def _media_artisans(row: Any) -> tuple[list[str], bool]:
     artisan_ids = _ids(
         _media_link(row, "artisan", "artisanId"),
         product.artisanId if product is not None else None,
-        tool.artisanId if tool is not None else None,
+        *(tool_artisan_ids(tool) if tool is not None else []),
         *interview_artisans,
     )
     return artisan_ids, free_text
@@ -486,13 +492,14 @@ async def _tool(entity_id: str) -> dict[str, Any] | None:
     )
     if row is None:
         return None
-    artisan_ids = _ids(row.artisanId)
+    artisan_ids = _ids(*tool_artisan_ids(row))
+    names = tool_artisan_names(row)
     return _doc(
         "tools",
         row.id,
         title=row.toolkitName,
-        subtitle=_join(row.englishName, row.craftName, row.artisanName),
-        body=_body(row.localName, row.englishName, row.craftName, row.artisanName, row.remarks),
+        subtitle=_join(row.englishName, row.craftName, names),
+        body=_body(row.localName, row.englishName, row.craftName, names, row.remarks),
         place=_place_of(row),
         craftIds=_ids(row.craftId),
         craftCodes=_codes(row.craft),

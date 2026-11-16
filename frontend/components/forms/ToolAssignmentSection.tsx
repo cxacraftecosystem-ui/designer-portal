@@ -31,6 +31,7 @@ import {
 } from "@/lib/workshopOptions";
 import type { Artisan, ToolDocumentation } from "@/lib/types";
 import { ActionGroup } from "@/components/ui/ActionGroup";
+import { toolArtisanNames } from "@/lib/toolArtisans";
 
 export function ToolAssignmentSection() {
   const [tools, setTools] = useState<ToolDocumentation[]>([]);
@@ -261,7 +262,7 @@ export function ToolAssignmentSection() {
             placeholder="Select a tool"
             emptyLabel={emptyLabelFor("tools", "No tools have been documented yet")}
             searchable
-            options={tools.map((tool) => ({ value: tool.id, label: `${tool.toolkitName} — ${tool.craftName} · ${tool.artisanName}` }))}
+            options={tools.map((tool) => ({ value: tool.id, label: [`${tool.toolkitName} — ${tool.craftName}`, toolArtisanNames(tool)].filter(Boolean).join(" · ") }))}
           />
           {toolCachedAt && tools.length > 0 ? (
             <p className="mt-1 text-xs text-ink-500">{cachedListLine(tools.length, "tools", formatDate(toolCachedAt))}</p>

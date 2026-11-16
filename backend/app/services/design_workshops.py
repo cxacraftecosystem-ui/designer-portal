@@ -356,6 +356,12 @@ def _step_lines(process: Any) -> str | None:
     return "\n".join(lines) or None
 
 
+def _tool_artisan_names(record: Any) -> str | None:
+    from app.services.tool_scope import tool_artisan_names
+
+    return tool_artisan_names(record)
+
+
 def _linked_artisan_names(tool: Any) -> str | None:
     links = getattr(tool, "artisanLinks", None) or []
     names: list[str] = []
@@ -803,7 +809,7 @@ REFERENCE_MODELS: dict[str, ReferenceModel] = {
         media_field="toolId",
         include={"location": True, "media": True, "artisanLinks": {"include": {"artisan": True}}},
         label=lambda r: str(r.toolkitName or ""),
-        sublabel=lambda r: _joined(r.englishName, r.artisanName, r.place, _review_flag(r)),
+        sublabel=lambda r: _joined(r.englishName, _tool_artisan_names(r), r.place, _review_flag(r)),
         data=lambda r, photo: {
             "name": r.toolkitName,
             "localName": r.localName,

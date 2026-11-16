@@ -14,6 +14,7 @@ import type {
 } from "@/lib/types";
 import { unresolvedWorkshopCodeMessage, type WorkshopCodeRef, type WorkshopRecordType } from "@/lib/workshopCodes";
 import { workshopDisplayTitle } from "@/lib/workshopTitle";
+import { toolArtisanNames } from "@/lib/toolArtisans";
 
 type ProcessSummary = { id: string; name: string; product?: { productName?: string | null } | null };
 
@@ -73,7 +74,7 @@ async function fetchHit(ref: WorkshopCodeRef): Promise<WorkshopCodeHit> {
     }
     case "tool": {
       const record = await apiFetch<ToolDocumentation>(`/tools/${ref.id}`);
-      return { label: record.toolkitName, detail: line(record.craftName, record.artisanName, record.place), href };
+      return { label: record.toolkitName, detail: line(record.craftName, toolArtisanNames(record), record.place), href };
     }
     case "questionnaire": {
       const record = await apiFetch<QuestionnaireInterview>(`/questionnaire/interviews/${ref.id}`);

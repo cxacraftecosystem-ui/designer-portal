@@ -2490,6 +2490,16 @@ async def test_the_measurement_grid_shot_is_not_the_records_photograph(monkeypat
     )
 
 
+
+def test_a_tool_picked_on_a_stage_names_every_artisan_head_first():
+    spec = dw.REFERENCE_MODELS["ToolDocumentation"]
+    links = [
+        SimpleNamespace(artisanId="a1", artisan=SimpleNamespace(id="a1", name="Fahim")),
+        SimpleNamespace(artisanId="a2", artisan=SimpleNamespace(id="a2", name="Moin Khan")),
+    ]
+    label = spec.sublabel(_tool_row(artisanId="a0", artisanName="Salim", artisanLinks=links))
+    assert "Salim, Fahim, Moin Khan" in label
+
 def test_a_reviewers_verdict_is_visible_while_choosing_and_is_never_copied_onto_the_entry():
     spec = dw.REFERENCE_MODELS["ToolDocumentation"]
 

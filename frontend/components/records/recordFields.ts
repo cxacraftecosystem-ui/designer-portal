@@ -2,6 +2,7 @@ import type { ProcessRecord } from "@/components/forms/ProcessForm";
 import { bytes, formatDate } from "@/lib/format";
 import type { Artisan, Craft, MediaFile, ProductDocumentation, QuestionnaireInterview, ToolDocumentation, Workshop } from "@/lib/types";
 import { languageName, phoneOf, traditionLabel } from "@/lib/standardValues";
+import { toolArtisanNames } from "@/lib/toolArtisans";
 
 export type RecordFieldRow = { label: string; value: string };
 
@@ -96,7 +97,7 @@ export function toolFields(tool: ToolDocumentation): RecordFieldRow[] {
     ["Local name", tool.localName],
     ["English name", tool.englishName],
     ["Craft", tool.craftName],
-    ["Artisan", tool.artisanName],
+    ["Artisan", toolArtisanNames(tool)],
     ["Place", tool.place],
     ["Process used in", tool.processUsedIn],
     ["Material", tool.material],

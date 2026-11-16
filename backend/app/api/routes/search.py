@@ -153,7 +153,7 @@ async def global_search(
                 "tools_rows",
                 db.tooldocumentation.find_many(
                     where=tool_where,
-                    include={"media": True},
+                    include={"media": True, "artisan": True, "artisanLinks": {"include": {"artisan": True}}},
                     skip=skip,
                     take=page_size,
                     order=_ORDER,
