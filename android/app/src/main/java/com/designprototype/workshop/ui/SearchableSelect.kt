@@ -300,13 +300,14 @@ fun SearchableMultiSelectField(
     searchable: Boolean? = null,
     createAction: SelectCreateAction? = null,
     onQueryChange: ((String) -> Unit)? = null,
+    labelVisible: Boolean = true,
     onSelectedChange: (Set<String>) -> Unit
 ) {
     var sheetOpen by remember { mutableStateOf(false) }
     val chosen = options.filter { it.value in selected }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
+        if (labelVisible) Text(
             requiredMarked(label) + AnnotatedString(" (${chosen.size} selected)"),
             color = MaterialTheme.field.muted,
             style = MaterialTheme.typography.bodySmall

@@ -16,6 +16,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.designprototype.workshop.questionnaire.ui.AttachKind
 import com.designprototype.workshop.questionnaire.ui.PickedFile
+import com.designprototype.workshop.questionnaire.ui.SectionChoice
 import com.designprototype.workshop.questionnaire.ui.UploadDuplicate
 import com.designprototype.workshop.questionnaire.ui.UploadRow
 import com.designprototype.workshop.questionnaire.ui.UploadSheetBody
@@ -47,9 +48,10 @@ class UploadDuplicatesUiTest {
         compose.setContent {
             MaterialTheme {
                 UploadSheetBody(
-                    rows = listOf(fresh, twice, queued, here, there), checking = false, attach = AttachKind.SECTION, sectionCode = "E", sectionQuestions = 10,
+                    rows = listOf(fresh, twice, queued, here, there), checking = false, attach = AttachKind.SECTION,
+                    sections = listOf(SectionChoice("secE", "E", "Process of making and workflow")), chosenSections = setOf("secE"),
                     questionOptions = listOf(SelectOption("l1", "E1 · Process?")), questionId = null, sessionDate = LocalDate.parse("2026-11-13"),
-                    onAttach = {}, onQuestion = {}, onChoose = {}, onRemove = {}, onUpload = { uploads++ }, onDismiss = {},
+                    onAttach = {}, onSections = {}, onQuestion = {}, onChoose = {}, onRemove = {}, onUpload = { uploads++ }, onDismiss = {},
                     onOpenDuplicate = { opened += it }, modifier = Modifier.verticalScroll(rememberScrollState())
                 )
             }
