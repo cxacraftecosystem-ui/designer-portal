@@ -34,6 +34,7 @@ import com.designprototype.workshop.data.WorkshopRepositoryApi
 import com.designprototype.workshop.recording.MicLock
 import com.designprototype.workshop.ui.DesignWorkshopTheme
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -57,14 +58,18 @@ import java.util.concurrent.atomic.AtomicInteger
 class LegacyClipsDeviceTest {
     @get:Rule
     val permissions: GrantPermissionRule = if (Build.VERSION.SDK_INT >= 33)
-        GrantPermissionRule.grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
-    else GrantPermissionRule.grant(Manifest.permission.RECORD_AUDIO)
+        GrantPermissionRule.grant(
+            Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS,
+            Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+    else GrantPermissionRule.grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
 
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
 
     private val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext
     private val server = MockWebServer()
+    private lateinit var base: okhttp3.HttpUrl
     private val presigned = AtomicInteger()
     private val deletes = Collections.synchronizedList(mutableListOf<String>())
     private val completed = Collections.synchronizedList(mutableListOf<String>())
@@ -83,7 +88,7 @@ class LegacyClipsDeviceTest {
                 return when {
                     request.method == "POST" && path == "/api/media/presign" -> {
                         val n = presigned.incrementAndGet()
-                        json("""{"uploadUrl":"${server.url("/put/$n")}","objectKey":"media/u-device/clip-$n/staged-${System.currentTimeMillis()}-$n.m4a","bucket":"b","headers":{}}""")
+                        json("""{"uploadUrl":"${base.resolve("/put/$n")}","objectKey":"media/u-device/clip-$n/staged-${System.currentTimeMillis()}-$n.m4a","bucket":"b","headers":{}}""")
                     }
                     request.method == "PUT" && path.startsWith("/put/") -> MockResponse().setResponseCode(200)
                     request.method == "DELETE" && path == "/api/media/object" -> {
@@ -100,6 +105,7 @@ class LegacyClipsDeviceTest {
             }
         }
         server.start()
+        base = server.url("/")
         val store = TokenStore(app)
         store.setToken("device-test-token")
         val api = ApiClient.retrofit(store).newBuilder().baseUrl(server.url("/api/")).build().create(WorkshopRepositoryApi::class.java)
@@ -107,6 +113,9 @@ class LegacyClipsDeviceTest {
     }
 
     @After fun stop() {
+        screen?.media?.stagedDeferred?.values?.toList()?.let { inFlight ->
+            runBlocking { withTimeoutOrNull(30_000) { inFlight.forEach { runCatching { it.await() } } } }
+        }
         MicLock.reset()
         StagedObjects.reset()
         TokenStore(app).clear()

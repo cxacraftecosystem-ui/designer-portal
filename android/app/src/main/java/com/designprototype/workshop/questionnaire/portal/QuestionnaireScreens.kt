@@ -64,7 +64,8 @@ fun DesignerQuestionnaireHome(
     onError: (String) -> Unit,
     onBack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
-    onLeaveSession: (() -> Unit)? = null
+    onLeaveSession: (() -> Unit)? = null,
+    onNotice: ((String) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val v2 = remember { QuestionnaireV2.get(context) }
@@ -99,7 +100,8 @@ fun DesignerQuestionnaireHome(
             initialTab = initialTab,
             onBack = onBack,
             modifier = modifier,
-            onLeaveSession = onLeaveSession
+            onLeaveSession = onLeaveSession,
+            onNotice = onNotice
         )
     }
 }
