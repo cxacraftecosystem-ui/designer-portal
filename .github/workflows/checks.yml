@@ -797,11 +797,17 @@ jobs:
           fi
           mapfile -t files < shard-files.txt
           status=0
-          if ! python -m pytest -rf --durations=15 "${files[@]}" | tee pytest-integration.log; then
+          if ! python -m pytest -rfs --durations=15 "${files[@]}" | tee pytest-integration.log; then
             status=1
           fi
           if ! grep -q '^database: local DSN resolved' pytest-integration.log; then
             echo "::error::conftest did not report a LOCAL database, so this job ran the same DB-less suite as 'Backend tests' and proved nothing extra. Check the postgres service, the port mapping and DATABASE_URL. See backend/tests/conftest.py::_gate_sentence."
+            exit 1
+          fi
+          gated=$(grep -E '^SKIPPED .*DATABASE_URL naming a running Postgres' pytest-integration.log || :)
+          if [ -n "$gated" ]; then
+            printf '%s\n' "$gated"
+            echo "::error::database-backed tests skipped on their own database gate in the job that has the database. Check DATABASE_URL, GITHUB_ACTIONS and the postgres port."
             exit 1
           fi
           exit "$status"
@@ -942,6 +948,17 @@ jobs:
           python -m pytest -rs tests/test_questionnaire_parity.py tests/test_questionnaire_schema_parity.py             tests/test_questionnaire_feature_parity.py | tee parity.log || status=1
           if grep -q '^SKIPPED' parity.log; then
             echo "::error::a questionnaire parity check skipped; every one must run against the other portal here."
+            exit 1
+          fi
+          exit "$status"
+
+      - name: The field voices manifest and schema fragment, in both portals
+        run: |
+          set -uo pipefail
+          status=0
+          python -m pytest -rs tests/test_field_voices_parity.py | tee field-voices-parity.log || status=1
+          if grep -q '^SKIPPED' field-voices-parity.log; then
+            echo "::error::a field voices parity check skipped; every one must run against the other portal here."
             exit 1
           fi
           exit "$status"
@@ -1165,6 +1182,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/sync_data_report.py --check
+          python3 scripts/sync_field_voices.py --check
           python3 scripts/sync_questionnaire.py --check
 
   comment-stripper:

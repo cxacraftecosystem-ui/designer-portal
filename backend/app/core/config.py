@@ -287,6 +287,12 @@ class Settings(BaseSettings):
     cross_portal_craft_feed_enabled: bool = Field(
         default=False, alias="CROSS_PORTAL_CRAFT_FEED_ENABLED"
     )
+    cross_portal_field_voices_enabled: bool = Field(
+        default=False, alias="CROSS_PORTAL_FIELD_VOICES_ENABLED"
+    )
+    field_voices_rights_holder: str | None = Field(
+        default=None, alias="FIELD_VOICES_RIGHTS_HOLDER"
+    )
     field_repository_web_url: str | None = Field(default=None, alias="FIELD_REPOSITORY_WEB_URL")
 
     model_config = SettingsConfigDict(

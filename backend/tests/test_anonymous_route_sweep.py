@@ -52,6 +52,8 @@ def _cross_portal_search_switched_on(monkeypatch):
 
     monkeypatch.setattr(get_settings(), "cross_portal_search_enabled", True)
     monkeypatch.setattr(get_settings(), "cross_portal_craft_feed_enabled", True)
+    monkeypatch.setattr(get_settings(), "cross_portal_field_voices_enabled", True)
+    monkeypatch.setattr(get_settings(), "field_voices_rights_holder", "Anonymous route sweep")
     monkeypatch.setattr(get_settings(), "cross_portal_token", "s" * 40)
     monkeypatch.setattr(get_settings(), "aadhaar_fingerprint_key", "h" * 40)
     monkeypatch.setattr(get_settings(), "field_repository_api_url", "https://peer.invalid/api")

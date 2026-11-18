@@ -126,7 +126,9 @@ from app.services.identity_ocr import (
     IdentityOcrUnavailable,
     get_identity_ocr_settings,
     parse_retention,
+    pending_stamp,
     read_identity_card,
+    retention_of,
     retention_stamp,
     with_retention,
 )
@@ -409,13 +411,69 @@ async def get_report_templates(_: Any = Depends(get_current_user)) -> list[dict[
 
 
 
+IDENTITY_READ_PATH = "/design-workshops/ocr/identity/read"
+
+
 @router.get("/ocr/identity")
 async def identity_ocr_probe(_: Any = Depends(get_current_user)) -> dict[str, Any]:
     return {
         "ocrIdentity": True,
         "method": "POST",
         "retentionPath": "/design-workshops/ocr/identity/retention",
+        "readPath": IDENTITY_READ_PATH,
     }
+
+
+async def _may_mark_identity_photograph(media: Any, user: Any) -> bool:
+    if is_content_admin(user) or getattr(media, "uploadedById", None) == user.id:
+        return True
+    for workshop_id in sorted(await design_workshop_posts.media_design_workshop_ids(media)):
+        if not workshop_id:
+            continue
+        try:
+            await load_workshop_or_404(workshop_id, user, for_edit=True)
+        except HTTPException:
+            continue
+        return True
+    return False
+
+
+async def _mark_identity_photograph_read(media_id: str, user: Any) -> dict[str, Any]:
+    media = await db.mediafile.find_unique(where={"id": media_id})
+    if media is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="That photograph is no longer here, so it was not read. Reload the stage and try again.",
+        )
+    if getattr(media, "mediaType", None) != "IMAGE":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Only a photograph can be read as an identity card, and that attachment is not one.",
+        )
+    if not await _may_mark_identity_photograph(media, user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can read a card only from a photograph in a workshop you can edit.",
+        )
+    metadata = getattr(media, "extraMetadata", None)
+    current = retention_of(metadata)
+    if current is not None:
+        return current
+    stamp = pending_stamp(user=user, at=datetime.now(UTC))
+    await db.mediafile.update(
+        where={"id": media_id},
+        data=jsonify_metadata({"extraMetadata": with_retention(metadata, stamp)}),
+    )
+    return stamp
+
+
+@router.post("/ocr/identity/read")
+async def mark_identity_photograph_read(
+    mediaId: str = Body(..., embed=True),
+    current_user: Any = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_designer(current_user)
+    return {"mediaId": mediaId, "retention": await _mark_identity_photograph_read(mediaId, current_user)}
 
 
 @router.post("/ocr/identity")
@@ -423,10 +481,13 @@ async def scan_identity_card(
     request: Request,
     file: UploadFile = File(...),
     retention: str = Form(RETENTION_DISCARD),
+    mediaId: str | None = Form(None),
     current_user: Any = Depends(get_current_user),
 ) -> dict[str, Any]:
     _require_designer(current_user)
     declared = parse_retention(retention)
+    if mediaId and mediaId.strip():
+        await _mark_identity_photograph_read(mediaId.strip(), current_user)
     settings = get_identity_ocr_settings()
     content = await read_upload_bounded(
         file,

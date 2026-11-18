@@ -6,6 +6,15 @@ export const DW_PHOTO_RETENTION_DEFAULT: DwPhotoRetention = "DISCARD";
 
 export const DW_IDENTITY_RETENTION_PATH = "/design-workshops/ocr/identity/retention";
 
+export const DW_IDENTITY_READ_PATH = "/design-workshops/ocr/identity/read";
+
+export function markIdentityPhotographRead(mediaId: string): Promise<{ mediaId?: string | null }> {
+  return apiFetch<{ mediaId?: string | null }>(DW_IDENTITY_READ_PATH, {
+    method: "POST",
+    body: JSON.stringify({ mediaId })
+  });
+}
+
 export type DwPhotoRetentionResult = {
   mediaId?: string | null;
   decision?: DwPhotoRetention | string | null;

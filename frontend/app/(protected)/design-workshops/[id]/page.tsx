@@ -9,6 +9,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { DictationConsentCard } from "@/components/designworkshop/DictationConsentCard";
 import { HeldPostNotice, heldPostReason, useHeldPostRefusal } from "@/components/designworkshop/HeldPostNotice";
 import { WorkshopSearchPanel } from "@/components/designworkshop/WorkshopSearchPanel";
+import { FieldVoicesPanel } from "@/components/fieldVoices/FieldVoicesPanel";
 import { WorkshopQuestionnairesCard } from "@/components/questionnaires/WorkshopQuestionnairesCard";
 import { useConfirm } from "@/components/dialogs/ConfirmDialog";
 import { PageHeader } from "@/components/PageHeader";
@@ -970,6 +971,12 @@ export default function DesignWorkshopStagesPage({ params }: { params: Promise<{
         <p className="mt-4 rounded-md border border-line-200 bg-surface-50 px-3 py-2 text-xs leading-5 text-ink-500">
           The form has new fields since this workshop was last saved.
         </p>
+      ) : null}
+
+      {draft?.remoteId ? (
+        <div className="mt-5">
+          <FieldVoicesPanel subjectType="WORKSHOP" subjectId={draft.remoteId} />
+        </div>
       ) : null}
 
       <div className="mt-5">

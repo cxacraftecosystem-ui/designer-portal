@@ -1058,6 +1058,37 @@ jobs:
             echo \"Craft feed switch pinned: \$(grep -E \"^CROSS_PORTAL_CRAFT_FEED_ENABLED=\" \"\$ENVFILE\")\"
           '"
 
+      - name: Pin the field voices settings
+        env:
+          SHA: ${{ env.REL_ID }}
+          CROSS_PORTAL_FIELD_VOICES_ENABLED: ${{ vars.CROSS_PORTAL_FIELD_VOICES_ENABLED }}
+          FIELD_VOICES_RIGHTS_HOLDER: ${{ vars.FIELD_VOICES_RIGHTS_HOLDER }}
+        run: |
+          flag="$(printf '%s' "$CROSS_PORTAL_FIELD_VOICES_ENABLED" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+          case "$flag" in
+            ""|true|false) ;;
+            *) echo "::error::CROSS_PORTAL_FIELD_VOICES_ENABLED must be true or false; nothing was deployed."; exit 1 ;;
+          esac
+          holder="$(printf '%s' "$FIELD_VOICES_RIGHTS_HOLDER" | tr -s '[:space:]' ' ' | sed -e 's/^ //' -e 's/ $//')"
+          if [ "${#holder}" -gt 200 ]; then echo "::error::FIELD_VOICES_RIGHTS_HOLDER is longer than 200 characters; nothing was deployed."; exit 1; fi
+          case "$holder" in
+            *'"'*|*'\'*|*'$'*|*'`'*) echo "::error::FIELD_VOICES_RIGHTS_HOLDER may not contain a quote, backslash, dollar or backtick; nothing was deployed."; exit 1 ;;
+          esac
+          if [ -z "$flag" ] && [ -z "$holder" ]; then echo "Neither field voices variable is set; the release keeps BACKEND_ENV's values or the defaults (off, no rights holder)"; exit 0; fi
+          {
+            if [ -n "$flag" ]; then printf '%s\n' "CROSS_PORTAL_FIELD_VOICES_ENABLED=$flag"; fi
+            if [ -n "$holder" ]; then printf '%s\n' "FIELD_VOICES_RIGHTS_HOLDER=\"$holder\""; fi
+          } | ssh ubuntu@${{ secrets.EC2_HOST }} "ENVFILE='/home/ubuntu/app/releases/$SHA/backend/.env' bash -c '
+            set -euo pipefail
+            frag=\$(cat)
+            [ -s \"\$ENVFILE\" ] && [ -n \"\$(tail -c1 \"\$ENVFILE\")\" ] && printf \"\n\" >> \"\$ENVFILE\"
+            for key in CROSS_PORTAL_FIELD_VOICES_ENABLED FIELD_VOICES_RIGHTS_HOLDER; do
+              if printf \"%s\n\" \"\$frag\" | grep -q \"^\$key=\"; then sed -i \"/^\$key=/d\" \"\$ENVFILE\"; fi
+            done
+            printf \"%s\n\" \"\$frag\" >> \"\$ENVFILE\"
+            echo \"Field voices settings pinned: \$(grep -cE \"^(CROSS_PORTAL_FIELD_VOICES_ENABLED|FIELD_VOICES_RIGHTS_HOLDER)=\" \"\$ENVFILE\") line(s); \$(grep -E \"^CROSS_PORTAL_FIELD_VOICES_ENABLED=\" \"\$ENVFILE\" || echo switch unset)\"
+          '"
+
       - name: Install the pinned CPython on the runner, at the box's path
         env:
           GH_API_TOKEN: ${{ github.token }}

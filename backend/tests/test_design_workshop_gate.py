@@ -126,8 +126,8 @@ def test_the_designer_gate_still_stands_where_this_docstring_says_it_does():
     writes = [(verb, path, body) for verb, path, body in routes if verb != "GET"]
 
     direct = source.count("_require_designer(current_user)")
-    assert direct == 15, (
-        f"_require_designer has {direct} direct call sites, not the fifteen its docstring "
+    assert direct == 16, (
+        f"_require_designer has {direct} direct call sites, not the sixteen its docstring "
         f"enumerates — add or remove the route there too"
     )
 
@@ -135,9 +135,9 @@ def test_the_designer_gate_still_stands_where_this_docstring_says_it_does():
     via_verb_gate = {(v, p) for v, p, body in writes if "_verb_gate(" in body} - gated
     ungated = {(v, p) for v, p, _ in writes} - gated - via_verb_gate
 
-    assert (len(writes), len(gated), len(via_verb_gate)) == (23, 12, 5), (
+    assert (len(writes), len(gated), len(via_verb_gate)) == (24, 13, 5), (
         f"{len(writes)} non-GET routes, {len(gated)} gated directly and {len(via_verb_gate)} behind "
-        f"_verb_gate — _require_designer's docstring says 23, 12 and 5"
+        f"_verb_gate — _require_designer's docstring says 24, 13 and 5"
     )
     assert ungated == UNGATED_WRITES, (
         "the set of writes OUTSIDE the designer set changed. A new one is a permission decision, "

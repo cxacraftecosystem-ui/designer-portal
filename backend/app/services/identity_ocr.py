@@ -254,6 +254,17 @@ def retention_stamp(decision: str, *, user: Any, at: Any) -> dict[str, Any]:
     }
 
 
+PENDING = "PENDING"
+
+
+def pending_stamp(*, user: Any, at: Any) -> dict[str, Any]:
+    return {
+        "decision": PENDING,
+        "readById": getattr(user, "id", None),
+        "readAt": at.isoformat() if hasattr(at, "isoformat") else str(at),
+    }
+
+
 def retention_of(metadata: Any) -> dict[str, Any] | None:
     if not isinstance(metadata, Mapping):
         return None

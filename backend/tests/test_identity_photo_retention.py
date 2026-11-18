@@ -8,6 +8,7 @@ import pytest
 from app.api.routes import design_workshops as routes
 from app.services.identity_ocr import (
     DISCARD,
+    PENDING,
     RETENTION_DECISIONS,
     RETENTION_METADATA_KEY,
     STORE,
@@ -445,3 +446,83 @@ def test_over_http_store_keeps_it_and_names_the_keeper(monkeypatch):
     assert outcome.status_code == 200
     assert [row.id for row in outcome.rows] == ["med_1"]
     assert outcome.body["retention"]["decidedByName"] == "Asha Menon"
+
+
+def _mark(monkeypatch, rows, *, user=DESIGNER, media_id="med_1", editable=frozenset()):
+    from fastapi import HTTPException
+
+    from app.services import design_workshop_posts
+
+    store = _DB(rows)
+    monkeypatch.setattr(routes, "db", store)
+
+    async def _workshops(_media):
+        return {"dw_1"}
+
+    async def _load(workshop_id, _user, **_kwargs):
+        if workshop_id not in editable:
+            raise HTTPException(status_code=404, detail="Record not found")
+        return SimpleNamespace(id=workshop_id)
+
+    monkeypatch.setattr(design_workshop_posts, "media_design_workshop_ids", _workshops)
+    monkeypatch.setattr(routes, "load_workshop_or_404", _load)
+    body = asyncio.run(routes.mark_identity_photograph_read(mediaId=media_id, current_user=user))
+    return SimpleNamespace(body=body, rows=store.mediafile.rows)
+
+
+def test_reading_a_photograph_marks_it_as_an_identity_card_before_any_decision(monkeypatch):
+    outcome = _mark(monkeypatch, [_photo()])
+    stamp = outcome.rows[0].extraMetadata[RETENTION_METADATA_KEY]
+    assert stamp["decision"] == PENDING
+    assert stamp["readById"] == "usr_1"
+    assert datetime.fromisoformat(stamp["readAt"]).tzinfo is not None
+    assert outcome.body == {"mediaId": "med_1", "retention": stamp}
+
+
+def test_a_mark_never_overwrites_a_decision_already_recorded(monkeypatch):
+    kept = retention_stamp(STORE, user=DESIGNER, at=_T0)
+    outcome = _mark(monkeypatch, [_photo(extraMetadata={RETENTION_METADATA_KEY: kept, "clientNote": "x"})])
+    assert outcome.rows[0].extraMetadata == {RETENTION_METADATA_KEY: kept, "clientNote": "x"}
+    assert outcome.body["retention"] == kept
+
+
+def test_keeping_a_marked_photograph_replaces_the_mark_with_the_decision(monkeypatch):
+    rows = [_photo(extraMetadata={"lateSubmission": {"by": "usr_9"}})]
+    _mark(monkeypatch, rows)
+    outcome = _decide(monkeypatch, rows, decision=STORE)
+    assert outcome.rows[0].extraMetadata[RETENTION_METADATA_KEY]["decision"] == STORE
+    assert outcome.rows[0].extraMetadata["lateSubmission"] == {"by": "usr_9"}
+
+
+def test_a_colleague_s_photograph_in_a_workshop_you_can_edit_is_marked(monkeypatch):
+    outcome = _mark(monkeypatch, [_photo(uploadedById="usr_other")], editable=frozenset({"dw_1"}))
+    assert outcome.rows[0].extraMetadata[RETENTION_METADATA_KEY]["decision"] == PENDING
+
+
+def test_a_photograph_outside_the_workshops_you_can_edit_is_not_marked(monkeypatch):
+    from fastapi import HTTPException
+
+    rows = [_photo(uploadedById="usr_other")]
+    with pytest.raises(HTTPException) as raised:
+        _mark(monkeypatch, rows)
+    assert raised.value.status_code == 403
+    assert rows[0].extraMetadata is None
+
+
+def test_only_a_photograph_that_exists_is_marked(monkeypatch):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as raised:
+        _mark(monkeypatch, [_photo(mediaType="AUDIO")])
+    assert raised.value.status_code == 422
+    with pytest.raises(HTTPException) as raised:
+        _mark(monkeypatch, [], media_id="med_gone")
+    assert raised.value.status_code == 404
+
+
+def test_reading_with_the_photograph_s_id_marks_it_before_the_card_is_read(read_api, monkeypatch):
+    rows = [_photo()]
+    monkeypatch.setattr(routes, "db", _DB(rows))
+    response = read_api.call({"mediaId": "med_1"})
+    assert response.status_code == 200
+    assert rows[0].extraMetadata[RETENTION_METADATA_KEY]["decision"] == PENDING

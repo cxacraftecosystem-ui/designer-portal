@@ -7,6 +7,7 @@ import { MessageSquare, Pencil } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { CollabDialog } from "@/components/CollabDialog";
 import { ApiErrorState } from "@/components/DeadEnd";
+import { FieldVoicesPanel } from "@/components/fieldVoices/FieldVoicesPanel";
 import { MediaCardGrid } from "@/components/media/MediaCardGrid";
 import { MediaLightbox, MediaPreviewTile, type PreviewMedia } from "@/components/media/MediaLightbox";
 import { TranscriptBlock } from "@/components/media/TranscriptBlock";
@@ -17,6 +18,7 @@ import { RecordDangerZone } from "@/components/records/RecordDangerZone";
 import { RECORD_LIST_HREF } from "@/components/records/dangerZoneRules";
 import type { RecordFieldRow } from "@/components/records/recordFields";
 import { apiFetch } from "@/lib/api";
+import { fieldVoiceSubjectOf } from "@/lib/fieldVoices/withdrawals";
 import { formatDateTime } from "@/lib/format";
 import { downloadMediaUrl } from "@/lib/localMediaDownload";
 import { isCompletenessKind, type CompletenessBlock } from "@/lib/completenessCore";
@@ -76,6 +78,7 @@ export function RecordViewPage<T extends { id: string; status?: RecordStatus | s
   const mayUpdate = Boolean(updateHref) && canUpdateRecord(user, kind);
   const completeness =
     record && isCompletenessKind(kind) ? ((record as { completeness?: CompletenessBlock | null }).completeness ?? null) : null;
+  const fieldVoiceSubject = fieldVoiceSubjectOf(kind);
 
   if (failure && !record) {
     return (
@@ -126,6 +129,7 @@ export function RecordViewPage<T extends { id: string; status?: RecordStatus | s
             </div>
           ) : null}
           {children(record)}
+          {fieldVoiceSubject ? <FieldVoicesPanel subjectType={fieldVoiceSubject} subjectId={record.id} /> : null}
           <RecordDangerZone noun={noun} endpoint={endpoint} afterHref={RECORD_LIST_HREF[kind] ?? "/dashboard"} />
         </div>
       ) : (

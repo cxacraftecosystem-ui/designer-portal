@@ -21,6 +21,7 @@ from app.api.routes import (
     cross_portal,
     cross_portal_crafts,
     cross_portal_explore,
+    cross_portal_field_voices,
     cross_portal_search,
     dashboard,
     data_access,
@@ -43,6 +44,7 @@ from app.api.routes import (
     designers,
     export,
     feedback,
+    field_voices_admin,
     idempotency_keys,
     map_coverage,
     map_points,
@@ -100,6 +102,8 @@ api_router.include_router(cross_portal.router)
 api_router.include_router(cross_portal_search.router)
 api_router.include_router(cross_portal_explore.router)
 api_router.include_router(cross_portal_crafts.router)
+api_router.include_router(cross_portal_field_voices.router)
+api_router.include_router(field_voices_admin.router)
 api_router.include_router(workshops.router)
 api_router.include_router(workshop_types.router)
 api_router.include_router(products.router)

@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 
 import { photographWasNotStored, type DwIdentityOcrResult } from "@/lib/designWorkshops";
 import {
+  DW_IDENTITY_READ_PATH,
   DW_IDENTITY_RETENTION_PATH,
   DW_PHOTO_RETENTION_DEFAULT,
   retentionOutcomeSentence,
@@ -28,6 +29,13 @@ test("the route that deletes the photograph is the route the server declares", (
   expect(DESIGN_WORKSHOP_ROUTES_PY).toContain('@router.post("/ocr/identity/retention")');
   expect(DESIGN_WORKSHOP_ROUTES_PY).toContain('router = APIRouter(prefix="/design-workshops"');
   expect(DW_IDENTITY_RETENTION_PATH).toBe("/design-workshops/ocr/identity/retention");
+});
+
+test("a photograph is marked as an identity card on the server before it is read", () => {
+  expect(DESIGN_WORKSHOP_ROUTES_PY).toContain('@router.post("/ocr/identity/read")');
+  expect(DESIGN_WORKSHOP_ROUTES_PY).toContain("mediaId: str | None = Form(None)");
+  expect(IDENTITY_OCR_PY).toContain('PENDING = "PENDING"');
+  expect(DW_IDENTITY_READ_PATH).toBe("/design-workshops/ocr/identity/read");
 });
 
 test("the read route says in its own payload that it kept nothing", () => {

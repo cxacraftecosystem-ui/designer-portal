@@ -133,6 +133,16 @@ async def _wait_for_stop(stop: asyncio.Event, interval: float) -> None:
         await asyncio.wait_for(stop.wait(), timeout=interval)
 
 
+async def run_field_voices_lane(stop: asyncio.Event, settings: Any) -> None:
+    from app.services import cross_portal
+
+    if not cross_portal.field_voices_active(settings):
+        return
+    from app.services.field_voices import refresh as field_voices_refresh
+
+    await field_voices_refresh.run_lane(stop, settings)
+
+
 async def _run() -> None:
     settings = get_settings()
     interval = max(settings.media_queue_interval_seconds, 1.0)
@@ -150,6 +160,7 @@ async def _run() -> None:
     with suppress(Exception):
         await asyncio.to_thread(workdir.on_worker_start)
     lane = asyncio.create_task(media_queue.run_insights_lane(stop, settings))
+    voices = asyncio.create_task(run_field_voices_lane(stop, settings))
     reports = asyncio.create_task(run_reports_lane(stop, settings))
     last_search_pass = 0.0
     last_recovery = float("-inf")
@@ -168,10 +179,13 @@ async def _run() -> None:
         stop.set()
         lane.cancel()
         reports.cancel()
+        voices.cancel()
         with suppress(asyncio.CancelledError, Exception):
             await lane
         with suppress(asyncio.CancelledError, Exception):
             await reports
+        with suppress(asyncio.CancelledError, Exception):
+            await voices
         await disconnect_db()
         logger.info("Media queue worker stopped")
 

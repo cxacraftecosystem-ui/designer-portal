@@ -7,6 +7,7 @@ import { IdCard } from "lucide-react";
 import { DesignerProfileForm } from "@/components/designers/DesignerProfileForm";
 import { DesignerProfileView } from "@/components/designers/DesignerProfileView";
 import { DESIGNER_PROFILE_COPY_NOTICE } from "@/components/designers/profileCopy";
+import { FieldVoicesPanel } from "@/components/fieldVoices/FieldVoicesPanel";
 import { PageHeader } from "@/components/PageHeader";
 import { RestrictedPanel } from "@/components/settings/RestrictedPanel";
 import { useAuth } from "@/components/AuthProvider";
@@ -133,6 +134,12 @@ export default function DesignerProfilePage({ params }: { params: Promise<{ user
             <DesignerProfileView profile={profile} />
           )}
         </>
+      )}
+
+      {notFound ? null : (
+        <div className="mt-5">
+          <FieldVoicesPanel subjectType="USER" subjectId={userId} />
+        </div>
       )}
     </>
   );

@@ -11,6 +11,7 @@ import { identityCandidatesFromText } from "@/lib/identityCardText";
 import {
   DW_PHOTO_UNDECIDED,
   decideIdentityPhotograph,
+  markIdentityPhotographRead,
   retentionOutcomeSentence,
   type DwPhotoRetention
 } from "@/lib/identityPhotoRetention";
@@ -129,6 +130,7 @@ export function IdentityCardReader({
         return;
       }
       if (useLocal) {
+        await markIdentityPhotographRead(media.id);
         const outcome = await readCardTextInBrowser(source);
         if (!outcome.ok) {
           setProblem(
@@ -163,7 +165,7 @@ export function IdentityCardReader({
         return;
       }
 
-      const result = await readIdentityCard(source);
+      const result = await readIdentityCard(source, undefined, media.id);
       const [best] = identityChoices(result, "ANY", aadhaarValidationError);
       if (!best) {
         const rejected = result.rejectedAadhaarCount ?? 0;

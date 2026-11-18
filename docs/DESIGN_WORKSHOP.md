@@ -1021,7 +1021,8 @@ but those three by construction, and the loader they use is the read-only one, w
 | `GET` | `/design-workshops/{id}/exports` | every report file ever produced for this workshop |
 | `POST` | `/design-workshops/{id}/exports` | `201` — record an export the phone produced offline |
 | `GET` | `/design-workshops/{id}/report-history` | the export record, for the "what changed between these two files" view |
-| `POST` | `/design-workshops/ocr/identity` | read an identity card's number off a photograph, for a designer to confirm |
+| `POST` | `/design-workshops/ocr/identity` | read an identity card's number off a photograph, for a designer to confirm; with `mediaId`, the attached photograph is first marked `extraMetadata.identityPhotograph` `{"decision": "PENDING"}` |
+| `POST` | `/design-workshops/ocr/identity/read` | `{mediaId}`: mark an attached photograph `PENDING` before its card is read in the browser, so it never leaves for KalaVigyan ([FIELD_VOICES.md](FIELD_VOICES.md)); keeping (`STORE`) replaces the mark |
 | `POST` | `/design-workshops/dictate` | transcribe a spoken passage into a field |
 | `GET` | `/design-workshops/eligible-viewers` | **admin** — the accounts that may be given access ([PERMISSIONS.md](PERMISSIONS.md) §4.4) |
 | `GET` · `PUT` | `/design-workshops/{id}/viewers` | **admin** — read and replace the viewer set |

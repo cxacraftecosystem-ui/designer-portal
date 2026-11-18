@@ -1178,11 +1178,13 @@ export function photographWasNotStored(result: DwIdentityOcrResult): boolean {
 
 export async function readIdentityCard(
   file: File,
-  retention: DwPhotoRetention = DW_PHOTO_RETENTION_DEFAULT
+  retention: DwPhotoRetention = DW_PHOTO_RETENTION_DEFAULT,
+  mediaId?: string
 ): Promise<DwIdentityOcrResult> {
   const form = new FormData();
   form.append("file", await prepareIdentityPhotograph(file));
   form.append("retention", retention);
+  if (mediaId) form.append("mediaId", mediaId);
   return apiFetch<DwIdentityOcrResult>(DW_OCR_IDENTITY_PATH, { method: "POST", body: form });
 }
 
